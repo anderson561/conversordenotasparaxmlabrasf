@@ -1,0 +1,2 @@
+﻿----- INICIO ------
+Erro: 'charmap' codec can't encode character '\u26f6' in position 2188: character maps to <undefined>

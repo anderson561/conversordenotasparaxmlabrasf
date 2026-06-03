@@ -1,0 +1,84 @@
+Portal de Atendimento ao Cliente - CENTRAL DE SOLUÇÕES
+null
+MENU
+Inicio
+Portal de Atendimento ao Cliente
+Central de Soluções
+Academy
+Thomson Reuters
+CENTRAL DE SOLUÇÕES
+Seja Bem-Vindo
+ENTRAR
+Central de Soluções
+Central de Soluções Onvio
+Academy
+Calendário
+Relatórios Personalizados
+Mais
+Central /
+Importação Padrão /
+Solução
+Importação Padrão
+Por que os Clientes são importados como Exterior? (NFS-e ABRASF)
+Assista ao vídeo e acompanhe o passo a
+                                                        passo
+                                                        abaixo!
+Causa
+Esse erro ocorre quando ao validar a importação, o sistema não encontra as tags necessárias no arquivo xml para importação do município e estado.
+Solução
+Para que seja importado o Município e o Estado do Cliente, o arquivo xml deve possuir preenchido as tags '
+CodigoMunicipio
+' e '
+TomadorServiço
+'.
+Você pode avaliar junto ao emissor a correção, preenchendo as tags de informação de município ou caso preferir, poderá importar os clientes considerando o município da sua empresa:
+Configuração de Importação
+1 -
+Acesse o menu
+Arquivos > Configuração de Importação > NFS-e Arquivo xml Abrasf
+;
+2 -
+No quadro
+Clientes e Fornecedores
+, selecione a opção '
+Considerar o município do cadastro da empresa quando não possuir no arquivo
+';
+3
+- Clique em
+[Gravar]
+para concluir;
+Realize uma nova importação e avalie que será apresentada no cadastro do cliente o município da sua empresa.
+Soluções Relacionadas
+Como importar NFS-e ABRASF?
+Como configurar importação de clientes e fornecedores?
+Esta resposta foi útil para você?
+Obrigado pela sua avaliação, sua opinião é muito importante para nós!
+Fale com o suporte
+FALE COM O SUPORTE
+×
+Escolha
+                                                uma
+                                                opção:
+Sobre
+                                                qual
+                                                assunto você tem dúvidas?
+TRIA
+Suporte
+                                                            Web
+Contato
+Folha de Pagamento
+Escrita Fiscal
+Contabilidade
+Honorários
+TRIA
+×
+⛶
+Qual o problema encontrado na resposta? Como podemos melhorar?
+×
+Compartilhamento
+×
+×
+Enviar
+SAIR
+NOTIFICAÇÕES
+Marcar todos como lidos
