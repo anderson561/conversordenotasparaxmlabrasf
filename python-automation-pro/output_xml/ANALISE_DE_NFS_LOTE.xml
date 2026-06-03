@@ -1,0 +1,744 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ListaNfse xmlns="http://www.abrasf.org.br/nfse.xsd">
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe1780908">
+        <Numero>1780908</Numero>
+        <CodigoVerificacao>E6679FDBO</CodigoVerificacao>
+        <DataEmissao>2026-04-05T22:02:46</DataEmissao>
+        <Competencia>2026-04-05</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>30000.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>0.00</ValorPis>
+          <ValorCofins>0.00</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>0.00</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>30000.00</BaseCalculo>
+          <Aliquota>43304.04</Aliquota>
+          <ValorIss>0.00</ValorIss>
+          <ValorLiquidoNfse>30000.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>65301650000112</Cnpj>
+            <InscricaoMunicipal>333053</InscricaoMunicipal>
+          </IdentificacaoPrestador>
+          <RazaoSocial>05/04/2026 22:02:46</RazaoSocial>
+          <Endereco>
+            <Endereco>Não informado</Endereco>
+            <Numero>S/N</Numero>
+            <Bairro>Não informado</Bairro>
+            <CodigoMunicipio>5103403</CodigoMunicipio>
+            <Uf>MT</Uf>
+            <Cep>78090814</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>5103403</CodigoMunicipio>
+          <Uf>MT</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-04-05</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>30000.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>0.00</ValorIss>
+                <BaseCalculo>30000.00</BaseCalculo>
+                <Aliquota>43304.04</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>5103403</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>5103403</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>65301650000112</Cnpj>
+              </CpfCnpj>
+              <InscricaoMunicipal>333053</InscricaoMunicipal>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>03051741000190</Cnpj>
+                </CpfCnpj>
+                <InscricaoMunicipal>1492591</InscricaoMunicipal>
+              </IdentificacaoTomador>
+              <RazaoSocial>Sao Pedro Construtora Ltda</RazaoSocial>
+              <Endereco>
+                <Endereco>: Avenida Praia de Pajussara Número: 554 Complemento: QD 28</Endereco>
+                <Numero>LOTE 9 Bairro : Vilas do Atlântico</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>42708720</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>2</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe59">
+        <Numero>59</Numero>
+        <CodigoVerificacao>XXXX-XXXX</CodigoVerificacao>
+        <DataEmissao>2026-05-15T17:55:47</DataEmissao>
+        <Competencia>2026-05-01</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>19000.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>0.00</ValorPis>
+          <ValorCofins>0.00</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>0.00</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>19000.00</BaseCalculo>
+          <Aliquota>0.00</Aliquota>
+          <ValorIss>59.00</ValorIss>
+          <ValorLiquidoNfse>19000.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>23794679000133</Cnpj>
+          </IdentificacaoPrestador>
+          <RazaoSocial>A E AUDIO COMERCIO E REPRESENTACAO LTDA aeaudiooficialOgmail.com</RazaoSocial>
+          <Endereco>
+            <Endereco>Não informado</Endereco>
+            <Numero>S/N</Numero>
+            <Bairro>Não informado</Bairro>
+            <CodigoMunicipio>5103403</CodigoMunicipio>
+            <Uf>MT</Uf>
+            <Cep>00000000</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>5103403</CodigoMunicipio>
+          <Uf>MT</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-05-01</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <RegimeEspecialTributacao>6</RegimeEspecialTributacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>19000.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>59.00</ValorIss>
+                <BaseCalculo>19000.00</BaseCalculo>
+                <Aliquota>0.00</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>5103403</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>5103403</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>23794679000133</Cnpj>
+              </CpfCnpj>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>03051741000190</Cnpj>
+                </CpfCnpj>
+                <InscricaoMunicipal>32720733</InscricaoMunicipal>
+              </IdentificacaoTomador>
+              <RazaoSocial>SAO PEDRO CONSTRUTORA LTDA</RazaoSocial>
+              <Endereco>
+                <Endereco>Não informado</Endereco>
+                <Numero>S/N</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>00000000</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>1</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe00007302">
+        <Numero>00007302</Numero>
+        <CodigoVerificacao>GYIFDFGL</CodigoVerificacao>
+        <DataEmissao>2026-04-07T09:10:17</DataEmissao>
+        <Competencia>2026-03-01</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>3242.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>9.00</ValorPis>
+          <ValorCofins>97.26</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>32.42</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>3242.00</BaseCalculo>
+          <Aliquota>0.00</Aliquota>
+          <ValorIss>7.00</ValorIss>
+          <ValorLiquidoNfse>0.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>03051741000190</Cnpj>
+            <InscricaoMunicipal>49596312000118</InscricaoMunicipal>
+          </IdentificacaoPrestador>
+          <RazaoSocial>49.596.312/0001-18 00.935.334/001-40</RazaoSocial>
+          <Endereco>
+            <Endereco>: Rua Politeama 48 E-ma + EDIF AGENOR CERQUEIRA SALA - CENTRO</Endereco>
+            <Numero>S/N</Numero>
+            <Bairro>Salvador -</Bairro>
+            <CodigoMunicipio>2927408</CodigoMunicipio>
+            <Uf>BA</Uf>
+            <Cep>40020605</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>2927408</CodigoMunicipio>
+          <Uf>BA</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-03-01</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>3242.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>7.00</ValorIss>
+                <BaseCalculo>3242.00</BaseCalculo>
+                <Aliquota>0.00</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>2927408</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>2927408</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>03051741000190</Cnpj>
+              </CpfCnpj>
+              <InscricaoMunicipal>49596312000118</InscricaoMunicipal>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>03051741000190</Cnpj>
+                </CpfCnpj>
+              </IdentificacaoTomador>
+              <RazaoSocial>SAO PEDRO CONSTRUTORA LTDA</RazaoSocial>
+              <Endereco>
+                <Endereco>Não informado</Endereco>
+                <Numero>S/N</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>00000000</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>2</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe465">
+        <Numero>465</Numero>
+        <CodigoVerificacao>XXXX-XXXX</CodigoVerificacao>
+        <DataEmissao>2026-05-15T17:55:47</DataEmissao>
+        <Competencia>2026-05-01</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>700.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>0.00</ValorPis>
+          <ValorCofins>0.00</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>0.00</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>700.00</BaseCalculo>
+          <Aliquota>0.00</Aliquota>
+          <ValorIss>465.00</ValorIss>
+          <ValorLiquidoNfse>700.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>15501741000123</Cnpj>
+          </IdentificacaoPrestador>
+          <RazaoSocial>P.R. DE ALMEIDA &amp; CIA LTDA homologacaoDe-nfs.com.br</RazaoSocial>
+          <Endereco>
+            <Endereco>Mui DOS MARTIN-PESCADORES</Endereco>
+            <Numero>02</Numero>
+            <Bairro>LOT JD IPANEMA; QUADRA 08</Bairro>
+            <CodigoMunicipio>5103403</CodigoMunicipio>
+            <Uf>MT</Uf>
+            <Cep>00000000</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>5103403</CodigoMunicipio>
+          <Uf>MT</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-05-01</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <RegimeEspecialTributacao>6</RegimeEspecialTributacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>700.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>465.00</ValorIss>
+                <BaseCalculo>700.00</BaseCalculo>
+                <Aliquota>0.00</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>5103403</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>5103403</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>15501741000123</Cnpj>
+              </CpfCnpj>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>03051741000190</Cnpj>
+                </CpfCnpj>
+              </IdentificacaoTomador>
+              <RazaoSocial>Tomador Não Identificado</RazaoSocial>
+              <Endereco>
+                <Endereco>Não informado</Endereco>
+                <Numero>S/N</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>42708720</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>1</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe449">
+        <Numero>449</Numero>
+        <CodigoVerificacao>XXXX-XXXX</CodigoVerificacao>
+        <DataEmissao>2026-05-15T17:55:47</DataEmissao>
+        <Competencia>2026-05-01</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>130.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>0.00</ValorPis>
+          <ValorCofins>0.00</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>0.00</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>130.00</BaseCalculo>
+          <Aliquota>0.00</Aliquota>
+          <ValorIss>449.00</ValorIss>
+          <ValorLiquidoNfse>130.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>22845383000131</Cnpj>
+          </IdentificacaoPrestador>
+          <RazaoSocial>22.845.383 MARCOS DOS SANTOS REIS MARCOS.REISQCITOR.COM</RazaoSocial>
+          <Endereco>
+            <Endereco>Não informado</Endereco>
+            <Numero>S/N</Numero>
+            <Bairro>Não informado</Bairro>
+            <CodigoMunicipio>2927408</CodigoMunicipio>
+            <Uf>BA</Uf>
+            <Cep>00000000</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>2927408</CodigoMunicipio>
+          <Uf>BA</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-05-01</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <RegimeEspecialTributacao>5</RegimeEspecialTributacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>130.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>449.00</ValorIss>
+                <BaseCalculo>130.00</BaseCalculo>
+                <Aliquota>0.00</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>2927408</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>2927408</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>22845383000131</Cnpj>
+              </CpfCnpj>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>03051741000190</Cnpj>
+                </CpfCnpj>
+              </IdentificacaoTomador>
+              <RazaoSocial>03.051.741/0001-90 - E</RazaoSocial>
+              <Endereco>
+                <Endereco>Não informado</Endereco>
+                <Numero>S/N</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>00000000</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>1</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe168279">
+        <Numero>168279</Numero>
+        <CodigoVerificacao>XXXX-XXXX</CodigoVerificacao>
+        <DataEmissao>2026-05-15T17:55:47</DataEmissao>
+        <Competencia>2026-05-01</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>0.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>0.00</ValorPis>
+          <ValorCofins>0.00</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>0.00</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>0.00</BaseCalculo>
+          <Aliquota>0.00</Aliquota>
+          <ValorIss>0.00</ValorIss>
+          <ValorLiquidoNfse>0.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>00000000000100</Cnpj>
+          </IdentificacaoPrestador>
+          <RazaoSocial>Série do Documento</RazaoSocial>
+          <Endereco>
+            <Endereco>Não informado</Endereco>
+            <Numero>S/N</Numero>
+            <Bairro>Não informado</Bairro>
+            <CodigoMunicipio>2927408</CodigoMunicipio>
+            <Uf>BA</Uf>
+            <Cep>00000000</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>2927408</CodigoMunicipio>
+          <Uf>BA</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-05-01</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>0.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>0.00</ValorIss>
+                <BaseCalculo>0.00</BaseCalculo>
+                <Aliquota>0.00</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>2927408</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>2927408</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>00000000000100</Cnpj>
+              </CpfCnpj>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>00000000000100</Cnpj>
+                </CpfCnpj>
+              </IdentificacaoTomador>
+              <RazaoSocial>Série do Documento</RazaoSocial>
+              <Endereco>
+                <Endereco>Não informado</Endereco>
+                <Numero>S/N</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>00000000</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>2</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe529065321">
+        <Numero>529065321</Numero>
+        <CodigoVerificacao>XXXX-XXXX</CodigoVerificacao>
+        <DataEmissao>2026-04-06T18:57:39</DataEmissao>
+        <Competencia>2026-04-01</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>1170.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>0.00</ValorPis>
+          <ValorCofins>0.00</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>0.00</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>1170.00</BaseCalculo>
+          <Aliquota>86305.02</Aliquota>
+          <ValorIss>6.00</ValorIss>
+          <ValorLiquidoNfse>1170.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>36894418000137</Cnpj>
+            <InscricaoMunicipal>44441</InscricaoMunicipal>
+          </IdentificacaoPrestador>
+          <RazaoSocial>06/04/2026 18:57:39</RazaoSocial>
+          <Endereco>
+            <Endereco>Não informado</Endereco>
+            <Numero>S/N</Numero>
+            <Bairro>Não informado</Bairro>
+            <CodigoMunicipio>5103403</CodigoMunicipio>
+            <Uf>MT</Uf>
+            <Cep>78065290</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>5103403</CodigoMunicipio>
+          <Uf>MT</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-04-01</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>1170.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>6.00</ValorIss>
+                <BaseCalculo>1170.00</BaseCalculo>
+                <Aliquota>86305.02</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>5103403</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>5103403</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>36894418000137</Cnpj>
+              </CpfCnpj>
+              <InscricaoMunicipal>44441</InscricaoMunicipal>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>03051741000190</Cnpj>
+                </CpfCnpj>
+              </IdentificacaoTomador>
+              <RazaoSocial>SAO PEDRO CONSTRUTORA LTDA</RazaoSocial>
+              <Endereco>
+                <Endereco>: AVPROF MAGALHAES NETO Número: O Complemento: QUADRA 28 LOTE 09 Bairro : PITUBA</Endereco>
+                <Numero>S/N</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>41810011</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>2</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+  <CompNfse>
+    <Nfse versao="2.01">
+      <InfNfse Id="NFSe2187">
+        <Numero>2187</Numero>
+        <CodigoVerificacao>XXXX-XXXX</CodigoVerificacao>
+        <DataEmissao>2026-05-15T17:55:47</DataEmissao>
+        <Competencia>2026-05-01</Competencia>
+        <OutrasInformacoes>Convertido de PDF - ABRASF 2.01</OutrasInformacoes>
+        <ValoresNfse>
+          <ValorServicos>680.00</ValorServicos>
+          <ValorDeducoes>0.00</ValorDeducoes>
+          <ValorPis>0.00</ValorPis>
+          <ValorCofins>0.00</ValorCofins>
+          <ValorInss>0.00</ValorInss>
+          <ValorIr>0.00</ValorIr>
+          <ValorCsll>0.00</ValorCsll>
+          <OutrasRetencoes>0.00</OutrasRetencoes>
+          <BaseCalculo>680.00</BaseCalculo>
+          <Aliquota>95118.00</Aliquota>
+          <ValorIss>0.00</ValorIss>
+          <ValorLiquidoNfse>680.00</ValorLiquidoNfse>
+        </ValoresNfse>
+        <ValorCredito>0.00</ValorCredito>
+        <PrestadorServico>
+          <IdentificacaoPrestador>
+            <Cnpj>36048343000173</Cnpj>
+            <InscricaoMunicipal>183522</InscricaoMunicipal>
+          </IdentificacaoPrestador>
+          <RazaoSocial>PH COPIADORAS E INFORMATICA LTDA 06/04/2026 18:51:03</RazaoSocial>
+          <Endereco>
+            <Endereco>Não informado</Endereco>
+            <Numero>S/N</Numero>
+            <Bairro>Não informado</Bairro>
+            <CodigoMunicipio>5103403</CodigoMunicipio>
+            <Uf>MT</Uf>
+            <Cep>78030140</Cep>
+          </Endereco>
+        </PrestadorServico>
+        <OrgaoGerador>
+          <CodigoMunicipio>5103403</CodigoMunicipio>
+          <Uf>MT</Uf>
+        </OrgaoGerador>
+        <DeclaracaoPrestacaoServico>
+          <InfDeclaracaoPrestacaoServico>
+            <Competencia>2026-05-01</Competencia>
+            <NaturezaOperacao>1</NaturezaOperacao>
+            <Servico>
+              <Valores>
+                <ValorServicos>680.00</ValorServicos>
+                <IssRetido>2</IssRetido>
+                <ValorIss>0.00</ValorIss>
+                <BaseCalculo>680.00</BaseCalculo>
+                <Aliquota>95118.00</Aliquota>
+                <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                <DescontoCondicionado>0.00</DescontoCondicionado>
+              </Valores>
+              <ItemListaServico>03115</ItemListaServico>
+              <CodigoTributacaoMunicipio>03115</CodigoTributacaoMunicipio>
+              <CodigoCnae>0000000</CodigoCnae>
+              <Discriminacao>Serviços prestados conforme nota fiscal.</Discriminacao>
+              <CodigoMunicipio>5103403</CodigoMunicipio>
+              <ExigibilidadeISS>1</ExigibilidadeISS>
+              <MunicipioIncidencia>5103403</MunicipioIncidencia>
+            </Servico>
+            <Prestador>
+              <CpfCnpj>
+                <Cnpj>36048343000173</Cnpj>
+              </CpfCnpj>
+              <InscricaoMunicipal>183522</InscricaoMunicipal>
+            </Prestador>
+            <Tomador>
+              <IdentificacaoTomador>
+                <CpfCnpj>
+                  <Cnpj>03051741000190</Cnpj>
+                </CpfCnpj>
+              </IdentificacaoTomador>
+              <RazaoSocial>Sao Pedro Construtora Ltda</RazaoSocial>
+              <Endereco>
+                <Endereco>: Avenida Praia de Pajussara Número: 554 Complemento : QD 28</Endereco>
+                <Numero>LOTE 9 Bairro: Vilas do Atlântico</Numero>
+                <Bairro>Não informado</Bairro>
+                <CodigoMunicipio>2927408</CodigoMunicipio>
+                <Uf>BA</Uf>
+                <Cep>42708720</Cep>
+              </Endereco>
+            </Tomador>
+            <OptanteSimplesNacional>2</OptanteSimplesNacional>
+            <IncentivoFiscal>2</IncentivoFiscal>
+          </InfDeclaracaoPrestacaoServico>
+        </DeclaracaoPrestacaoServico>
+      </InfNfse>
+    </Nfse>
+  </CompNfse>
+</ListaNfse>

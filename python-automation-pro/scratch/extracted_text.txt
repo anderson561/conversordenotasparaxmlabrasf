@@ -1,0 +1,752 @@
+Série do Documento
+Nota Fiscal de Serviço
+Eletrônica - NFS-e
+
+Secretaria Municipal de Economia
+
+y Prefeitura Municipal de Cuiabá
+Fone: () - http:/Ayww.cuiaba.mt.gov.br/
+
+[Es
+[patos do Prestador de Serviço
+
+Data de Geração da NFS-e
+
+05/04/2026 22:02:46
+
+Data de Competência
+05/04/2026
+
+Cód. de Autenticidade
+
+E6679FDBO
+
+Responsável pela Retenção
+
+FORTHOUSE SERVICOS ESPECIALIZADOS LTDA
+FORTHOUSE SERVICOS ESPECIALIZADOS
+
+Rua Treze,1 QUADRA: 20; LOTE: 01; - Cohab São Gonçalo
+
+CEP 78090-814 - Fone: (65)9206-9475 - Cuiabá/ MT
+atendimentoCDlacontabilidademt.com.br
+
+Inscrição Municipal 333053 - CPF/CNPJ 65.301.650/0001-12
+
+Identificação da Nota Fiscal Eletrônica
+
+Natureza da Operação Número do RPS | Série do RPS Data de Emissão do RPS
+Exigível
+Local dos Serviços Município Incidência
+
+Cuiabá - Mato Grosso Cuiabá - Mato Grosso
+
+Dados do Tomador de Serviços
+CNPJ/CPF : 03.051.741/0001-90 IM : 1492591
+
+Razão Social: Sao Pedro Construtora Ltda
+
+Endereço : Avenida Praia de Pajussara Número: 554
+
+Complemento: QD 28, LOTE 9 Bairro : Vilas do Atlântico
+
+CEP: 42708-720 Cidade/UF : Lauro de Freitas/ BA
+
+Telefone : (71)3272-0733 E-mail : sp saopedroconstrutora.com.br
+Dados do Intermediário de Serviços
+
+CNPJICPF Inscrição Municipal Razão Social
+
+Descrição dos Serviços
+
+Serviços de pintura e impermeabilização em prédio.
+Ag. 3499-1
+
+Cc 88380-8
+
+Pix CNPJ
+
+onstrutora
+
+Thiago Guede São Pedro Construtora
+
+Eng. Civil Sienge Saba '
+
+CREA-BA 05223354.
+
+Detalhamento dos Tributos
+Atividade do Município Alíquota | Item da LC 116/2003 | Cód. NBS Cód. CNAE
+
+4330404 - [4330-4/04] Serviços de pintura de edifícios em ger... |2,01 |705 101073000 | 4330404
+
+VI. Total dos Serviços | Desconto Incondicionado | Deduções Base Cálculo | Base de Cálculo Total do ISSQN ISSQN Retido | Desconto Condicionado
+R$ 30.000,00 R$ 0,00 R$ 0,00 R$ 30.000,00 R$ 603,00 | Não R$ 0,00
+PIS COFINS INSS IRRF CSIL Outras Retenções | VI. ISSQN Retido | VI. Liquido da Nota Fiscal
+
+R$ 0,00 R$ 0,00 | R$ 0,00 | R$ 0,00 | R$ 0,00 R$ 0,00 R$ 0,00 R$ 30.000,00
+Construção Civil | Cód. Obra: | Art.:
+
+- "DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL"; e Il -
+OA CRÉDITO FISCAL DE IPI.”
+
+PROCON Municipal Cuiabá - Endereço: R. Joaquim Murtinho, 554 - Centro, Cuiabá - MT, 78020-290
+Telefone: (65) 3632-6400
+
+PROCON Estadual - MT - Endereço: Av. Gen. Ramiro de Noronha, 294 - 1º andar - Jardim Cuiaba, Cuiabá - MT, 78
+043-180
+Telefone: (65) 3613-2100/151
+
+Chave de acesso no Ambiente de Dados Nacional: 510340312653016500001120000000000003260417754265
+
+
+
+PREFEITURA MUNICIPAL DE
+
+DANFSe v1.0 VÁI
+
+Nota Fiscal d RZEA GRANDE
+
+N FSe Serviço eletrônica Documento Auxiliar da NFS-e (65)3688-8230.
+centraldeissqrvg(DgmaiL com
+
+Chave de Acesso da NFS-e
+
+51084022223794679000133000000000005926040009553332
+
+Número da NFS-e Competência da NFS-e Data e Hora da emissão da NFS-e
+
+59 09/04/2026 09/04/2026 17:12:48 g
+
+Número da DPS Sório da DPS Data é Hora da emissão da DPS teoria
+
+13 70000 09/04/2026 17:12:48 A autenticidade desta NFS-e pode ser verificada
+pela letura deste código QR ou pela consulta da
+chave de acesso no portal nacional da NFS-e
+
+EMITENTE DA NFS-s CNPJ/CPF /NIF Inscrição Municipal Telefone
+
+Prestador do Serviço 23.794.679/0001-33 102721 (00) 00000-0000
+
+Nome / Nome Empresarial E-mail
+
+A E AUDIO COMERCIO E REPRESENTACAO LTDA aeaudiooficialOgmail.com
+
+Endereço Município CEP
+
+RUA JÁCOB DO BANDOLIN, SN, QUADRA 108 LOTE 18, JARDIM COSTA Várzea Grande - MT 78128-234
+
+VERDE
+
+Simples Nacional na Data de Competência
+Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP)
+
+Regime de Apuração Tributária pelo SN.
+Regime de apuração dos tributos federais e municipal pelo Simples Nacional
+
+TOMADOR DO SERVIÇO CNPJ/CPF /NIF
+03.051.741/0001-90
+
+Nome / Nome Empresarial
+SAO PEDRO CONSTRUTORA LTDA
+
+inscrição Municipal
+
+Telefone
+(71) 3272-0733
+
+IMPOSTOSGNORTECCONTABILIDADE.COM.BR
+
+Endereço Município cer
+
+PRAIA DE PAJUSSARA, 554, QUADRA 28 LOTE 09, VILAS DO ATLANTICO Lauro de Freitas - BA 42708-720
+INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-e
+
+SERVIÇO PRESTADO
+
+Código de Tributação Nacional Código de Tributação Municipal Local da Prestação País da Prestação
+
+07.06.02 - Colocação e instalação de - Cuiabá - MT -
+
+assoalhos, revestimentos de par...
+o do Sei
+
+rviço ,
+PRESTAÇÃO DE SERVIÇOS DE INSTALAÇÃO DE REVESTIMENTO ACÚSTICO - EMPRESA MATO-GROSSENSE DE TEC. DA INFORMAÇÃO - MTI
+
+TRIBUTAÇÃO MUNICIPAL
+
+Tributação do ISSQN País Resultado da Prestação do Serviço Município de Incidência do ISSQN Regime Especial de Tributação
+Operação Tributável - Várzea Grande - MT Nenhum
+Tipo de Imunidade Suspensão da Exigibilidade do ISSQN Número Processo Suspensão Benefício Municipal
+- Não - -
+Valor do Serviço Desconto Incondicionado Total Deduções/Reduções Cálculo do BM
+R$ 19.000,00 - - -
+BC ISSQN Alíquota Aplicada Retenção do ISSQN ISSQN Apurado
+- - Não Retido -
+TRIBUTAÇÃO FEDERAL
+Contribuições Sociais - Retidas Descrição Contrib. Sociais - Retidas
+
+IRRF Contribuição Previdenciária - Retida
+
+PIS - Débito Apuração Própria COFINS - Débito Apuração Própria
+
+VALOR TOTAL DA NFS-E
+Valor do Serviço Desconto Condicionado Desconto Incondicionado ISSQN Retido
+R$ 19.000,00 a s +
+Total das Ré Federais PIS/COFINS - Débito Apur. Própria Valor Líquido da NFS-e
+Total dos Retenções Fedora P Apur. aaa
+TOTAIS APROXIMADOS DOS TRIBUTOS
+
+Federais Estaduais Municipais
+INFORMAÇÕES COMPLEMENTARES
+Cod Obra: CNO 90.018.32011/78 | NBS: 101074000
+
+n
+
+o Constrybra
+
+São Pedro Construtora
+f Obra MTI
+
+Al É Sienge
+Thiago Guedes
+Eng. Civil
+CREA-BA 052233594-2
+
+LEVES
+
+
+
+PREFEITURA MUNICIPAL DO SALVADOR
+SECRETARIA MUNICIPAL DA FAZENDA
+
+NOTA FISCAL DE SERVIÇOS ELETRÔNICA - Nota Salvador
+
+PRESTADOR DE SERVIÇOS
+
+CPF/CNPJ Inscrição Municipal
+49.596.312/0001-18 00.935.334/001-40
+Nome/fazão Social
+
+NORTE SOLUCOES CONTABEIS SOCIEDADE SIMPLES
+
+Endereço:
+
+Rua Politeama 48
+E-ma
+
++ EDIF AGENOR CERQUEIRA SALA - CENTRO - Salvador - CEP: 40020-605 - BA
+
+TOMADOR DE SERVIÇOS
+
+Nome/Razão Social
+
+SAO PEDRO CONSTRUTORA LTDA
+
+CPFICNPJ Inscrição Municipal
+
+03.051.741/0001-90 —
+
+Ender
+
+AvE Pi 554, — QUADRA 28 LOTE 09 VILAS DO ATLANTICO - Lauro de Frei
+all
+
+IA DE PAJUSSARA
+
+DISCRININAÇ
+SERVIÇOS DE
+
+Obra: MTI
+
+FAQ DOR
+
+VALOR TOTAL DA NOTA = R$3.242,00
+CNAE
+
+nem da Lista de Serviços:
+01719 - Contabilidade, inclusive serviços técnicos e auxilia
+
+Número da Nota:
+00007302
+
+Data e Hora de Emissão:
+07/04/2026 09:10:17
+Código de Verificação:
+GYIF-DFGL
+
+- CEP: 42708-720/BA
+
+Aliquota (%)
+
+Valor Total das Deduções (R$) | Base de Cálculo (R$)
+0,00
+
+Valor do ISS (R$)
+
+Crédito Nota Salvador (R$)
+E 0,00
+
+Valor CSLL (R$)
+32,42!
+
+Valor IR (R$)
+
+Valor COFINS (R$)
+97,26.
+
+Valor INSS (R$) Valor PIS (R$)
+
+9,00 48,63
+
+21,07
+
+[outras Retenções (R$) | Valor Liquido (R$)
+
+0,00 3.042,62
+
+Alquota ES (5) Valor TES (R$). Alquota CES (%)
+
+Valor CES (R$)
+
+OUTRAS INFORMAÇÕES
+
+- Esta Nota SaMador foi emitida com respaldo na Lei 7.186/2006
+- Nota Salvador emitida por Sociedade de Uniprofissionais.
+
+- COMPETÊNCIA: 03/2026 (més/ano)
+- Código de Tributação do Município: 1719-0101 - Contabilidade, inclusive serviços técnicos é auxiliares
+
+São Pedro bia.
+
+Su
+Sienge Da
+
+
+| png | PREFEITURA MUNICIPAL DE
+N FSe Nota Fiscal de DANFSe v1.0 | 8 VÁRZEA GRANDE
+Serviço eletrônica Documento Auxiliar da NFS-e A (85)3688-8230.
+| eta gomancom
+
+Chave de Acesso da NFS-e
+
+51084022215501741000123000000000046526044 189947815
+
+Número da NFS-e Competência da NFS-e Data e Hora da emissão da NFS-e
+
+465 07/04/2026 07/04/2026 18:40:09
+
+Número da DPS Sério da DPS Data e Hora da emissão da DPS E
+
+243 70000 07/04/2026 18:40:09 aa autenticidade desta NFS-e pode ser verificada
+dest código OR cu pel consulta da
+
+cesso no poral nacional da NES-e
+
+EMITENTE DA NFS-e CNPJ/CPF /NIF Inscrição Municipal Telefone
+
+Prestador do Serviço 15.501.741/0001-23 31775 (06) 53026-3415
+
+Nome / Nome Empresarial E-mail
+
+P.R. DE ALMEIDA & CIA LTDA homologacaoDe-nfs.com.br
+
+Endereço Mui
+
+DOS MARTIN-PESCADORES, 02, LOT JD IPANEMA; QUADRA 08,
+
+PARQUE DO LAGO
+Simples Nacional na Data de Competência
+
+Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP)
+
+nicípio CEP
+Várzea Grande - MT 78121-006
+
+Regime de Apuração Tributária pelo SN
+Regime de apuração dos tributos federais e municipal pelo Simples Nacional
+
+TOMADOR DO SERVIÇO
+
+Nome / Nome Empresa
+Ee PEDRO CONSTRUTORA LTDA
+
+Município
+PRAIADE PAJUSSARA, 554, QUADRA 28 LOTE 08, VILAS DO ATLANTICO Lauro de Freitas - BA
+
+CNPJ7CPF /NIF
+03.051.741/0001-90
+
+Tnscrição Municipal Telefone
+
+CEP
+42708-720
+
+INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-e
+
+SERVIÇO PRESTADO
+Código de Tributação Nacional Código de Tributação Municipal Local da Prestação País da Prestação
+07.13.01 - Dedetização, desinfecção, - Cuiabá - MT -
+desinsetização, imunização, hig...
+Descrição do Serviço
+SERVIÇO PRESTADO DE DEDETIZACAO MENSAL NA EMPRESA, EXECUTADO NO MES DE MARÇO 2026.
+PAGAMENTO EM BOLETO COM VENCIMENTO EM 15/04/2026.
+OBS: TOMADOR SERVIÇO PAGA IMPOSTO DE INSS 11%
+* SAO PEDRO
+TRIBUTAÇÃO MUNICIPAL
+Tributação do ISSQN País Resultado da Prestação do Serviço Município de Incidência do ISSQN Regime Especial de Tributação
+Operação Tributável . Várzea Grande - MT Nenhum
+Tipo de Imunidade Suspensão da Exigibilidade do ISSQN Número Processo Suspensão Benefício Municipal
+- Não - -
+Valor do Serviço Desconto Incondicionado Total Deduções/Reduções Cálculo do BM
+R$ 700,00 5 E k
+BC ISSQN Alíquota Aplicada Retenção do ISSQN ISSQN Apurado
+. - Não Retido »
+TRIBUTAÇÃO FEDERAL
+Contribuição Previdenciária - Retida
+
+IRRF
+
+PIS - Débito Apuração Própria
+
+R$ 77,00
+COFINS - Débito Apuração Própria
+
+Contribuições Sociais - Retidas Descrição Contrib. Sociais - Retidas
+
+VALOR TOTAL DA NFS-E
+Valor do Serviço Desconto Condicionado Desconto Incondicionado ISSQN Retido
+R$ 700,00 - . -
+Total das Retenções Federais PIS/COFINS - Débito Apur. Própria Valor Líquido da NFS-e
+R - R$ 623,00
+TOTAIS APROXIMADOS DOS TRIBUTOS
+Federais Estaduais Municipais.
+
+INFORMAÇÕES COMPLEMENTARES
+
+Thiago Guedes
+
+Eng. Civil
+CREA-BA 052233594-2
+
+São Pedro Construtora
+Obra MTI
+
+Sienge
+
+
+
+DANFSe v1.0
+
+Serviço etetrônica
+
+MUNICIPIO DO SALVADOR
+(71)3202-8280
+
+Documento Auxiliar da NFS-e notasalvador(Psefaz salvador.ba.gov.br
+
+Chave de Acesso da NFS-e
+
+29274082222845383000131000000000044926047728227172
+
+Número da NFS-e Competência da NFS-e Data e Hora da emissão da NFS-e
+
+449 01/04/2026 01/04/2026 20:27:41
+
+Número da DPS Sério da DPS Data e Hora da emissão da DPS ”
+
+[ee] 70000 01/04/2026 20:27:41 A autenticidade desta NFS-o pode ser verificada
+pela leitura deste código QR ou pela consulta da
+chave de acesso no portal nacional da NFS-e
+
+EMITENTE DA NFS-e CNPJ/CPF 7NIF Inscrição Municipal Telefone
+
+Prestador do Serviço 22.845.383/0001-31 - (71) 9377-5476
+
+Nome / Nome Empresarial E-mail
+
+22.845.383 MARCOS DOS SANTOS REIS MARCOS.REISQCITOR.COM
+
+Endereço Município CEP
+
+RUA DA CASCATA, 28-E, CIDADE NOVA Salvador - BA 40313-140
+
+Simples Nacional na Data de Competência Regime de Apuração Tributária pelo SN
+
+Optante - Microempreendedor Individual (MEI) -
+
+TOMADOR DO SERVIÇO CNPJ/CPF /NIF Inscrição Municipal Telefone
+
+03.051.741/0001-90 - E
+
+Nome / Nome Empresa E-mail
+
+SAO PEDRO CONSTRUTORA LTDA -
+
+Endereço Município cep
+
+AV PRAIA DE PAJUSSARA, 554, QUADRA 28 LOTE 09, VILAS DO Lauro de Freitas - BA 42708-720
+
+ATLANTICO
+
+INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-e
+
+SERVIÇO PRESTADO
+
+Código de Tributação Nacional Local da Prestação
+
+Código de Tributação Municipal
+15.03.07 - Locação de bens e -
+equipamentos em geral.
+Descrição do Serviço
+Obra: Mti Cuiabá
+Mês de Referencia: Abril
+Período 15 de Abril 2026 à 15 Maio 2026
+Equipamento:
+Notebook Dell Corel5 8Gb SSD240 130,00
+
+Salvador - BA
+
+País da Prestação
+
+TRIBUTAÇÃO MUNICIPAL
+Tributação do ISSQN País Resultado da Prestação do Serviço Município de Incidência do ISSQN Regime Especial de Tributação
+Operação Tributável - Salvador - BA Nenhum
+
+Tipo de Imunidade Suspensão da Exigibilidade do ISSQN Número Processo Suspensão Benefício Municipal
+- Não - -
+Valor do Serviço Desconto Incondicionado Total Deduções/Reduções Cólculo do BM
+R$ 130,00 - - -
+BCISSQN Alíquota Aplicada Retenção do ISSQN ISSQN Apurado
+- - Não Retido -
+TRIBUTAÇÃO FEDERAL
+Contribuição Previdenciária - Retida Contribuições Sociais - Retidas Descrição Contrib. Sociais - Retidas
+
+IRRF
+
+PIS - Débito Apuração Própria COFINS - Débito Apuração Própria
+
+VALOR TOTAL DA NFS-E
+Valor do Serviço Desconto Condicionado Desconto Incondicionado ISSQN Retido
+R$ 130,00 E - á
+Total das Retenções Federais PIS/COFINS - Débito Apur. Própria PE TSO O da NFS-e
+TOTAIS APROXIMADOS DOS TRIBUTOS
+Federais Estaduais Municipais
+INFORMAÇÕES COMPLEMENTARES
+Thiagg Guedes
+Eng. Civil
+CREA-BA 3594 -2
+
+São Pedro Oni
+Obra M
+
+Sienge EGRiE had
+
+
+
+Série do Documento
+Nota Fiscal de Serviço
+
+Secretaria Municipal de Economia Eletrônica - NFS-e
+
+Fone: () - http:/Iwww.cuiaba.mt.gov.br/
+
+Número da Nota Fiscal
+
+168279
+
+a] Prefeitura Municipal de Cuiabá
+
+Dados do Prestador de Serviço
+
+Data de Geração da NFS-e
+06/04/2026 18:57:39
+
+HISMET-HIGIENE SEGURANÇA E MEDICINA DO TRABALHO LT Dois do Gompalâncio
+
+HISMET
+
+Avenida General Melo,227 TERREO - Campo Velho dE 104/2026
+CEP 78065-290 - Fone: (6)5321-7051 - Cuiabá! MT (Cd de putenicidado
+administrativoQhismet.com.br 31CD08391
+
+Inscrição Municipal 44441 - CPF/CNPJ 36.894.418/0001-37 Responsável pela Retenção
+
+Identificação da Nota Fiscal Eletrônica
+Número do RPS
+
+161920
+
+Data de Emissão do RPS q
+06/04/2026
+
+Natureza da Operação Série do RPS
+Exigível
+Local dos Serviços
+
+Cuiabá - Mato Grosso
+
+Município Incidência
+Cuiabá - Mato Grosso
+
+Dados do Tomador de Serviços
+
+CNPJICPF : 03.051.741/0001-90 IM: 1492591
+Razão Social: SAO PEDRO CONSTRUTORA LTDA
+
+Endereço : AVPROF MAGALHAES NETO Número: O
+Complemento: QUADRA 28 LOTE 09 Bairro : PITUBA
+CEP: 41810-011 Cidade/UF : Salvador/ BA
+Telefone : E-mail :
+
+Dados do Intermediário de Serviços
+CNPJICPF Inscrição Municipal Razão Social
+
+Descrição dos Serviços
+
+Fatura n.º :68319 Valor R$ 1.170,00 Vencimento:15/04/2026 -
+3-EXAME CLINICO/3-HEMOGRAMA COM CONTAGEM DE PLAQUETAS/3;GLICEMIA DE JEJUM;
+SANGUINEA ABO E FATOR RH/3-EEG - ELETROENCEFALOGRAMA/3;ACUIDADE VISUAL/S-
+ESPIROMETRIA/3-AVALIACAO PSICOSSOCIAL
+
+à thra
+
+MATRIA TONAL/3-TIPAGEM
+RAMA/3-
+
+Thiago Guedes São Pedro Construtora
+Eng. Civil Obra MTi
+CREA-BA 052233594-2 Sienge 2) 5 9
+
+Detalhamento dos Tributos
+Atividade do Município Alíquota | Item da LC 116/2003 | Cód. NBS Cód. CNAE
+8630502 - [8630-5/02] Atividade médica ambulatorial com rec... |3,00 | 403 123012100 | 8630599
+Vi. Total dos Serviços | Desconto Incondicionado | Deduções Base Cálculo | Base de Cálculo TotaldoISSON | [ISSQN Retido | Desconto Condicionado
+
+R$ 1.170,00 R$ 0,00 R$ 0,00 R$ 1.170,00 R$ 35,10 | Não R$ 0,00
+PIS COFINS INSS IRRF CSLL Outras Retenções MI. ISSQN Retido | VI. Líquido da Nota Fiscal
+
+R$ 7,60 | R$ 35,10 R$ 0,00 | R$ 17,55 | R$ 11,70 R$ 0,00 R$ 0,00 R$ 1.098,05
+
+Construção Civil [ Cód. Obra: | Art.:
+
+Informações Adicionais
+PROCON Municipal Cuiabá - Endereço: R. Joaquim Murtinho, 554 - Centro, Cuiabá - MT, 78020-290
+Telefone: (65) 3632-6400
+
+PROCON Estadual - MT - Endereço: Av. Gen. Ramiro de Noronha, 294 - 1º andar - Jardim Cuiaba, Cuiabá - MT, 78
+043-180
+Telefone: (65) 3613-2100/151
+
+Chave de acesso no Ambiente de Dados Nacional: 510340312368944180001370000000168279260417755018
+50.
+
+
+
+Prefeitura Municipal de Cuiabá
+Secretaria Municipal de Economia
+Fone: () - http://www cuiaba.mi.gov.br/
+
+'Sãra do Documento
+(5) Nota Fiscal de Serviço
+Eletrônica - NFS-e
+
+Número da Nota Fiscal
+
+2187
+Dados do Prestador de Serviço
+Data de Geração da NFS-e
+
+PH COPIADORAS E INFORMATICA LTDA 06/04/2026 18:51:03
+
+PH COPIADORAS E INFORMATICA LTDA Data de Competência
+
+Rua Tenente-Coronel Juarez Lucas de Jesus, 201 QUADR; 06/04/2026
+
+PERTO pires, Juarez Lucas de Jesus,201 QU; A 18 LOTE 04 FRENTE PARA À RUA MANOEL TS Ts Atonicado
+
+CEP 78030-140 - Fone: (65)3029-682 - Cuiabá! MT 8E10DED16
+
+financeiro1rGphinformatica.tec.br
+Inscrição Municipal 183522 - CPF/CNPJ 36.048.343/0001-73
+
+Responsável pela Retenção
+
+Identificação da Nota Fiscal Eletrônica
+
+Natureza da Operação [Número do RPS [Série do RPS Data de Emissão do RPS
+Exigível
+
+Tocal dos Serviços unicipi incidência
+
+Cuiabá - Mato Grosso Cuiabá - Mato Grosso
+
+Dados do Tomador de Serviços
+
+CNPJICPF:  03.051.741/0001-90 IM: 1492591
+
+Razão Social: Sao Pedro Construtora Ltda
+
+Endereço : Avenida Praia de Pajussara Número: 554
+
+Complemento : QD 28, LOTE 9 Bairro: Vilas do Atlântico
+
+CEP: 42708-720 Cidade/UF : Lauro de Freitas/ BA
+
+Telefone : (71)3272-0733 E-mail: * sp()saopedroconstrutora.com.br
+Dados do Intermediário de Serviços
+
+CNPJICPF Inscrição Municipal Razão Social
+
+Descrição dos Serviços
+
+Referente Fatura Mês de Março 2026.
+
+1 Franquia de 3.000 Mil Impressões no valor de R$ 220,00 reais
+
+1 Locação de Notebook R$ 280,00 reais.
+
+1 LOCAÇÃO DE COMPUTADORALL IN ONE por R$ 180,00 reais.
+
+Valor total de R$ 680,00 reais.
+
+Detalhamento dos Tributos
+
+[Atividade do Município. Alíquota fitem da LC+16/2003 [Cóa. NBS Cód. CNAE
+9511800 - [9511-8/00] Reparação e manutenção de computad.... 3,45 | 1402 120012000 | 9511800
+[VI. Total dos Serviços [Desconto Incondicionado [Deduções Base Cálculo Base de Cálculo Total do ISSQN [ISSQN Retido Desconto Condicionado
+R$ 680,00 R$ 0,00 R$ 0,00 R$ 680,00 R$ 23,46 | Não R$ 0,00
+PIS [COFINS INSS IRRF CSLL [Outras Retenções [VI ISSQN Retido |V. Liquido da Nota Fiscal
+R$ 0,00 R$ 0,00 | R$ 0,00 | R$ 0,00 | R$ 0,00 R$ 0,00 R$ 0,00 R$ 680,00
+Construção Civil |cód. Obra : Art. :
+
+Informações Adicionais
+
+T="DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL"; e Il - “NÃO GERA DIREITO A CRÉDITO FIS
+
+CAL DE IPI.”
+
+PROCON Municipal Cuiabá - Endereço: R. Joaquim Murtinho, 554 - Centro, Cuiabá - MT, 78020-290
+
+Telefone: (65) 3632-6400
+
+PROCON Estadual - MT - Endereço: Av. Gen. Ramiro de Noronha, 294 - 1º andar - Jardim Cuiaba, Cuiabá - MT, 78043-180
+
+Telefone: (65) 3613-2100/151
+
+Consulte a autenticidade deste documento acessando o site: htt;
+
+Guedes
+Civil
+
+j q
+
+tora
+
+São Pedro Construtora
+]
+
+Obra
+
+Sienge
+
