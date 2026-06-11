@@ -402,7 +402,7 @@ class SPPdfExtractor:
             elif len(chave) == 48:
                 n_nf = chave[23:38].lstrip('0')
             elif len(chave) >= 50:
-                n_nf = chave[28:37].lstrip('0')
+                n_nf = chave[23:36].lstrip('0')
             else:
                 n_nf = None
             if n_nf: return n_nf
