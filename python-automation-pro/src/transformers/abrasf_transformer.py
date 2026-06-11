@@ -147,6 +147,15 @@ class Abrasf201Transformer:
         servico = ET.SubElement(inf_decl, 'Servico')
         valores = ET.SubElement(servico, 'Valores')
         ET.SubElement(valores, 'ValorServicos').text = f"{nfse.valores.valor_servicos:.2f}"
+        ET.SubElement(valores, 'ValorDeducoes').text = f"{nfse.valores.valor_deducoes:.2f}"
+        ET.SubElement(valores, 'ValorPis').text = f"{nfse.valores.valor_pis:.2f}"
+        ET.SubElement(valores, 'ValorCofins').text = f"{nfse.valores.valor_cofins:.2f}"
+        ET.SubElement(valores, 'ValorInss').text = f"{nfse.valores.valor_inss:.2f}"
+        ET.SubElement(valores, 'ValorIr').text = f"{nfse.valores.valor_ir:.2f}"
+        ET.SubElement(valores, 'ValorCsll').text = f"{nfse.valores.valor_csll:.2f}"
+        ET.SubElement(valores, 'OutrasRetencoes').text = f"{nfse.valores.outras_retencoes:.2f}"
+        if getattr(nfse.valores, 'valor_iss_retido', 0) > 0 or nfse.valores.iss_retido:
+            ET.SubElement(valores, 'ValorIssRetido').text = f"{getattr(nfse.valores, 'valor_iss_retido', 0.0):.2f}"
         ET.SubElement(valores, 'IssRetido').text = "1" if nfse.valores.iss_retido else "2"
         ET.SubElement(valores, 'ValorIss').text = f"{nfse.valores.valor_iss:.2f}"
         ET.SubElement(valores, 'BaseCalculo').text = f"{nfse.valores.base_calculo:.2f}"

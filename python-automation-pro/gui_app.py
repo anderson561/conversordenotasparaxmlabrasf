@@ -273,71 +273,144 @@ def main(page: ft.Page):
                 page.update()
                 return
 
-        process_btn.disabled = True
-        progress_bar.visible = True
-        log_area.controls.clear()
-        add_log("[*] Iniciando processamento...", "blue")
-        page.update()
+        files_to_check = []
+        if not is_contrato:
+            if selected_files:
+                files_to_check = selected_files
+            elif input_dir_text.value and os.path.isdir(input_dir_text.value):
+                files_to_check = [os.path.join(input_dir_text.value, f) for f in os.listdir(input_dir_text.value) if f.lower().endswith('.pdf')]
 
-        def run():
+        def do_run(selected_pages=None):
+            process_btn.disabled = True
+            progress_bar.visible = True
+            log_area.controls.clear()
+            add_log("[*] Iniciando processamento...", "blue")
+            page.update()
+
+            def run():
+                try:
+                    if is_contrato:
+                        # Montar objeto ContratoLocacao
+                        dt_emissao = datetime.combine(selected_date[0], datetime.min.time())
+                        contrato = ContratoLocacao(
+                            locador=EntidadeContrato(
+                                cnpj_cpf=locador_doc.value.strip(),
+                                razao_social=locador_nome.value.strip(),
+                                inscricao_municipal=locador_im.value.strip() or None,
+                                logradouro=locador_end.value.strip() or "Não informado",
+                                numero=locador_num.value.strip() or "S/N",
+                                bairro=locador_bairro.value.strip() or "Não informado",
+                                codigo_municipio=locador_mun.value.strip() or "2927408",
+                                uf=locador_uf.value.strip() or "BA",
+                                cep=locador_cep.value.strip() or "00000000",
+                            ),
+                            locatario=EntidadeContrato(
+                                cnpj_cpf=locatario_doc.value.strip(),
+                                razao_social=locatario_nome.value.strip(),
+                                inscricao_municipal=locatario_im.value.strip() or None,
+                                logradouro=locatario_end.value.strip() or "Não informado",
+                                numero=locatario_num.value.strip() or "S/N",
+                                bairro=locatario_bairro.value.strip() or "Não informado",
+                                codigo_municipio=locatario_mun.value.strip() or "2927408",
+                                uf=locatario_uf.value.strip() or "BA",
+                                cep=locatario_cep.value.strip() or "00000000",
+                            ),
+                            valor_mensal=float(valor_mensal_field.value.replace(",", ".")),
+                            discriminacao=discriminacao_field.value.strip(),
+                            aliquota_iss=float(aliquota_field.value.replace(",", ".")),
+                            servico_codigo=servico_codigo_field.value.strip() or "0601",
+                            data_emissao=dt_emissao,
+                        )
+                        run_contrato_conversion(
+                            contrato=contrato,
+                            output_dir=out_dir,
+                            progress_callback=update_progress
+                        )
+                    else:
+                        if len(files_to_check) == 1:
+                            from src.main import run_conversion
+                            # Chama run_conversion direto se for um único arquivo, pois suporta selected_pages
+                            output_xml = os.path.join(out_dir, "temp.xml") # run_conversion espera o caminho do xml, embora vá gerar os corretos
+                            run_conversion(
+                                pdf_path=files_to_check[0],
+                                output_xml_path=output_xml,
+                                output_format=format_dropdown.value,
+                                selected_pages=selected_pages
+                            )
+                            update_progress(1.0, f"[+] Concluído! XMLs gerados em {out_dir}")
+                        else:
+                            run_batch_conversion(
+                                input_dir=input_dir_text.value if not selected_files else None,
+                                pdf_files=selected_files if selected_files else None,
+                                output_dir=out_dir,
+                                progress_callback=update_progress,
+                                output_format=format_dropdown.value
+                            )
+
+                    page.snack_bar = ft.SnackBar(ft.Text("Processamento concluído com sucesso!"))
+                    page.snack_bar.open = True
+                except Exception as ex:
+                    add_log(f"[ERRO] {str(ex)}", "red")
+                    page.snack_bar = ft.SnackBar(ft.Text(f"Erro: {str(ex)}"))
+                    page.snack_bar.open = True
+                finally:
+                    process_btn.disabled = False
+                    page.update()
+
+            threading.Thread(target=run, daemon=True).start()
+
+        # Verifica se é um único arquivo PDF com múltiplas páginas
+        if not is_contrato and len(files_to_check) == 1:
+            from src.extractors.pdf_extractor import SPPdfExtractor
             try:
-                if is_contrato:
-                    # Montar objeto ContratoLocacao
-                    dt_emissao = datetime.combine(selected_date[0], datetime.min.time())
-                    contrato = ContratoLocacao(
-                        locador=EntidadeContrato(
-                            cnpj_cpf=locador_doc.value.strip(),
-                            razao_social=locador_nome.value.strip(),
-                            inscricao_municipal=locador_im.value.strip() or None,
-                            logradouro=locador_end.value.strip() or "Não informado",
-                            numero=locador_num.value.strip() or "S/N",
-                            bairro=locador_bairro.value.strip() or "Não informado",
-                            codigo_municipio=locador_mun.value.strip() or "2927408",
-                            uf=locador_uf.value.strip() or "BA",
-                            cep=locador_cep.value.strip() or "00000000",
-                        ),
-                        locatario=EntidadeContrato(
-                            cnpj_cpf=locatario_doc.value.strip(),
-                            razao_social=locatario_nome.value.strip(),
-                            inscricao_municipal=locatario_im.value.strip() or None,
-                            logradouro=locatario_end.value.strip() or "Não informado",
-                            numero=locatario_num.value.strip() or "S/N",
-                            bairro=locatario_bairro.value.strip() or "Não informado",
-                            codigo_municipio=locatario_mun.value.strip() or "2927408",
-                            uf=locatario_uf.value.strip() or "BA",
-                            cep=locatario_cep.value.strip() or "00000000",
-                        ),
-                        valor_mensal=float(valor_mensal_field.value.replace(",", ".")),
-                        discriminacao=discriminacao_field.value.strip(),
-                        aliquota_iss=float(aliquota_field.value.replace(",", ".")),
-                        servico_codigo=servico_codigo_field.value.strip() or "0601",
-                        data_emissao=dt_emissao,
+                extractor = SPPdfExtractor(files_to_check[0])
+                nfse_list = extractor.parse_multiple()
+                invalid_pages = getattr(extractor, 'invalid_pages', [])
+                
+                if invalid_pages:
+                    msgs = [f"Pág {p['page']}: {p['reason']}" for p in invalid_pages]
+                    page.snack_bar = ft.SnackBar(
+                        ft.Text("Atenção: " + " | ".join(msgs)),
+                        bgcolor=ft.colors.ORANGE_800
                     )
-                    run_contrato_conversion(
-                        contrato=contrato,
-                        output_dir=out_dir,
-                        progress_callback=update_progress
-                    )
-                else:
-                    run_batch_conversion(
-                        input_dir=input_dir_text.value if not selected_files else None,
-                        pdf_files=selected_files if selected_files else None,
-                        output_dir=out_dir,
-                        progress_callback=update_progress,
-                        output_format=format_dropdown.value
-                    )
+                    page.snack_bar.open = True
+                    page.update()
+                
+                if len(nfse_list) > 1:
+                    def on_dialog_close(e, sel_pages=None):
+                        dialog.open = False
+                        page.update()
+                        do_run(selected_pages=sel_pages)
 
-                page.snack_bar = ft.SnackBar(ft.Text("Processamento concluído com sucesso!"))
-                page.snack_bar.open = True
+                    options = []
+                    for n in nfse_list:
+                        options.append(
+                            ft.ElevatedButton(
+                                f"Página {n.pagina_origem}",
+                                on_click=lambda e, p=n.pagina_origem: on_dialog_close(e, [p])
+                            )
+                        )
+                    
+                    options.append(
+                        ft.ElevatedButton(
+                            "Todas as Válidas",
+                            on_click=lambda e: on_dialog_close(e, None),
+                            bgcolor=ft.colors.BLUE_700
+                        )
+                    )
+                    
+                    dialog = ft.AlertDialog(
+                        title=ft.Text("Múltiplas Páginas Encontradas"),
+                        content=ft.Column([ft.Text("O PDF possui mais de uma nota válida. Qual deseja converter?")] + options, tight=True)
+                    )
+                    page.overlay.append(dialog)
+                    dialog.open = True
+                    page.update()
+                    return
             except Exception as ex:
-                add_log(f"[ERRO] {str(ex)}", "red")
-                page.snack_bar = ft.SnackBar(ft.Text(f"Erro: {str(ex)}"))
-                page.snack_bar.open = True
-            finally:
-                process_btn.disabled = False
-                page.update()
-
-        threading.Thread(target=run, daemon=True).start()
+                pass # se der erro, deixa o do_run processar e mostrar no log
+                
+        do_run()
 
     process_btn = ft.ElevatedButton(
         "Iniciar Conversão",

@@ -52,3 +52,4 @@ class Nfse(BaseModel):
     regime_especial_tributacao: Optional[str] = None
     incentivador_cultural: bool = False
     status: str = "Normal"
+    pagina_origem: Optional[int] = None

@@ -159,7 +159,7 @@ class SPPdfExtractor:
         t = page_text
         if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet', t, re.IGNORECASE):
             return LAYOUT_CUIABA
-        if re.search(r'Data\s+Fato\s+Gerador', t, re.IGNORECASE):
+        if re.search(r'Data\s+Fato\s+Gerador|MUNICIPIO\s+DE\s+BARREIRAS', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
@@ -206,26 +206,21 @@ class SPPdfExtractor:
             m = re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
         elif layout == LAYOUT_NACIONAL:
-            # Tenta extrair usando o formato multilinhas da DANFSe Nacional
-            m_nac = re.search(r'Compet[eê]ncia\s+da\s+NFS-e[\s\n]+Data\s+e\s+Hora\s+da\s+emiss[aã]o.*?[\r\n]+(?:\d+[\r\n\s]+)?(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE | re.DOTALL)
-            if m_nac:
-                result = _parse_dmy(m_nac.group(1)) or None
-            
-            if result is None:
-                # Tenta DD/MM/YYYY primeiro. Permitimos espaços, : , \n e a palavra 'Data' no meio.
-                # O separador (?:[:\s\n]|Data)*? garante que não pularemos outras datas (dígitos).
-                m = re.search(r'Compet.*?da\s+NFS-e(?:[:\s\n]|Data)*?(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
-                if m:
-                    result = _parse_dmy(m.group(1)) or None
-            if result is None:
-                # Tenta MM/YYYY como fallback
-                m = re.search(r'Compet.*?da\s+NFS-e(?:[:\s\n]|Data)*?(\d{1,2}/\d{4})(?!\d)', t, re.IGNORECASE)
-                if m:
-                    try:
-                        mes_str, ano_str = m.group(1).split('/')
-                        result = datetime(int(ano_str), int(mes_str), 1)
-                    except (ValueError, TypeError):
-                        result = None
+            # Captura o trecho logo após a label e busca a primeira data (DD/MM/YYYY ou MM/YYYY)
+            m = re.search(r'Compet[eê]ncia\s+da\s+NFS-e', t, re.IGNORECASE)
+            if m:
+                snippet = t[m.end():m.end()+150]
+                m_date = re.search(r'(\d{2}/\d{2}/\d{4}|\d{1,2}/\d{4})(?!\d)', snippet)
+                if m_date:
+                    val = m_date.group(1)
+                    if len(val.split('/')) == 3:
+                        result = _parse_dmy(val) or None
+                    else:
+                        try:
+                            mes_str, ano_str = val.split('/')
+                            result = datetime(int(ano_str), int(mes_str), 1)
+                        except (ValueError, TypeError):
+                            result = None
         elif layout == LAYOUT_SALVADOR:
             m = re.search(r'COMPET[EÊ]NCIA(?:\s*:\s*|\s+)(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -861,6 +856,7 @@ class SPPdfExtractor:
         pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         
         _val_patterns = [
+            r'VL\.\s+do\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DO\s+SERVIÇO:?\s*R\$?\s*([\d\.,]+)',
             r'Vl\.\s+Total\s+dos\s+Servi[cç]os\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
@@ -1110,10 +1106,18 @@ class SPPdfExtractor:
         
         pages = full_text.split('\x0c')
         
+        self.invalid_pages = []
         filtered_pages = []
-        for page in pages:
-            if not re.search(self.TRASH_PATTERN, page, re.IGNORECASE) and len(page.strip()) > 50:
-                filtered_pages.append(page)
+        for idx, page in enumerate(pages, start=1):
+            if re.search(self.TRASH_PATTERN, page, re.IGNORECASE):
+                self.invalid_pages.append({"page": idx, "reason": "Lixo/Recibo detectado"})
+                continue
+            layout = self._detect_layout_page(page)
+            if layout == LAYOUT_GENERICO and len(page.strip()) > 50:
+                self.invalid_pages.append({"page": idx, "reason": "Layout não reconhecido"})
+                continue
+            if len(page.strip()) > 50:
+                filtered_pages.append((page, idx))
                 
         invoices_texts = []
         current_invoice = []
@@ -1158,9 +1162,9 @@ class SPPdfExtractor:
 
         # Processamento granular: quebra páginas que contêm múltiplas notas (divisores internos ou novos cabeçalhos)
         granular_blocks = []
-        for page in filtered_pages:
+        for page_text, page_idx in filtered_pages:
             # 1. Quebra por divisores visuais (linhas horizontais de OCR)
-            parts = re.split(r'(?=\n_{20,}|\n={20,}|\n-{20,})', page)
+            parts = re.split(r'(?=\n_{20,}|\n={20,}|\n-{20,})', page_text)
             
             # 2. Quebra por cabeçalhos conhecidos se aparecerem colados no texto
             # Usamos lookahead para não consumir o cabeçalho no split
@@ -1169,35 +1173,35 @@ class SPPdfExtractor:
             final_parts = []
             for p in parts:
                 sub_parts = re.split(headers_regex, p, flags=re.I)
-                final_parts.extend([sp for sp in sub_parts if len(sp.strip()) > 50])
+                final_parts.extend([(sp, page_idx) for sp in sub_parts if len(sp.strip()) > 50])
             
             granular_blocks.extend(final_parts)
 
-        for block in granular_blocks:
+        for block_text, page_idx in granular_blocks:
             # Tenta identificar o número da nota no bloco atual (suporta Número e Nº)
-            num_match = re.search(r'(?:N[uú]mero|N[ºo]).*?(\d+)', block, re.I)
+            num_match = re.search(r'(?:N[uú]mero|N[ºo]).*?(\d+)', block_text, re.I)
             block_num = num_match.group(1) if num_match else None
 
-            if is_new_invoice(block, current_num):
+            if is_new_invoice(block_text, current_num):
                 if current_invoice:
-                    invoices_texts.append("\n\x0c\n".join(current_invoice))
+                    invoices_texts.append(("\n\x0c\n".join([c[0] for c in current_invoice]), current_invoice[0][1]))
                     current_invoice = []
-                current_invoice.append(block)
+                current_invoice.append((block_text, page_idx))
                 current_num = block_num
                 # Verifica se a nota que acabou de iniciar é da Localiza
-                is_localiza = bool(re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', block, re.IGNORECASE))
+                is_localiza = bool(re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', block_text, re.IGNORECASE))
             else:
                 if not is_localiza:
-                    current_invoice.append(block)
+                    current_invoice.append((block_text, page_idx))
                     if block_num: current_num = block_num
                     
         if current_invoice:
-            invoices_texts.append("\n\x0c\n".join(current_invoice))
+            invoices_texts.append(("\n\x0c\n".join([c[0] for c in current_invoice]), current_invoice[0][1]))
             
         results = []
         seen_numbers = set()
         
-        for text_block in invoices_texts:
+        for text_block, page_idx in invoices_texts:
             if len(text_block.strip()) < 50: continue
             
             sub_ext = SPPdfExtractor(self.pdf_path)
@@ -1217,6 +1221,7 @@ class SPPdfExtractor:
                 if key in seen_numbers and nfse.numero != '00000000':
                     continue
                 
+                nfse.pagina_origem = page_idx
                 seen_numbers.add(key)
                 results.append(nfse)
             except Exception as e:

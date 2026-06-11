@@ -5,7 +5,7 @@ from .transformers.contrato_transformer import ContratoLocacaoTransformer
 from .models.contrato_locacao_model import ContratoLocacao
 import os
 
-def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "abrasf"):
+def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "abrasf", selected_pages: list = None):
     print(f"[*] Carregando PDF: {pdf_path}")
     extractor = SPPdfExtractor(pdf_path)
 
@@ -17,26 +17,28 @@ def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "ab
             "Nenhuma nota pôde ser lida."
         )
 
+    if selected_pages is not None:
+        nfse_list = [n for n in nfse_list if n.pagina_origem in selected_pages]
+        if not nfse_list:
+            raise ValueError("Nenhuma nota encontrada nas páginas selecionadas.")
+
     print(f"[*] Transformando para {output_format.upper()}...")
     transformer = Abrasf201Transformer() if output_format == "abrasf" else NfeTransformer()
     os.makedirs(os.path.dirname(output_xml_path), exist_ok=True)
     
-    if len(nfse_list) == 1:
-        xml_content = transformer.transform(nfse_list[0])
-        print(f"[*] Salvando XML: {output_xml_path}")
-        with open(output_xml_path, "w", encoding="utf-8") as f:
-            f.write(xml_content)
-    else:
-        # Gera um único arquivo de lote para todas as notas do PDF
-        xml_content = transformer.transform_batch(nfse_list)
+    base_dir = os.path.dirname(output_xml_path)
+    base_name = os.path.basename(output_xml_path)
+    name_no_ext = base_name.rsplit('.', 1)[0]
+
+    for nfse in nfse_list:
+        xml_content = transformer.transform(nfse)
+        pag_origem = getattr(nfse, 'pagina_origem', None)
+        pag_str = f"_Pagina_{pag_origem}" if pag_origem else ""
+        xml_name = f"{name_no_ext}{pag_str}_NF_{nfse.numero}.xml"
+        xml_path = os.path.join(base_dir, xml_name)
         
-        base_dir = os.path.dirname(output_xml_path)
-        base_name = os.path.basename(output_xml_path)
-        name_no_ext = base_name.rsplit('.', 1)[0]
-        
-        batch_xml_path = os.path.join(base_dir, f"{name_no_ext}_LOTE.xml")
-        print(f"[*] Salvando Lote XML ({len(nfse_list)} notas): {batch_xml_path}")
-        with open(batch_xml_path, "w", encoding="utf-8") as f:
+        print(f"[*] Salvando XML: {xml_path}")
+        with open(xml_path, "w", encoding="utf-8") as f:
             f.write(xml_content)
 
     print(f"[+] Conversão concluída com sucesso! ({len(nfse_list)} notas extraídas)")
@@ -82,25 +84,19 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
 
             base_filename = filename.rsplit('.', 1)[0]
             
-            if len(nfse_list) == 1:
-                nfse_data = nfse_list[0]
+            for nfse_data in nfse_list:
                 num_nota = getattr(nfse_data, 'numero', '00000000')
-                xml_name = f"{base_filename}_NF_{num_nota}.xml"
+                pag_origem = getattr(nfse_data, 'pagina_origem', None)
+                pag_str = f"_Pagina_{pag_origem}" if pag_origem else ""
+                xml_name = f"{base_filename}{pag_str}_NF_{num_nota}.xml"
                 output_xml_path = os.path.join(output_dir, xml_name)
                 xml_content = transformer.transform(nfse_data)
                 with open(output_xml_path, "w", encoding="utf-8") as f:
                     f.write(xml_content)
-                success_count += 1
-            else:
-                # Lote
-                xml_name = f"{base_filename}_LOTE.xml"
-                output_xml_path = os.path.join(output_dir, xml_name)
-                xml_content = transformer.transform_batch(nfse_list)
-                with open(output_xml_path, "w", encoding="utf-8") as f:
-                    f.write(xml_content)
-                success_count += len(nfse_list)
+            
+            success_count += len(nfse_list)
 
-            print(f"[+] Gerado XML: {xml_name} ({len(nfse_list)} notas)")
+            print(f"[+] Gerados {len(nfse_list)} XMLs para: {filename}")
 
             if progress_callback:
                 progress_callback(i / total_files, f"[+] {filename} -> {len(nfse_list)} XMLs Gerados!")
