@@ -1006,7 +1006,7 @@ class SPPdfExtractor:
     def _extract_via_ocr(self) -> str:
         """Tenta extrair o texto renderizando as páginas do PDF como imagens e passando pelo Tesseract."""
         try:
-            import fitz  # PyMuPDF
+            import pymupdf  # PyMuPDF
             import pytesseract
             from PIL import Image
             import io
@@ -1019,14 +1019,14 @@ class SPPdfExtractor:
             
             print(f"[*] PDF '{self.pdf_path}' sem texto detectado. Iniciando extração via OCR (Tesseract)...")
             
-            doc = fitz.open(self.pdf_path)
+            doc = pymupdf.open(self.pdf_path)
             full_ocr_text = []
             
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 # Aumenta a resolução para melhorar a precisão do OCR (zoom 2x)
                 zoom = 2.0
-                mat = fitz.Matrix(zoom, zoom)
+                mat = pymupdf.Matrix(zoom, zoom)
                 pix = page.get_pixmap(matrix=mat)
                 
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
