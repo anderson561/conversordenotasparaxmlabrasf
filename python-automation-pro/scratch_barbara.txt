@@ -1,0 +1,220 @@
+DANFSe v1.0
+Documento Auxiliar da NFS-e
+
+MUNICIPIO DO SALVADOR
+(71)3202-8280
+notasalvador@sefaz.salvador.ba.gov.br
+
+Chave de Acesso da NFS-e
+29274082217990262000143000000000006426050000055420
+
+Número da NFS-e
+64
+
+Número da DPS
+8
+
+Competência da NFS-e
+04/05/2026
+
+Série da DPS
+70000
+
+Data e Hora da emissão da NFS-e
+04/05/2026 06:05:23
+
+Data e Hora da emissão da DPS
+04/05/2026 06:05:23
+
+A autenticidade desta NFS-e pode ser verificada
+pela leitura deste código QR ou pela consulta da
+chave de acesso no portal nacional da NFS-e
+
+EMITENTE DA NFS-e
+Prestador do Serviço
+
+CNPJ / CPF / NIF
+17.990.262/0001-43
+
+Inscrição Municipal
+-
+
+Telefone
+(71) 4103-6212
+
+Nome / Nome Empresarial
+BARBARA CONCEICAO BARRETO PINHEIRO 79670725534
+
+E-mail
+HUMANIZARCURSOS01@GMAIL.COM
+
+Endereço
+CAMINHO 08-SETOR 02, 18, CAJAZEIRAS X
+
+Simples Nacional na Data de Competência
+Optante - Microempreendedor Individual (MEI)
+
+Município
+Salvador - BA
+
+CEP
+41340-150
+
+Regime de Apuração Tributária pelo SN
+-
+
+INTERMEDIÁRIO DO SERVIÇO
+
+CNPJ / CPF / NIF
+03.051.741/0001-90
+
+Nome / Nome Empresarial
+SAO PEDRO CONSTRUTORA LTDA
+
+Inscrição Municipal
+-
+
+E-mail
+-
+
+TOMADOR DO SERVIÇO NÃO IDENTIFICADO NA NFS-e
+
+Telefone
+-
+
+Endereço
+PRAIA DE PAJUSSARA, 554, QUADRA 28 LOTE 09, VILAS DO ATLANTICO
+
+Município
+Lauro de Freitas - BA
+
+CEP
+42708-720
+
+SERVIÇO PRESTADO
+
+Código de Tributação Nacional
+08.02.01 - Instrução, treinamento,
+orientação pedagógica e educacion...
+
+Código de Tributação Municipal
+-
+
+Local da Prestação
+Salvador - BA
+
+País da Prestação
+-
+
+Descrição do Serviço
+Treinamento para 03 colaboradores
+NR 10 Reciclagem
+Nu Pagamentos S.A. - Instituição de Pagamento
+Vencimento em 08 dias corridos a partir da emissão da NF
+Pix 17990262000143
+
+TRIBUTAÇÃO MUNICIPAL
+
+Tributação do ISSQN
+Operação Tributável
+
+Tipo de Imunidade
+-
+
+Valor do Serviço
+R$ 375,00
+
+BC ISSQN
+-
+
+TRIBUTAÇÃO FEDERAL
+
+IRRF
+-
+
+PIS - Débito Apuração Própria
+-
+
+VALOR TOTAL DA NFS-E
+
+Valor do Serviço
+R$ 375,00
+
+País Resultado da Prestação do Serviço
+-
+
+Município de Incidência do ISSQN
+Salvador - BA
+
+Regime Especial de Tributação
+Nenhum
+
+Suspensão da Exigibilidade do ISSQN
+Não
+
+Número Processo Suspensão
+-
+
+Benefício Municipal
+-
+
+Desconto Incondicionado
+-
+
+Alíquota Aplicada
+-
+
+Total Deduções/Reduções
+-
+
+Retenção do ISSQN
+Não Retido
+
+Cálculo do BM
+-
+
+ISSQN Apurado
+-
+
+Contribuição Previdenciária - Retida
+-
+
+Contribuições Sociais - Retidas
+-
+
+Descrição Contrib. Sociais - Retidas
+-
+
+COFINS - Débito Apuração Própria
+-
+
+Desconto Condicionado
+-
+
+Desconto Incondicionado
+-
+
+Total das Retenções Federais
+-
+
+PIS/COFINS - Débito Apur. Própria
+-
+
+TOTAIS APROXIMADOS DOS TRIBUTOS
+
+Federais
+-
+
+Estaduais
+-
+
+INFORMAÇÕES COMPLEMENTARES
+
+ISSQN Retido
+-
+
+Valor Líquido da NFS-e
+R$ 375,00
+
+Municipais
+-

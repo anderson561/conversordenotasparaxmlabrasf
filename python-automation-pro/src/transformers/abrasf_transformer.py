@@ -213,6 +213,19 @@ class Abrasf201Transformer:
                 ET.SubElement(contato_tomador, 'Telefone').text = self._digits(nfse.tomador.telefone)[:11]
             if nfse.tomador.email:
                 ET.SubElement(contato_tomador, 'Email').text = nfse.tomador.email[:80]
+                
+        if getattr(nfse, 'intermediario', None):
+            intermediario = ET.SubElement(inf_decl, 'Intermediario')
+            ident_inter = ET.SubElement(intermediario, 'IdentificacaoIntermediario')
+            cpf_cnpj_inter = ET.SubElement(ident_inter, 'CpfCnpj')
+            self._append_cpf_cnpj(cpf_cnpj_inter, nfse.intermediario.cnpj_cpf, preferred="cnpj")
+            
+            if nfse.intermediario.inscricao_municipal:
+                ET.SubElement(ident_inter, 'InscricaoMunicipal').text = nfse.intermediario.inscricao_municipal
+                
+            razao_inter = nfse.intermediario.razao_social.strip()
+            if not razao_inter: razao_inter = "Intermediário Não Identificado"
+            ET.SubElement(intermediario, 'RazaoSocial').text = razao_inter
             
         ET.SubElement(inf_decl, 'OptanteSimplesNacional').text = "1" if getattr(nfse, 'optante_simples_nacional', False) else "2"
         ET.SubElement(inf_decl, 'IncentivoFiscal').text = "1" if getattr(nfse, 'incentivador_cultural', False) else "2"

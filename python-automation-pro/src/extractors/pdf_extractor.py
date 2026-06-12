@@ -67,6 +67,10 @@ _LABELS_TOMADOR = [
     'Tomador de Serviços',     # Portal Nacional (plural)
     'Cliente',                 # Portal Nacional / DANFSe usa 'Cliente'
 ]
+_LABELS_INTERMEDIARIO = [
+    'Intermediário do Serviço', 'INTERMEDIÁRIO DO SERVIÇO', 'Intermediário',
+    'Intermediario', 'Dados do Intermediário', 'INTERMEDIARIO'
+]
 _LABELS_CNPJ_CPF = [
     'CNPJ', 'CPF', 'CNPJ / CPF / NIF', 'CPF/CNPJ', 'Inscrição Federal', 'CPF/CNPJ:'
 ]
@@ -528,9 +532,10 @@ class SPPdfExtractor:
         
         return 'XXXX-XXXX'
 
-    def _extrair_entidade(self, tipo: str) -> Entidade:
+    def _extrair_entidade(self, tipo: str) -> Optional[Entidade]:
         t = self.raw_text
         is_prestador = (tipo.lower() == 'prestador')
+        is_intermediario = (tipo.lower() == 'intermediario')
         
         if self.layout == LAYOUT_LOCALIZA:
             if is_prestador:
@@ -562,9 +567,14 @@ class SPPdfExtractor:
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         # 1. Bloco
-        labels = sorted(_LABELS_PRESTADOR if is_prestador else _LABELS_TOMADOR, key=len, reverse=True)
+        if is_intermediario:
+            labels = sorted(_LABELS_INTERMEDIARIO, key=len, reverse=True)
+            other_labels = _LABELS_PRESTADOR + _LABELS_TOMADOR
+        else:
+            labels = sorted(_LABELS_PRESTADOR if is_prestador else _LABELS_TOMADOR, key=len, reverse=True)
+            other_labels = _LABELS_TOMADOR if is_prestador else _LABELS_PRESTADOR
+
         pattern_labels = "|".join([relax(l) for l in labels])
-        other_labels = _LABELS_TOMADOR if is_prestador else _LABELS_PRESTADOR
         pattern_other_labels = "|".join([relax(l) for l in other_labels])
         delimiters = rf'{pattern_other_labels}|{relax("Discrimina")}|' + \
                      rf'{relax("VALOR TOTAL")}|{relax("DADOS COMPLEMENTARES")}|' + \
@@ -572,6 +582,10 @@ class SPPdfExtractor:
         
         pattern_bloco = rf'(?:{pattern_labels}).*?(?={delimiters})'
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
+        
+        if is_intermediario and not m_bloco:
+            return None
+
         bloco = m_bloco.group(0) if m_bloco else t
 
         bloco_clean = bloco.replace('|', ' ').replace('!', ' ').replace('\n', ' ').strip()
@@ -1080,6 +1094,7 @@ class SPPdfExtractor:
 
         prestador = self._extrair_entidade("Prestador")
         tomador   = self._extrair_entidade("Tomador")
+        intermediario = self._extrair_entidade("Intermediario")
         valores   = self._extrair_valores()
 
         discriminacao = self._extrair_discriminacao()
@@ -1106,6 +1121,7 @@ class SPPdfExtractor:
             competencia=competencia,
             prestador=prestador,
             tomador=tomador,
+            intermediario=intermediario,
             discriminacao=discriminacao,
             servico_codigo=servico_codigo,
             valores=valores,

@@ -45,6 +45,7 @@ class Nfse(BaseModel):
     competencia: datetime
     prestador: Entidade
     tomador: Entidade
+    intermediario: Optional[Entidade] = None
     discriminacao: str
     servico_codigo: str  # Ex: 03115
     valores: Valores
