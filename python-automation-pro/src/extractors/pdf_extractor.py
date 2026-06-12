@@ -572,13 +572,14 @@ class SPPdfExtractor:
             other_labels = _LABELS_PRESTADOR + _LABELS_TOMADOR
         else:
             labels = sorted(_LABELS_PRESTADOR if is_prestador else _LABELS_TOMADOR, key=len, reverse=True)
-            other_labels = _LABELS_TOMADOR if is_prestador else _LABELS_PRESTADOR
+            other_labels = (_LABELS_TOMADOR if is_prestador else _LABELS_PRESTADOR) + _LABELS_INTERMEDIARIO
 
         pattern_labels = "|".join([relax(l) for l in labels])
         pattern_other_labels = "|".join([relax(l) for l in other_labels])
         delimiters = rf'{pattern_other_labels}|{relax("Discrimina")}|' + \
                      rf'{relax("VALOR TOTAL")}|{relax("DADOS COMPLEMENTARES")}|' + \
-                     rf'{relax("OUTRAS INFORMAÇÕES")}|$'
+                     rf'{relax("OUTRAS INFORMAÇÕES")}|{relax("SERVIÇO PRESTADO")}|' + \
+                     rf'{relax("Descrição do Serviço")}|$'
         
         pattern_bloco = rf'(?:{pattern_labels}).*?(?={delimiters})'
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
@@ -611,8 +612,9 @@ class SPPdfExtractor:
             
             if not cnpj:
                 if is_prestador and len(all_cnpjs) >= 1: cnpj = all_cnpjs[0]
-                elif not is_prestador and len(all_cnpjs) >= 2: cnpj = all_cnpjs[1]
-                elif not is_prestador and len(all_cnpjs) == 1: cnpj = all_cnpjs[0] # Fallback se só um for achado
+                elif not is_prestador and not is_intermediario and len(all_cnpjs) >= 2:
+                    if "NÃO IDENTIFICADO" not in bloco_clean.upper() and "NAO IDENTIFICADO" not in bloco_clean.upper():
+                        cnpj = all_cnpjs[1]
         
         if not cnpj: cnpj = '00000000000100'
 
