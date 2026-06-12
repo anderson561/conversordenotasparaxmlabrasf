@@ -810,11 +810,18 @@ class SPPdfExtractor:
             
             clean_mun = mun_text
             
+            # Checa se existe "Estado/Prov./Reg." no texto (Padrão Cuiabá/ISSNet)
+            m_estado_prov = re.search(r'Estado/Prov\./Reg\.?\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
+            if m_estado_prov:
+                end_data['uf'] = m_estado_prov.group(1).upper()
+                clean_mun = re.sub(r'Estado/Prov\./Reg\.?\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
+            
             # Checa se existe "UF: BA" ou "UF BA" no texto de município
             m_uf_in_mun = re.search(r'\bUF\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
-            if m_uf_in_mun:
+            if m_uf_in_mun and not end_data.get('uf'):
                 end_data['uf'] = m_uf_in_mun.group(1).upper()
                 clean_mun = re.sub(r'\bUF\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
+
             
             if ' - ' in clean_mun:
                 parts = clean_mun.split(' - ')
@@ -852,7 +859,7 @@ class SPPdfExtractor:
                 end_data['logradouro'] = partes_end
 
         # Detectar UF com base no Layout ou Regex no endereço (Fallback/Refinamento)
-        if not end_data.get('uf') or len(end_data['uf']) != 2:
+        if not end_data.get('uf') or len(end_data['uf']) != 2 or end_data['uf'] == 'EX':
             if self.layout == LAYOUT_RIO:
                 end_data['uf'] = "RJ"
             elif self.layout in (LAYOUT_SALVADOR, LAYOUT_BARREIRAS, LAYOUT_FEIRA, LAYOUT_CAMACARI):
@@ -865,8 +872,15 @@ class SPPdfExtractor:
         # Refinamento por regex
         UFS_BRASIL = r'AC|AL|AM|AP|BA|CE|DF|ES|GO|MA|MG|MS|MT|PA|PB|PE|PI|PR|RJ|RN|RO|RR|RS|SC|SE|SP|TO'
         m_uf = re.search(rf'\b({UFS_BRASIL})\b', bloco_clean)
+        # Se encontrou um UF válido, e o atual está vazio ou é 'EX', atualiza.
+        # (Isso impede que um UF EX(exterior) prevaleça se houver MT na string)
         if m_uf and m_uf.group(1):
-            end_data['uf'] = m_uf.group(1).upper()
+            if not end_data.get('uf') or end_data['uf'] == 'EX':
+                end_data['uf'] = m_uf.group(1).upper()
+        
+        # Garante MT no layout Cuiabá para Prestador (Emitente) se falhar completamente
+        if self.layout == LAYOUT_CUIABA and is_prestador and end_data.get('uf') == 'EX':
+            end_data['uf'] = 'MT'
 
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'], raw_doc_text=t
