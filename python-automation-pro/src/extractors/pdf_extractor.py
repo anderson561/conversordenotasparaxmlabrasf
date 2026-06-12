@@ -304,6 +304,20 @@ class SPPdfExtractor:
                 hora_str = m.group(2) if m.lastindex >= 2 else None
                 resultado = _parse_dmy(data_str, hora_str)
                 if resultado: return resultado
+                
+        # Fallback usando a Chave de Acesso Nacional (Mês/Ano) para casos de OCR severo
+        m_chave = re.search(r'\b(?:\d\s*){44,52}\b', t)
+        if m_chave:
+            chave = re.sub(r'\D', '', m_chave.group(0))
+            if len(chave) >= 50:
+                yy_mm = chave[36:40]
+                if yy_mm.isdigit():
+                    ano = 2000 + int(yy_mm[:2])
+                    mes = int(yy_mm[2:])
+                    if 1 <= mes <= 12 and 2000 <= ano <= 2100:
+                        # Extraímos dia 1 pois a chave só nos dá o mês/ano
+                        return datetime(ano, mes, 1)
+
         return datetime.now()
 
     # ------------------------------------------------------------------
@@ -870,8 +884,9 @@ class SPPdfExtractor:
             r'Valor\s+(?:Total\s+)?dos?\s+Servi[cç]os?(?:\s*\(R\$\))?(?:.*?\n)?[\s]*([\d\.,]+)',
             r'TOTAL\s+DO\s+SERVI[CÇ]O[:\s]*R?\$?\s*([\d\.,]+)',
             r'Valor\s+Total\s+\(R\$\)[:\s\n]*([\d\.,]+)',
-            # Padrão para tabelas (Cuiabá/DANFSe) - Tenta pegar o primeiro valor R$ após o cabeçalho
+            # Padrão para tabelas (Cuiabá/DANFSe/Barreiras) - Tenta pegar o primeiro valor R$ após o cabeçalho
             r'(?:V[LlIi]\.\s+Total\s+dos\s+Servi[cç]os|Valor\s+do\s+Servi[cç]o).*?\n\s*R?\$?\s*([\d\.,]+)',
+            r'VALOR\s+SERVIÇO.*?\n\s*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NFS-E.*?\n\s*Valor\s+do\s+Servi[cç]o.*?\n\s*R?\$?\s*([\d\.,]+)',
         ]
         for p in _val_patterns:

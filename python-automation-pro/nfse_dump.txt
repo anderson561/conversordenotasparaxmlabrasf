@@ -1,0 +1,263 @@
+{
+  "numero": "2600000001120",
+  "codigo_verificacao": "1FDCB6646",
+  "data_emissao": "2026-06-12T10:42:05.662904",
+  "competencia": "2026-06-01T00:00:00",
+  "prestador": {
+    "cnpj_cpf": "45258583000193",
+    "inscricao_municipal": "000023154",
+    "razao_social": "OLIVEIRA & CHAVES SERVIÇOS E LOCAÇÕES LTDA ,",
+    "endereco": {
+      "logradouro": ": Avenida VIRGÍNIA",
+      "numero": "85",
+      "complemento": null,
+      "bairro": "- Buritis] Barreiras - BA -",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "47804512"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "tomador": {
+    "cnpj_cpf": "03051741000190",
+    "inscricao_municipal": "353043",
+    "razao_social": "SAO PEDRO CONSTRUTORA LTDA",
+    "endereco": {
+      "logradouro": ": Rua RUA",
+      "numero": "554",
+      "complemento": null,
+      "bairro": "QUADRA 28",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "42708720"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "discriminacao": "LOCAÇÃO DE CAMINHÃO GUINDAUTO PLACA RCP9G32 E PLV5C24 EM 22/04/23/04/24/04 OS N 311236035/311236038/511; 160387 NFA 2599 jta cas Hemique Cast ri Engenheiro Civ N OBSERVAÇÃO i PAGAMENTO VIA BOLETO BANCÁRIO VENCIMENTO EM 13/05/2025, VALOR SERVIÇO (RS)] DEDUÇÕES (R$)] DESCONTO INCONDICIONAL (R$) BASE CÁLCULO (Rs] — ALiquorA (%) iss (89) 3.875,00 0,00 0,00] 3.875,00 0.00 0,00 DEMONSTRATIVO DOS TRIBUTOS FEDERAIS DESCONTO (R$) OUTRAS (R$) VALOR LÍQUIDO (R$) INSS (R$) IR (R$) CSuL (RS)] COFINS (R$) PIS (R$) CONDENA. Lidia 0,00 0,00 0,00 0,00 0,00 0,00 0,00 3.875,00 OUTRAS INFORMAÇÕES Chave de acesso Ambiente de Dados Nacional: 29032011245258553000193260000000112026040003992030 (Valor Líquido = Valor Serviço - INSS - IR - CSLL - Outras Retenções - COFINS - PIS - Descontos Diversos - ISS Retido - Desconto Incondicional) ESTE DOCUMENTO FOI EMITIDO POR EMPRESA OPTANTE DO SIMPLES NACIONAL(Art. 23 da LC 123/2006), DEVENDO NESTA CONDIÇÃO O PRESTADOR INFORMAR A ALÍQUOTA ENTRE 2 A 5%, CONFORME TABELA DE ENQUADRAMENTO DO SIMPLES NACIONAL DE ACORDO COM O SEU FATURAMENTO. Consulte a autenticidade deste documento acessando o site https://www.barreiras.ba.gov.br] SÃO PEDRO CONSTRUTORA : OBRA ses gates SENGE 60390.",
+  "servico_codigo": "03115",
+  "valores": {
+    "valor_servicos": 0.0,
+    "valor_deducoes": 0.0,
+    "valor_pis": 0.0,
+    "valor_cofins": 0.0,
+    "valor_inss": 0.0,
+    "valor_ir": 0.0,
+    "valor_csll": 0.0,
+    "iss_retido": false,
+    "valor_iss": 3875.0,
+    "valor_iss_retido": 0.0,
+    "outras_retencoes": 0.0,
+    "base_calculo": 0.0,
+    "aliquota": 0.0,
+    "valor_liquido_nfse": 0.0,
+    "desconto_incondicionado": 0.0,
+    "desconto_condicionado": 0.0
+  },
+  "optante_simples_nacional": false,
+  "regime_especial_tributacao": null,
+  "incentivador_cultural": false,
+  "status": "Normal",
+  "pagina_origem": 1
+}
+
+{
+  "numero": "2600000000250",
+  "codigo_verificacao": "521BES63D",
+  "data_emissao": "2026-06-12T10:42:05.690554",
+  "competencia": "2026-06-01T00:00:00",
+  "prestador": {
+    "cnpj_cpf": "03051741000190",
+    "inscricao_municipal": "000020929",
+    "razao_social": "XAVIER & FERNANDES LTDA a",
+    "endereco": {
+      "logradouro": ": Rua SAO DIOGO",
+      "numero": "259",
+      "complemento": null,
+      "bairro": "COMÉRCIO - MORADA NOBRE Barreiras - BA -",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "47810112"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "tomador": {
+    "cnpj_cpf": "03051741000190",
+    "inscricao_municipal": "353043",
+    "razao_social": "SAO PEDRO CONSTRUTORA LTDA",
+    "endereco": {
+      "logradouro": ": Rua RUA",
+      "numero": "554",
+      "complemento": null,
+      "bairro": "QUADRA 28",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "42708720"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "discriminacao": "LOCAÇÃO MENSAL 100 UNIDADES - BARRA DE ANCORAGEM - Oliveita egrtos Monique Casróde OBSERVAÇÃO (ha EAag.3ST-BA BOLETO 01/06/2025 VALOR SERVIÇO (RS) DEDUÇÕES (R$) DESCONTO INCONDICIONAL (R$) BASE CÁLCULO (Rs]— ALiquora (6) iss (89) 1.050,00 0,00 0,00 1.050,00 0.00 0,00 DEMONSTRATIVO DOS TRIBUTOS FEDERAIS DESCONTO (R$) ourRAs (R$) VALOR LÍQUIDO (Rs) INSS (RS) RR) CSLL (R$)] COFINS (RS) PIS (R$) QuDACiONA atenções 0,00 0,00 0,00 0.00 0.00 0,00 0,00 1.050,00 OUTRAS INFORMAÇÕES Chave de acesso Ambiente de Dados Nacional: 29032011235292395000189260000000025026040004092125 (Valor Líquido = Valor Serviço - INSS - IR - CSLL - Outras Retenções - COFINS - PIS - Descontos Diversos - ISS Retido - Desconto Incondicional) ESTE DOCUMENTO FOI EMITIDO POR EMPRESA OPTANTE DO SIMPLES NACIONAL(Art. 23 da LC 123/2006), DEVENDO NESTA CONDIÇÃO O PRESTADOR. INFORMAR A ALÍQUOTA ENTRE 2 A 5%, CONFORME TABELA DE ENQUADRAMENTO DO SIMPLES NACIONAL DE ACORDO COM O SEU FATURAMENTO. Consulte a autenticidade deste documento acessando o site https:/lwwnw.barreiras.ba.gov.br/ ” “SÃO PEDRO CONSTRUTORA OBRA-SES Gacêaicas. RO SENCE 6039. at nd",
+  "servico_codigo": "03115",
+  "valores": {
+    "valor_servicos": 0.0,
+    "valor_deducoes": 0.0,
+    "valor_pis": 0.0,
+    "valor_cofins": 0.0,
+    "valor_inss": 0.0,
+    "valor_ir": 0.0,
+    "valor_csll": 0.0,
+    "iss_retido": false,
+    "valor_iss": 1050.0,
+    "valor_iss_retido": 0.0,
+    "outras_retencoes": 0.0,
+    "base_calculo": 0.0,
+    "aliquota": 0.0,
+    "valor_liquido_nfse": 0.0,
+    "desconto_incondicionado": 0.0,
+    "desconto_condicionado": 0.0
+  },
+  "optante_simples_nacional": false,
+  "regime_especial_tributacao": null,
+  "incentivador_cultural": false,
+  "status": "Normal",
+  "pagina_origem": 2
+}
+
+{
+  "numero": "2600000000513",
+  "codigo_verificacao": "359FOBFT",
+  "data_emissao": "2026-06-12T10:42:05.694538",
+  "competencia": "2026-06-01T00:00:00",
+  "prestador": {
+    "cnpj_cpf": "16485066000159",
+    "inscricao_municipal": "127712",
+    "razao_social": "GCS LOCACOES SERVICOS E COMERCIO LTDA -*",
+    "endereco": {
+      "logradouro": ": Avenida JOSÉ ANTONIO DO CARMO",
+      "numero": "1549",
+      "complemento": null,
+      "bairro": ".. 4 Barreiras - BA -",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "47806266"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "tomador": {
+    "cnpj_cpf": "03051741000190",
+    "inscricao_municipal": "353043",
+    "razao_social": "SAO PEDRO CONSTRUTORA LTDA",
+    "endereco": {
+      "logradouro": ": Rua RUA",
+      "numero": "554",
+      "complemento": null,
+      "bairro": "QUADRA 28",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "42708720"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "discriminacao": "Recolhimento de entulho da consirução civil EngenheiroCivil AREAMasTEA OBSERVAÇÃO [2 caçambas Material descartado no aterro sanitário VALOR SERVIÇO (R)] DEDUÇÕES (R$)] DESCONTO INCONDICIONAL (R$) BASE CÁLCULO (RS)]] — ALiquoTA (%) iss (RS) 1.000,00 0,00 0,00 1.000,00 240 24,00 T DEMONSTRATIVO DOS TRIBUTOS FEDERAIS escoiro Ri) ongs, 168) VALOR LÍQUIDO (R$) INSS (RS) RR (R$) CsuL (R$)| COFINS (R$) PIS (R$) CONDAIONAL Reeves 0.00 0.00 0,00 0,00 0,00 0,00 0,00 1.000,00 OUTRAS INFORMAÇÕES Chave de acesso Ambiente de Dados Nacional: 25032011216485066000159260000000051326040004120475 (Valor Líquido = Valor Serviço - INSS - IR - CSLL - Outras Retenções - COFINS - PIS - Descontos Diversos - ISS Retido - Desconto Incondicional) ESTE DOCUMENTO FOI EMITIDO POR EMPRESA OPTANTE DO SIMPLES NACIONAL(Art. 23 da LC 123/2006), DEVENDO NESTA CONDIÇÃO O PRESTADOR INFORMAR A ALÍQUOTA ENTRE 2 A 5%, CONFORME TABELA DE ENQUADRAMENTO DO SIMPLES NACIONAL DE ACORDO COM O SEU FATURAMENTO. Consulte a autenticidade deste documento acessando o site https://www. barreiras ba.gov.br/ SÃO PEDRO CONSTRUTORA OBRA ses mete ená Ó SIENGE..6034.S ' Maria Ter Adn erqueira tivo",
+  "servico_codigo": "03115",
+  "valores": {
+    "valor_servicos": 0.0,
+    "valor_deducoes": 0.0,
+    "valor_pis": 0.0,
+    "valor_cofins": 0.0,
+    "valor_inss": 0.0,
+    "valor_ir": 0.0,
+    "valor_csll": 0.0,
+    "iss_retido": false,
+    "valor_iss": 1000.0,
+    "valor_iss_retido": 0.0,
+    "outras_retencoes": 0.0,
+    "base_calculo": 0.0,
+    "aliquota": 0.0,
+    "valor_liquido_nfse": 0.0,
+    "desconto_incondicionado": 0.0,
+    "desconto_condicionado": 0.0
+  },
+  "optante_simples_nacional": false,
+  "regime_especial_tributacao": null,
+  "incentivador_cultural": false,
+  "status": "Normal",
+  "pagina_origem": 3
+}
+
+{
+  "numero": "2600000000514",
+  "codigo_verificacao": "307E4CI00",
+  "data_emissao": "2026-04-30T15:20:34",
+  "competencia": "2026-04-01T00:00:00",
+  "prestador": {
+    "cnpj_cpf": "03051741000190",
+    "inscricao_municipal": "127712",
+    "razao_social": "GCS LOCACOES SERVICOS E COMERCIO LTDA",
+    "endereco": {
+      "logradouro": ": Avenida JOSE ANTONIO DO CARMO",
+      "numero": "1549",
+      "complemento": null,
+      "bairro": "...... - Morada da Lua Barreiras - BA -",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "47806266"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "tomador": {
+    "cnpj_cpf": "03051741000190",
+    "inscricao_municipal": "353043",
+    "razao_social": "SAO PEDRO CONSTRUTORA LTDA",
+    "endereco": {
+      "logradouro": ": Rua RUA",
+      "numero": "554",
+      "complemento": null,
+      "bairro": "QUADRA 28",
+      "codigo_municipio": "2927408",
+      "municipio": "Não informado",
+      "uf": "BA",
+      "cep": "42708720"
+    },
+    "email": null,
+    "telefone": null
+  },
+  "discriminacao": "SERVIÇO PRESTADO Carlos Henrique Gastra de Oliveira Engenheiro Civil OBSERVAÇÃO VALOR SERVIÇO (R$)] DEDUÇÕES (R$)] DESCONTO INCONDICIONAL (R$) BASE CÁLCULO (R8] ALiquora ch) iss (RS) 900,00 0,00 0,00 900,00 240 21,60 | DEMONSTRATIVO DOS TRIBUTOS FEDERAIS Desceiero, 18) os ui VALOR LÍQUIDO (R$) INSS (RS) R (RS) CSLL (R9)[ corINS (R$) PIS (R$) RENDER Elbiiçaiioa 0,00 0,00 0,00 0,00 0,00 0,00 0,00 900,00 OUTRAS INFORMAÇÕES Chave de acesso Ambiente de Dados Nacional: 29032011216485066000159260000000051426040004120665 (Valor Líquido = Valor Serviço - INSS - IR - CSLL - Outras Retenções - COFINS - PIS - Descontos Diversos - ISS Retido - Desconto Incondicional) ESTE DOCUMENTO FOI EMITIDO POR EMPRESA OPTANTE DO SIMPLES NACIONAL(Art. 23 da LC 123/2006), DEVENDO NESTA CONDIÇÃO O PRESTADOR INFORMAR A ALÍQUOTA ENTRE 2 A 5%, CONFORME TABELA DE ENQUADRAMENTO DO SIMPLES NACIONAL DE ACORDO COM O SEU FATURAMENTO. Consulte a autenticidade deste documento acessando o site https:/Awww.barreiras.ba.gov.br/ SÃO PEDRO CONSTRUTORA OBRA ese , SENGE 60396 No ) Marig Tere Ra",
+  "servico_codigo": "03115",
+  "valores": {
+    "valor_servicos": 0.0,
+    "valor_deducoes": 0.0,
+    "valor_pis": 0.0,
+    "valor_cofins": 0.0,
+    "valor_inss": 0.0,
+    "valor_ir": 0.0,
+    "valor_csll": 0.0,
+    "iss_retido": false,
+    "valor_iss": 900.0,
+    "valor_iss_retido": 0.0,
+    "outras_retencoes": 0.0,
+    "base_calculo": 0.0,
+    "aliquota": 0.0,
+    "valor_liquido_nfse": 0.0,
+    "desconto_incondicionado": 0.0,
+    "desconto_condicionado": 0.0
+  },
+  "optante_simples_nacional": false,
+  "regime_especial_tributacao": null,
+  "incentivador_cultural": false,
+  "status": "Normal",
+  "pagina_origem": 4
+}
