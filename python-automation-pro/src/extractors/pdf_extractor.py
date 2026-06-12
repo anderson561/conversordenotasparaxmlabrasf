@@ -492,6 +492,8 @@ class SPPdfExtractor:
             rf'{relax("Cód. de Autenticidade")}\s*[: \n]*([A-Z0-9\- \t]+)',
             rf'{relax("Codigo da NFS-e")}\s*[: \n]*([A-Z0-9\- \t]+)',
             r'C[oó]digo [Vv]erifica[cç][aã]o[:\s\n]*([A-Z0-9\- \t]+)',
+            # Específico para Salvador quando o OCR distorce "Código de Verificação"
+            r'Nota Salvador.*?[\n\r]+([A-Z0-9\-]{4,15})[\n\r]+PRESTADOR',
         ]
         for p in patterns:
             m = re.search(p, t, re.IGNORECASE)
