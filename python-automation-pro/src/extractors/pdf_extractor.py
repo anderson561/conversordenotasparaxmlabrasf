@@ -856,10 +856,10 @@ class SPPdfExtractor:
         pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         
         _val_patterns = [
-            r'VL\.\s+do\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
+            r'V[LlIi]\.\s+do\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DO\s+SERVIÇO:?\s*R\$?\s*([\d\.,]+)',
-            r'Vl\.\s+Total\s+dos\s+Servi[cç]os\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
+            r'V[LlIi]\.\s+Total\s+dos\s+Servi[cç]os\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+SERVIÇO\s*(?:\(R\$\))?[:\s\n]*([\d\.,]+)',
             r'Valor\s+total\s+da\s+Nota:?\s*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+DA\s+NOTA\s*=\s*R?\$?\s*([\d\.,]+)',
@@ -869,7 +869,7 @@ class SPPdfExtractor:
             r'TOTAL\s+DO\s+SERVI[CÇ]O[:\s]*R?\$?\s*([\d\.,]+)',
             r'Valor\s+Total\s+\(R\$\)[:\s\n]*([\d\.,]+)',
             # Padrão para tabelas (Cuiabá/DANFSe) - Tenta pegar o primeiro valor R$ após o cabeçalho
-            r'(?:VI\.\s+Total\s+dos\s+Servi[cç]os|Valor\s+do\s+Servi[cç]o).*?\n\s*R?\$?\s*([\d\.,]+)',
+            r'(?:V[LlIi]\.\s+Total\s+dos\s+Servi[cç]os|Valor\s+do\s+Servi[cç]o).*?\n\s*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NFS-E.*?\n\s*Valor\s+do\s+Servi[cç]o.*?\n\s*R?\$?\s*([\d\.,]+)',
         ]
         for p in _val_patterns:
