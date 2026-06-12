@@ -1168,7 +1168,7 @@ class SPPdfExtractor:
             
             # 2. Quebra por cabeçalhos conhecidos se aparecerem colados no texto
             # Usamos lookahead para não consumir o cabeçalho no split
-            headers_regex = r'(?=\bNota Fiscal de Serviços?\b|\bDANFSe\b)'
+            headers_regex = r'(?=\n\s*\bDANFSe\b)'
             
             final_parts = []
             for p in parts:
