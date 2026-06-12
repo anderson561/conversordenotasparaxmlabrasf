@@ -441,6 +441,14 @@ class SPPdfExtractor:
         m_cuiaba = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*\n\s*(\d+)', t, re.IGNORECASE)
         if m_cuiaba: return m_cuiaba.group(1).strip()
 
+        # Fallback de último recurso: Tentar extrair do nome do arquivo (NFS 13954, NOTA 123, NF-123)
+        if getattr(self, 'pdf_path', None):
+            import os
+            basename = os.path.basename(self.pdf_path)
+            m_filename = re.search(r'(?:NFS?|NOTA|NF)\s*[-_]*\s*(\d+)', basename, re.IGNORECASE)
+            if m_filename:
+                return m_filename.group(1).strip()
+
         return '00000000'
 
     def _extrair_discriminacao(self) -> str:
