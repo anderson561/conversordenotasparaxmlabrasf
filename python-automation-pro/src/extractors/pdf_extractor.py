@@ -818,7 +818,7 @@ class SPPdfExtractor:
             
             # Checa se existe "UF: BA" ou "UF BA" no texto de município
             m_uf_in_mun = re.search(r'\bUF\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
-            if m_uf_in_mun and not end_data.get('uf'):
+            if m_uf_in_mun:
                 end_data['uf'] = m_uf_in_mun.group(1).upper()
                 clean_mun = re.sub(r'\bUF\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
 
