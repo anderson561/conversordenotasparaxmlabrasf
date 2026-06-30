@@ -6,7 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=['pdfminer.six'],
+    hiddenimports=['pdfminer.six', 'pymupdf', 'pytesseract', 'PIL'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    version='C:\\Users\\ANDERSON\\AppData\\Local\\Temp\\8a2a1aae-d88e-466f-bcc6-c78217e16697',
+    version='C:\\Users\\ANDERSON\\AppData\\Local\\Temp\\85825c51-d5c5-4636-9515-209e120dd417',
 )

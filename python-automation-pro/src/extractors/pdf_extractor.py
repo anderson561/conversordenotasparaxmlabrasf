@@ -67,6 +67,10 @@ _LABELS_TOMADOR = [
     'Tomador de Serviços',     # Portal Nacional (plural)
     'Cliente',                 # Portal Nacional / DANFSe usa 'Cliente'
 ]
+_LABELS_INTERMEDIARIO = [
+    'Intermediário do Serviço', 'INTERMEDIÁRIO DO SERVIÇO', 'Intermediário',
+    'Intermediario', 'Dados do Intermediário', 'INTERMEDIARIO'
+]
 _LABELS_CNPJ_CPF = [
     'CNPJ', 'CPF', 'CNPJ / CPF / NIF', 'CPF/CNPJ', 'Inscrição Federal', 'CPF/CNPJ:'
 ]
@@ -304,6 +308,20 @@ class SPPdfExtractor:
                 hora_str = m.group(2) if m.lastindex >= 2 else None
                 resultado = _parse_dmy(data_str, hora_str)
                 if resultado: return resultado
+                
+        # Fallback usando a Chave de Acesso Nacional (Mês/Ano) para casos de OCR severo
+        m_chave = re.search(r'\b(?:\d\s*){44,52}\b', t)
+        if m_chave:
+            chave = re.sub(r'\D', '', m_chave.group(0))
+            if len(chave) >= 50:
+                yy_mm = chave[36:40]
+                if yy_mm.isdigit():
+                    ano = 2000 + int(yy_mm[:2])
+                    mes = int(yy_mm[2:])
+                    if 1 <= mes <= 12 and 2000 <= ano <= 2100:
+                        # Extraímos dia 1 pois a chave só nos dá o mês/ano
+                        return datetime(ano, mes, 1)
+
         return datetime.now()
 
     # ------------------------------------------------------------------
@@ -402,7 +420,7 @@ class SPPdfExtractor:
             elif len(chave) == 48:
                 n_nf = chave[23:38].lstrip('0')
             elif len(chave) >= 50:
-                n_nf = chave[28:37].lstrip('0')
+                n_nf = chave[23:36].lstrip('0')
             else:
                 n_nf = None
             if n_nf: return n_nf
@@ -426,6 +444,14 @@ class SPPdfExtractor:
         # Fallback para Cuiabá (Número isolado após label sem dois pontos)
         m_cuiaba = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*\n\s*(\d+)', t, re.IGNORECASE)
         if m_cuiaba: return m_cuiaba.group(1).strip()
+
+        # Fallback de último recurso: Tentar extrair do nome do arquivo (NFS 13954, NOTA 123, NF-123)
+        if getattr(self, 'pdf_path', None):
+            import os
+            basename = os.path.basename(self.pdf_path)
+            m_filename = re.search(r'(?:NFS?|NOTA|NF)\s*[-_]*\s*(\d+)', basename, re.IGNORECASE)
+            if m_filename:
+                return m_filename.group(1).strip()
 
         return '00000000'
 
@@ -492,6 +518,8 @@ class SPPdfExtractor:
             rf'{relax("Cód. de Autenticidade")}\s*[: \n]*([A-Z0-9\- \t]+)',
             rf'{relax("Codigo da NFS-e")}\s*[: \n]*([A-Z0-9\- \t]+)',
             r'C[oó]digo [Vv]erifica[cç][aã]o[:\s\n]*([A-Z0-9\- \t]+)',
+            # Específico para Salvador quando o OCR distorce "Código de Verificação"
+            r'Nota Salvador.*?[\n\r]+([A-Z0-9\-]{4,15})[\n\r]+PRESTADOR',
         ]
         for p in patterns:
             m = re.search(p, t, re.IGNORECASE)
@@ -504,9 +532,10 @@ class SPPdfExtractor:
         
         return 'XXXX-XXXX'
 
-    def _extrair_entidade(self, tipo: str) -> Entidade:
+    def _extrair_entidade(self, tipo: str) -> Optional[Entidade]:
         t = self.raw_text
         is_prestador = (tipo.lower() == 'prestador')
+        is_intermediario = (tipo.lower() == 'intermediario')
         
         if self.layout == LAYOUT_LOCALIZA:
             if is_prestador:
@@ -538,16 +567,26 @@ class SPPdfExtractor:
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         # 1. Bloco
-        labels = sorted(_LABELS_PRESTADOR if is_prestador else _LABELS_TOMADOR, key=len, reverse=True)
+        if is_intermediario:
+            labels = sorted(_LABELS_INTERMEDIARIO, key=len, reverse=True)
+            other_labels = _LABELS_PRESTADOR + _LABELS_TOMADOR
+        else:
+            labels = sorted(_LABELS_PRESTADOR if is_prestador else _LABELS_TOMADOR, key=len, reverse=True)
+            other_labels = (_LABELS_TOMADOR if is_prestador else _LABELS_PRESTADOR) + _LABELS_INTERMEDIARIO
+
         pattern_labels = "|".join([relax(l) for l in labels])
-        other_labels = _LABELS_TOMADOR if is_prestador else _LABELS_PRESTADOR
         pattern_other_labels = "|".join([relax(l) for l in other_labels])
         delimiters = rf'{pattern_other_labels}|{relax("Discrimina")}|' + \
                      rf'{relax("VALOR TOTAL")}|{relax("DADOS COMPLEMENTARES")}|' + \
-                     rf'{relax("OUTRAS INFORMAÇÕES")}|$'
+                     rf'{relax("OUTRAS INFORMAÇÕES")}|{relax("SERVIÇO PRESTADO")}|' + \
+                     rf'{relax("Descrição do Serviço")}|$'
         
         pattern_bloco = rf'(?:{pattern_labels}).*?(?={delimiters})'
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
+        
+        if is_intermediario and not m_bloco:
+            return None
+
         bloco = m_bloco.group(0) if m_bloco else t
 
         bloco_clean = bloco.replace('|', ' ').replace('!', ' ').replace('\n', ' ').strip()
@@ -573,8 +612,9 @@ class SPPdfExtractor:
             
             if not cnpj:
                 if is_prestador and len(all_cnpjs) >= 1: cnpj = all_cnpjs[0]
-                elif not is_prestador and len(all_cnpjs) >= 2: cnpj = all_cnpjs[1]
-                elif not is_prestador and len(all_cnpjs) == 1: cnpj = all_cnpjs[0] # Fallback se só um for achado
+                elif not is_prestador and not is_intermediario and len(all_cnpjs) >= 2:
+                    if "NÃO IDENTIFICADO" not in bloco_clean.upper() and "NAO IDENTIFICADO" not in bloco_clean.upper():
+                        cnpj = all_cnpjs[1]
         
         if not cnpj: cnpj = '00000000000100'
 
@@ -770,11 +810,18 @@ class SPPdfExtractor:
             
             clean_mun = mun_text
             
+            # Checa se existe "Estado/Prov./Reg." no texto (Padrão Cuiabá/ISSNet)
+            m_estado_prov = re.search(r'Estado/Prov\./Reg\.?\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
+            if m_estado_prov:
+                end_data['uf'] = m_estado_prov.group(1).upper()
+                clean_mun = re.sub(r'Estado/Prov\./Reg\.?\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
+            
             # Checa se existe "UF: BA" ou "UF BA" no texto de município
             m_uf_in_mun = re.search(r'\bUF\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
-            if m_uf_in_mun:
+            if m_uf_in_mun and not end_data.get('uf'):
                 end_data['uf'] = m_uf_in_mun.group(1).upper()
                 clean_mun = re.sub(r'\bUF\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
+
             
             if ' - ' in clean_mun:
                 parts = clean_mun.split(' - ')
@@ -812,7 +859,7 @@ class SPPdfExtractor:
                 end_data['logradouro'] = partes_end
 
         # Detectar UF com base no Layout ou Regex no endereço (Fallback/Refinamento)
-        if not end_data.get('uf') or len(end_data['uf']) != 2:
+        if not end_data.get('uf') or len(end_data['uf']) != 2 or end_data['uf'] == 'EX':
             if self.layout == LAYOUT_RIO:
                 end_data['uf'] = "RJ"
             elif self.layout in (LAYOUT_SALVADOR, LAYOUT_BARREIRAS, LAYOUT_FEIRA, LAYOUT_CAMACARI):
@@ -825,8 +872,15 @@ class SPPdfExtractor:
         # Refinamento por regex
         UFS_BRASIL = r'AC|AL|AM|AP|BA|CE|DF|ES|GO|MA|MG|MS|MT|PA|PB|PE|PI|PR|RJ|RN|RO|RR|RS|SC|SE|SP|TO'
         m_uf = re.search(rf'\b({UFS_BRASIL})\b', bloco_clean)
+        # Se encontrou um UF válido, e o atual está vazio ou é 'EX', atualiza.
+        # (Isso impede que um UF EX(exterior) prevaleça se houver MT na string)
         if m_uf and m_uf.group(1):
-            end_data['uf'] = m_uf.group(1).upper()
+            if not end_data.get('uf') or end_data['uf'] == 'EX':
+                end_data['uf'] = m_uf.group(1).upper()
+        
+        # Garante MT no layout Cuiabá para Prestador (Emitente) se falhar completamente
+        if self.layout == LAYOUT_CUIABA and is_prestador and end_data.get('uf') == 'EX':
+            end_data['uf'] = 'MT'
 
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'], raw_doc_text=t
@@ -856,10 +910,10 @@ class SPPdfExtractor:
         pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         
         _val_patterns = [
-            r'VL\.\s+do\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
+            r'V[LlIi]\.\s+do\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DO\s+SERVIÇO:?\s*R\$?\s*([\d\.,]+)',
-            r'Vl\.\s+Total\s+dos\s+Servi[cç]os\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
+            r'V[LlIi]\.\s+Total\s+dos\s+Servi[cç]os\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+SERVIÇO\s*(?:\(R\$\))?[:\s\n]*([\d\.,]+)',
             r'Valor\s+total\s+da\s+Nota:?\s*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+DA\s+NOTA\s*=\s*R?\$?\s*([\d\.,]+)',
@@ -868,8 +922,9 @@ class SPPdfExtractor:
             r'Valor\s+(?:Total\s+)?dos?\s+Servi[cç]os?(?:\s*\(R\$\))?(?:.*?\n)?[\s]*([\d\.,]+)',
             r'TOTAL\s+DO\s+SERVI[CÇ]O[:\s]*R?\$?\s*([\d\.,]+)',
             r'Valor\s+Total\s+\(R\$\)[:\s\n]*([\d\.,]+)',
-            # Padrão para tabelas (Cuiabá/DANFSe) - Tenta pegar o primeiro valor R$ após o cabeçalho
-            r'(?:VI\.\s+Total\s+dos\s+Servi[cç]os|Valor\s+do\s+Servi[cç]o).*?\n\s*R?\$?\s*([\d\.,]+)',
+            # Padrão para tabelas (Cuiabá/DANFSe/Barreiras) - Tenta pegar o primeiro valor R$ após o cabeçalho
+            r'(?:V[LlIi]\.\s+Total\s+dos\s+Servi[cç]os|Valor\s+do\s+Servi[cç]o).*?\n\s*R?\$?\s*([\d\.,]+)',
+            r'VALOR\s+SERVIÇO.*?\n\s*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NFS-E.*?\n\s*Valor\s+do\s+Servi[cç]o.*?\n\s*R?\$?\s*([\d\.,]+)',
         ]
         for p in _val_patterns:
@@ -1006,7 +1061,7 @@ class SPPdfExtractor:
     def _extract_via_ocr(self) -> str:
         """Tenta extrair o texto renderizando as páginas do PDF como imagens e passando pelo Tesseract."""
         try:
-            import fitz  # PyMuPDF
+            import pymupdf  # PyMuPDF
             import pytesseract
             from PIL import Image
             import io
@@ -1019,14 +1074,14 @@ class SPPdfExtractor:
             
             print(f"[*] PDF '{self.pdf_path}' sem texto detectado. Iniciando extração via OCR (Tesseract)...")
             
-            doc = fitz.open(self.pdf_path)
+            doc = pymupdf.open(self.pdf_path)
             full_ocr_text = []
             
             for page_num in range(len(doc)):
                 page = doc.load_page(page_num)
                 # Aumenta a resolução para melhorar a precisão do OCR (zoom 2x)
                 zoom = 2.0
-                mat = fitz.Matrix(zoom, zoom)
+                mat = pymupdf.Matrix(zoom, zoom)
                 pix = page.get_pixmap(matrix=mat)
                 
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
@@ -1055,6 +1110,7 @@ class SPPdfExtractor:
 
         prestador = self._extrair_entidade("Prestador")
         tomador   = self._extrair_entidade("Tomador")
+        intermediario = self._extrair_entidade("Intermediario")
         valores   = self._extrair_valores()
 
         discriminacao = self._extrair_discriminacao()
@@ -1081,6 +1137,7 @@ class SPPdfExtractor:
             competencia=competencia,
             prestador=prestador,
             tomador=tomador,
+            intermediario=intermediario,
             discriminacao=discriminacao,
             servico_codigo=servico_codigo,
             valores=valores,
@@ -1168,7 +1225,7 @@ class SPPdfExtractor:
             
             # 2. Quebra por cabeçalhos conhecidos se aparecerem colados no texto
             # Usamos lookahead para não consumir o cabeçalho no split
-            headers_regex = r'(?=\bNota Fiscal de Serviços?\b|\bDANFSe\b)'
+            headers_regex = r'(?=\n\s*\bDANFSe\b)'
             
             final_parts = []
             for p in parts:
