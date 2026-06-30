@@ -1,3 +1,8 @@
+---
+name: data-pipeline-orchestrator
+description: Orienta o agente no design e na implementação passo a passo de um pipeline de estruturação, limpeza e preparação de dados (ETL/ELT).
+---
+
 # 🔄 Workflow: Orquestração de Pipeline de Dados (ETL/ELT)
 
 Este fluxo orienta o agente no design e na implementação passo a passo de um pipeline de estruturação, limpeza e preparação de dados.

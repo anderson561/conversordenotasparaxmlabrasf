@@ -1,0 +1,17 @@
+{
+  "name": "product_analytics_and_roi_tracker",
+  "description": "Habilidades para simular o comportamento do usuário final, gerar cenários de testes AB conceituais e monitorar roadmaps de produto.",
+  "tools": [
+    {
+      "name": "evaluate_feature_impact",
+      "description": "Analisa o escopo atual para calcular o ROI conceitual e sugerir cortes de escopo baseados em MVP.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "feature_spec": { "type": "string", "description": "Conteúdo ou caminho da especificação do recurso." }
+        },
+        "required": ["feature_spec"]
+      }
+    }
+  ]
+}

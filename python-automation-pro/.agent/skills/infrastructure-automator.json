@@ -1,0 +1,17 @@
+{
+  "name": "infrastructure_and_security_auditor",
+  "description": "Ferramentas para gerar automações de infraestrutura, revisar configurações Docker e simular testes de estresse/carga.",
+  "tools": [
+    {
+      "name": "generate_pipeline_config",
+      "description": "Gera arquivos YAML estruturados para CI/CD (GitHub Actions, GitLab CI) baseados no ecossistema do projeto.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pipeline_type": { "type": "string", "enum": ["github_actions", "docker_compose"], "description": "O tipo de arquivo de infra a gerar." }
+        },
+        "required": ["pipeline_type"]
+      }
+    }
+  ]
+}
