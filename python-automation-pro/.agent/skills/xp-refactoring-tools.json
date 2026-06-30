@@ -1,0 +1,35 @@
+{
+  "name": "xp_refactoring_and_metrics_capability",
+  "description": "Habilidades técnicas para monitorar a saúde do código, complexidade de software e execução automatizada de testes locais.",
+  "tools": [
+    {
+      "name": "run_test_suite",
+      "description": "Executa de forma rápida os testes locais baseados na stack detectada (pytest, phpunit, jest) para validar o ciclo TDD.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "environment": {
+            "type": "string",
+            "enum": ["python", "javascript", "php"],
+            "description": "O ambiente do projeto atual detectado."
+          }
+        },
+        "required": ["environment"]
+      }
+    },
+    {
+      "name": "check_code_complexity",
+      "description": "Analisa o arquivo indicado em busca de complexidade ciclomática alta, métodos muito longos ou violações de YAGNI.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "O caminho relativo do arquivo a ser inspecionado."
+          }
+        },
+        "required": ["file_path"]
+      }
+    }
+  ]
+}

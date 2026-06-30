@@ -24,22 +24,52 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Sistema**: CPqD - Gestão Pública
 - **Data de Competência**: Rótulo `Data da prestação do serviço`
 
-### 4. Salvador/BA — `salvador` (Nota Salvador)
-- **Cabeçalho**: "PREFEITURA MUNICIPAL DO SALVADOR" ou "NOTA SALVADOR"
-- **Código de Verificação**: Extração suportada
-- **Número da Nota**: Extração nativa com fallback defensivo para o Nome do Arquivo caso o layout sofra extrema degradação na exportação PDF.
+### 4. Salvador/BA — `salvador_ba` (Nota Salvador)
+- **Cabeçalho**: "PREFEITURA MUNICIPAL DO SALVADOR" ou "NOTA SALVADOR" ou "Xique-Xique"
+- **Código de Verificação**: Extração de código de autenticidade/verificação.
+- **Número da Nota**: Extração nativa com fallback defensivo para o Nome do Arquivo caso o layout sofra extrema degradação.
+- **Extração de Município/UF**: Tratamento robusto para remover sufixos de UF como `UF: BA` do nome do município e atualizar o endereço corretamente.
 
-### 5. SSF Locação / Localiza — `localiza`
+### 5. Feira de Santana/BA — `feira_de_santana`
+- **Cabeçalho**: "FEIRA DE SANTANA"
+- **Data de Competência**: Busca do campo `Fato Gerador`.
+
+### 6. Rio de Janeiro/RJ — `rio_de_janeiro` (Nota Carioca)
+- **Cabeçalho**: "RIO DE JANEIRO" ou "NOTA CARIOCA"
+- **Data de Competência**: Busca do campo `Mês de Competência`.
+
+### 7. São Paulo/SP — `sao_paulo_sp`
+- **Cabeçalho**: "PREFEITURA DO MUNICÍPIO DE SÃO PAULO"
+- **Data de Competência**: Busca do rótulo `Compe:` em formato mes/ano (ex: `Jan/2026`).
+
+### 8. Joinville/SC — `joinville_sc`
+- **Cabeçalho**: "Prefeitura de Joinville" ou "NF-em"
+- **Data de Competência**: Busca do rótulo `Competência`.
+
+### 9. Fortaleza/CE — `fortaleza_ce`
+- **Cabeçalho**: "PREFEITURA MUNICIPAL DE FORTALEZA"
+- **Data de Competência**: Busca do rótulo `Competência`.
+
+### 10. Simões Filho/BA — `simoes_filho_ba`
+- **Cabeçalho**: "Simões Filho"
+
+### 11. Ribeirão Pires/SP — `ribeirao_pires_sp`
+- **Cabeçalho**: "Ribeirão Pires"
+
+### 12. ISBET — `isbet_recibo`
+- **Cabeçalho**: "NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" ou "ISBET"
+
+### 13. SSF Locação / Localiza — `localiza_fatura`
 - Focado na importação de faturas de locação e revenda de serviços genéricos veiculares.
-- Identificado pelos rótulos "SSF LOCAÇÃO" ou "LOCALIZA".
+- Identificado pelos rótulos "LOCALIZA RENT A CAR S/A" ou "FATURA / DUPLICATA".
 
-### 6. Portal Nacional DANFSe — `nacional`
+### 14. Portal Nacional DANFSe — `danfse_nacional`
 - **Cabeçalho**: "DANFSe v1.0", "Documento Auxiliar da NFS-e"
 - **Competência**: Rótulos `Competência da NFS-e` (aceita `MM/YYYY` e `DD/MM/YYYY`) com regra de prioridade sobre a *Data/Hora da Emissão* em caso de conflitos.
 - **Entidades**: Suporte avançado a extração segmentada para **Prestador**, **Tomador** e **Intermediário do Serviço**, isolando perfeitamente seus respectivos CNPJs e controlando contaminações cruzadas quando campos vêm indicados como "NÃO IDENTIFICADO".
 
-### 7. Genérico — `generico`
-Fallback para layouts de prefeituras ainda não mapeadas. Usa heurísticas universais de busca de tags de XML padrão ABRASF.
+### 15. Genérico — `generico`
+- Fallback para layouts de prefeituras ainda não mapeadas. Usa heurísticas universais de busca de tags de XML padrão ABRASF.
 
 ---
 

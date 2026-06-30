@@ -1,0 +1,17 @@
+{
+  "name": "software_architecture_and_design_inspector",
+  "description": "Ferramentas para auditar o acoplamento de código, violações de camadas arquiteturais e validação de padrões de projeto.",
+  "tools": [
+    {
+      "name": "analyze_code_smells",
+      "description": "Examina arquivos de código-fonte em busca de violações severas de herança, falta de interfaces ou dependências circulares.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_directory": { "type": "string", "description": "Caminho do diretório a ser inspecionado." }
+        },
+        "required": ["target_directory"]
+      }
+    }
+  ]
+}

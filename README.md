@@ -4,7 +4,7 @@
 
 Este projeto fornece um conversor de PDFs de Notas Fiscais de Serviço (NFS‑e) e Contratos de Locação para o padrão **ABRASF 2.01 XML**. Ele inclui:
 
-- **Extratores de PDF** capazes de lidar com layouts variados (Cuiabá, Barreiras, Camaçari, Nacional, Genérico).
+- **Extratores de PDF** capazes de lidar com layouts variados de múltiplos municípios (Cuiabá/MT, Barreiras/BA, Camaçari/BA, Salvador/BA, Feira de Santana/BA, Rio de Janeiro/RJ, São Paulo/SP, Joinville/SC, Fortaleza/CE, Simões Filho/BA, Ribeirão Pires/SP, ISBET, Fatura Localiza, Nacional e Genérico).
 - **Transformadores** que mapeiam os dados extraídos para o XML ABRASF.
 - **Interface de linha de comando** (`app.py`) para conversões individuais ou em lote.
 - **Interface gráfica** (`gui_app.py`) baseada em *flet* para usuários não‑técnicos.

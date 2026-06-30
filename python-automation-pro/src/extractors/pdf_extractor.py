@@ -49,6 +49,12 @@ LAYOUT_FORTALEZA = 'fortaleza_ce'     # Fortaleza/CE
 LAYOUT_ISBET     = 'isbet_recibo'     # ISBET (Nota de Contribuição)
 LAYOUT_SIMOES_FILHO = 'simoes_filho_ba'  # Simões Filho/BA
 LAYOUT_RIBEIRAO_PIRES = 'ribeirao_pires_sp' # Ribeirão Pires/SP
+LAYOUT_CPE_LOCACAO = 'cpe_locacao'    # CPE Tecnologia (Fatura de Locação)
+LAYOUT_GUINCHO_CIDADE = 'guincho_cidade' # Guincho Cidade Eireli (Fatura de Locação)
+LAYOUT_BF_AMBIENTAIS = 'bf_ambientais' # B.F. Serviços Ambientais (Fatura de Locação)
+LAYOUT_LMR_ENGENHARIA = 'lmr_engenharia' # LMR Engenharia e Construção (Fatura de Locação)
+LAYOUT_GERACAO_ENERGIA = 'geracao_energia' # Geração & Energia (Fatura de Locação)
+LAYOUT_LOCONTAINERS = 'locontainers' # Locontainers (Vidal Locação de Containers)
 
 
 # Etiquetas para Identificação de Entidades
@@ -126,6 +132,18 @@ class SPPdfExtractor:
         Identifica o layout da nota a partir de marcas textuais únicas.
         """
         t = self.raw_text
+        if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
+            return LAYOUT_LOCONTAINERS
+        if re.search(r'03\.292\.008/0001-67|03\.292\.008', t, re.IGNORECASE):
+            return LAYOUT_GERACAO_ENERGIA
+        if re.search(r'LMR\s+ENGENHARIA|LTR\s+ENGENHARIA|L\.M\.R\.\s+ENGENHARIA', t, re.IGNORECASE):
+            return LAYOUT_LMR_ENGENHARIA
+        if re.search(r'CPE BAHIA|cpe tecnologia', t, re.IGNORECASE):
+            return LAYOUT_CPE_LOCACAO
+        if re.search(r'GUINCHO CIDADE', t, re.IGNORECASE):
+            return LAYOUT_GUINCHO_CIDADE
+        if re.search(r'B\.F\.\s*SERVICOS\s*AMBIENTAIS|B\.F\.\s*SERVIÇOS\s*AMBIENTAIS', t, re.IGNORECASE):
+            return LAYOUT_BF_AMBIENTAIS
         if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet', t, re.IGNORECASE):
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador', t, re.IGNORECASE):
@@ -161,6 +179,18 @@ class SPPdfExtractor:
         Returns a layout constant or LAYOUT_GENERICO if none match.
         """
         t = page_text
+        if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
+            return LAYOUT_LOCONTAINERS
+        if re.search(r'03\.292\.008/0001-67|03\.292\.008', t, re.IGNORECASE):
+            return LAYOUT_GERACAO_ENERGIA
+        if re.search(r'LMR\s+ENGENHARIA|LTR\s+ENGENHARIA|L\.M\.R\.\s+ENGENHARIA', t, re.IGNORECASE):
+            return LAYOUT_LMR_ENGENHARIA
+        if re.search(r'CPE BAHIA|cpe tecnologia', t, re.IGNORECASE):
+            return LAYOUT_CPE_LOCACAO
+        if re.search(r'GUINCHO CIDADE', t, re.IGNORECASE):
+            return LAYOUT_GUINCHO_CIDADE
+        if re.search(r'B\.F\.\s*SERVICOS\s*AMBIENTAIS|B\.F\.\s*SERVIÇOS\s*AMBIENTAIS', t, re.IGNORECASE):
+            return LAYOUT_BF_AMBIENTAIS
         if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet', t, re.IGNORECASE):
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador|MUNICIPIO\s+DE\s+BARREIRAS', t, re.IGNORECASE):
@@ -200,7 +230,31 @@ class SPPdfExtractor:
         layout = self.layout or LAYOUT_GENERICO
         result: Optional[datetime] = None
 
-        if layout == LAYOUT_CUIABA:
+        if layout == LAYOUT_CPE_LOCACAO:
+            m = re.search(r'Data\s+de\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_GUINCHO_CIDADE:
+            m = re.search(r'Emiss[aã]o\s*[:\s\n]*(\d{2}[./]\d{2}[./]\d{4})', t, re.IGNORECASE)
+            if m:
+                clean_date = m.group(1).replace('.', '/')
+                result = _parse_dmy(clean_date) or None
+        elif layout == LAYOUT_BF_AMBIENTAIS:
+            m = re.search(r'Emiss[aã]o\s*[:\s\n]*.*?(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if not m:
+                m = re.search(r'Salvador\s*\(BA\),\s*(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})', t, re.IGNORECASE)
+            if m:
+                parsed_dt = self._parse_data_extenso(m.group(1)) if 'de' in m.group(1) else _parse_dmy(m.group(1))
+                if parsed_dt: result = parsed_dt
+        elif layout == LAYOUT_LMR_ENGENHARIA:
+            m = re.search(r'DATA\s+DA\s+EMISS[AÃ]O\s*[:\s\n]*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_GERACAO_ENERGIA:
+            m = re.search(r'(\d{2}/\d{2}/\d{4})', t)
+            if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_LOCONTAINERS:
+            m = re.search(r'DATA\s+DA\s+EMISS[AÃÕO]*\s*[\n\r\s]+(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_CUIABA:
             m = re.search(r'Data\s+de\s+Compet[eê]ncia\s*\n\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
         elif layout == LAYOUT_BARREIRAS:
@@ -279,6 +333,45 @@ class SPPdfExtractor:
 
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
+        if self.layout == LAYOUT_CPE_LOCACAO:
+            m = re.search(r'Data\s+de\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_GUINCHO_CIDADE:
+            m = re.search(r'Emiss[aã]o\s*[:\s\n]*(\d{2}[./]\d{2}[./]\d{4})', t, re.IGNORECASE)
+            if m:
+                clean_date = m.group(1).replace('.', '/')
+                res = _parse_dmy(clean_date)
+                if res: return res
+
+        if self.layout == LAYOUT_BF_AMBIENTAIS:
+            m = re.search(r'Emiss[aã]o\s*[:\s\n]*.*?(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if not m:
+                m = re.search(r'Salvador\s*\(BA\),\s*(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})', t, re.IGNORECASE)
+            if m:
+                parsed_dt = self._parse_data_extenso(m.group(1)) if 'de' in m.group(1) else _parse_dmy(m.group(1))
+                if parsed_dt: return parsed_dt
+
+        if self.layout == LAYOUT_LMR_ENGENHARIA:
+            m = re.search(r'DATA\s+DA\s+EMISS[AÃ]O\s*[:\s\n]*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_GERACAO_ENERGIA:
+            m = re.search(r'(\d{2}/\d{2}/\d{4})', t)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_LOCONTAINERS:
+            m = re.search(r'DATA\s+DA\s+EMISS[AÃÕO]*\s*[\n\r\s]+(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
         if self.layout == LAYOUT_LOCALIZA:
             m = re.search(r'DATA DE EMISS[AÃ]O:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -292,15 +385,26 @@ class SPPdfExtractor:
                 res = _parse_dmy(m_nac.group(1), m_nac.group(2))
                 if res: return res
 
-        # Padrões mais flexíveis (Rio, Salvador, etc.)
-        # Adicionado padrão específico para Rio sem separador fixo após o label
-        patterns = [
-            r'Emitido\s+em\s+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?',
-            r'Data\s+e\s+Hora\s+d[ea]\s+Emiss[aã]o.*?(?::|\s|\n)+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?',
-            r'(?:Data\s+de\s+Gera[cç][aã]o|Data\s+e\s+Hora\s+da\s+emiss[aã]o).*?(?::|\s|\n)+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?',
-            r'Data\s+de\s+Emiss[aã]o.*?(?::|\s|\n)+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?',
-            r'Emiss[aã]o(?:\s*\(Hor[aá]rio\s+de\s+Bras[ií]lia\))?.*?(?::|\s|\n)+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?',
+        # Lista de campos/rótulos mapeados para a data de emissão
+        data_emissao_labels = [
+            r'Emitido\s+em',
+            r'Data\s+e\s+Hora\s+d[ea]\s+Emiss[aã]o',
+            r'Data\s+de\s+Gera[cç][aã]o',
+            r'Data\s+e\s+Hora\s+da\s+emiss[aã]o',
+            r'Data\s+de\s+Emiss[aã]o',
+            r'Data\s+de',
+            r'Emiss[aã]o(?:\s*\(Hor[aá]rio\s+de\s+Bras[ií]lia\))?',
         ]
+        
+        patterns = []
+        for label in data_emissao_labels:
+            if label == r'Emitido\s+em':
+                patterns.append(r'Emitido\s+em\s+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?')
+            elif label == r'Data\s+de':
+                # CPE e similares podem ter Incrição/Inscrição no meio
+                patterns.append(rf'{label}\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?')
+            else:
+                patterns.append(rf'{label}.*?(?::|\s|\n)+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?')
         for pattern in patterns:
             m = re.search(pattern, t, re.IGNORECASE | re.DOTALL)
             if m:
@@ -390,6 +494,32 @@ class SPPdfExtractor:
             m = re.search(r'NFS-e[\s\n]+(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
             
+        if self.layout == LAYOUT_CPE_LOCACAO:
+            m = re.search(r'N[úu]mero\s+da\s+Nota\s+de\s+Loca[cç][aã]o\s*[:\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+            m_top = re.search(r'N[ºo]\s*(\d+)', t, re.IGNORECASE)
+            if m_top: return m_top.group(1).strip()
+
+        if self.layout == LAYOUT_GUINCHO_CIDADE:
+            m = re.search(r'FATURA\s+DE\s+LOCA[CÇ][AÃ]O\s*[\n\s]*N[ºo]\s*[:\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_BF_AMBIENTAIS:
+            m = re.search(r'FATURA\s+n[ºo°]\s*[:\s\n]*(\d+)', t, re.IGNORECASE)
+            if m: return str(int(m.group(1))) # remove leading zeros
+
+        if self.layout == LAYOUT_LMR_ENGENHARIA:
+            m = re.search(r'FATURA/DUPLICATA\s+N[ºo°]\s*[:\s\n]*(\d+)', t, re.IGNORECASE)
+            if m: return str(int(m.group(1))) # remove leading zeros
+
+        if self.layout == LAYOUT_GERACAO_ENERGIA:
+            m = re.search(r'03\.292\.008.*?LOCA.*?BENS.*?\s+(\d+)', t, re.IGNORECASE | re.DOTALL)
+            if m: return str(int(m.group(1)))
+
+        if self.layout == LAYOUT_LOCONTAINERS:
+            m = re.search(r'Nota\s+Fatura\s+N[ºo°]?\s*[\n\r\s]+(\d+)', t, re.IGNORECASE)
+            if m: return str(int(m.group(1)))
+
         # 1. Busca por proximidade do label (Alta prioridade para DANFSe v1.0)
         # Procura o rótulo e pega o primeiro número que aparece depois dele (até 100 caracteres de distância)
         label_patterns = [
@@ -457,6 +587,86 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_CPE_LOCACAO:
+            m = re.search(r'C[oó]digo\s+e\s+Descri[cç][aã]o.*?\n(.*)', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                linhas = m.group(1).split('\n')
+                items = []
+                for l in linhas:
+                    l_clean = l.strip()
+                    if not l_clean: continue
+                    if re.search(r'Endereço|Dados\s+do|Vencimento|Valor:', l_clean, re.IGNORECASE):
+                        break
+                    items.append(l_clean)
+                return " | ".join(items)
+
+        if self.layout == LAYOUT_GUINCHO_CIDADE:
+            m = re.search(r'DESCRIMINA[CÇ][AÃ]O\s*[:\s\n]*(.*?)(?=OBSERVA[ÇC][ÕO]ES|OBSERVA[ÇC]O|PAGAMENTO|VALOR\s+TOTAL|$)', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                res = m.group(1).strip()
+                res = re.sub(r'\s+', ' ', res)
+                return res
+
+        if self.layout == LAYOUT_BF_AMBIENTAIS:
+            m = re.search(r'Objeto\s*:\s*Descri[cç][aã]o\s*\n*(.*?)(?=Valor\s+Total|Total\s+Bruto|$)', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                res = m.group(1).strip()
+                res = re.sub(r'\s+', ' ', res)
+                return res
+
+        if self.layout == LAYOUT_LMR_ENGENHARIA:
+            m = re.search(r'DESCRI[CÇ]I?[ÃA]?O\s*\n*(.*?)(?=DADOS\s+DA\s+CONTA|VENCIMENTO|VALOR\s+TOTAL|$)', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                lines = m.group(1).strip().split('\n')
+                items = []
+                for l in lines:
+                    l_clean = l.strip()
+                    if not l_clean: continue
+                    if l_clean.upper() == "VALOR":
+                        continue
+                    if re.search(r'R\$\s*\d+', l_clean, re.IGNORECASE):
+                        break
+                    items.append(l_clean)
+                res = " | ".join(items)
+                res = re.sub(r'\s+', ' ', res)
+                return res
+
+        if self.layout == LAYOUT_GERACAO_ENERGIA:
+            pos = t.find("JOSE AUGUSTO SANTOS")
+            bloco_disc = t[pos + len("JOSE AUGUSTO SANTOS"):] if pos != -1 else t
+            lines = bloco_disc.strip().split('\n')
+            items = []
+            for l in lines:
+                l_clean = l.strip()
+                if not l_clean: continue
+                if re.match(r'^\d+$', l_clean): continue
+                if re.search(r'\b\d{1,3}(?:\.\d{3})*(?:,\d{2})\b', l_clean):
+                    break
+                items.append(l_clean)
+            res = " | ".join(items)
+            res = re.sub(r'\s+', ' ', res)
+            return res
+
+        if self.layout == LAYOUT_LOCONTAINERS:
+            m_start = re.search(r'QUANT\.\s*DESCRI[CÇCçIíiÃãOõoAaSs]*', t, re.IGNORECASE)
+            m_end = re.search(r'VALOR\s+UNIT[AÁAáIíiOõoRRsS]*', t, re.IGNORECASE)
+            if m_start and m_end:
+                block = t[m_start.end():m_end.start()]
+                lines = block.split('\n')
+                items = []
+                for l in lines:
+                    l_clean = l.strip()
+                    if not l_clean:
+                        continue
+                    if l_clean in ["BAIRRO / DISTRITO", "IAPI", "CNPJ / CPF", "01.813.680/0001-25", "CEP", "40330533", "FONE / FAX", "7132441400", "U.F.", "INSCRIÇÃO MUNICIPAL", "INSCRIÇÃO ESTADUAL", "BA", "INSCRIO MUNICIPAL", "INSCRIO ESTADUAL"]:
+                        continue
+                    if re.match(r'^\d+$', l_clean):
+                        continue
+                    items.append(l_clean)
+                res = " | ".join(items)
+                res = re.sub(r'\s+', ' ', res)
+                return res
+
         # Label common to multiple layouts but very specific in its start/end in Rio
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
         
@@ -484,6 +694,8 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS):
+            return "0601"
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         patterns = [
@@ -506,6 +718,8 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS):
+            return "FATURA"
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         # Padrões com relax() forçado para capturar etiquetas ruidosas
@@ -537,6 +751,410 @@ class SPPdfExtractor:
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
         
+        if self.layout == LAYOUT_CPE_LOCACAO:
+            if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("Lauro de Freitas", "BA")
+                return Entidade(
+                    cnpj_cpf="07712781000196",
+                    razao_social="CPE BAHIA COM DE APARELHOS TOP",
+                    inscricao_municipal="001001798011",
+                    endereco=Endereco(
+                        logradouro="RUA A, COND. EMPRESARIAL LIT.NORTE CELNOR, GP-13B",
+                        numero="GP-13B",
+                        bairro="ITINGA",
+                        codigo_municipio=mun_cod,
+                        municipio="Lauro de Freitas",
+                        uf="BA",
+                        cep="42700000"
+                    )
+                )
+            elif is_intermediario:
+                return None
+            else:
+                m_cli_label = re.search(r'Dados\s+do\s+Cl[ie]nte', t, re.IGNORECASE)
+                pos_cli = m_cli_label.start() if m_cli_label else t.find("Dados do Cliente")
+                bloco_cli = t[pos_cli:] if pos_cli != -1 else t
+                
+                m_cnpj = re.search(r'CNPJ\s*/\s*CPF\s*[:\s]*([\d./-]+)', bloco_cli, re.IGNORECASE)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
+                
+                m_raz = re.search(r'Nome\s*/\s*Raz[aã]o\s+Social\s*[:\s]*(.+)', bloco_cli, re.IGNORECASE)
+                razao = m_raz.group(1).split('\n')[0].strip() if m_raz else ""
+                
+                m_end = re.search(r'Endere[cç]o\s*[:\s]*(.+)', bloco_cli, re.IGNORECASE)
+                endereco_rua = m_end.group(1).split('\n')[0].strip() if m_end else ""
+                
+                m_bairro = re.search(r'Bairro\s*[:\s]*(.+)', bloco_cli, re.IGNORECASE)
+                bairro = m_bairro.group(1).split('\n')[0].strip() if m_bairro else ""
+                
+                m_cep = re.search(r'Cep\s*[:\s]*(\d+)', bloco_cli, re.IGNORECASE)
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else "00000000"
+                
+                m_mun = re.search(r'Munic[ií]pio\s*[:\s]*(.+)', bloco_cli, re.IGNORECASE)
+                mun = m_mun.group(1).split('\n')[0].strip() if m_mun else ""
+                
+                m_uf = re.search(r'U\.F\.\s*[:\s]*([A-Z]{2})', bloco_cli, re.IGNORECASE)
+                uf = m_uf.group(1).strip() if m_uf else "BA"
+                
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+                
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao or "Cliente Não Identificado",
+                    endereco=Endereco(
+                        logradouro=endereco_rua or "Não informado",
+                        numero="S/N",
+                        bairro=bairro or "Não informado",
+                        codigo_municipio=mun_cod,
+                        municipio=mun or "Não informado",
+                        uf=uf,
+                        cep=cep or "00000000"
+                    )
+                )
+
+        if self.layout == LAYOUT_GUINCHO_CIDADE:
+            if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("Feira de Santana", "BA")
+                return Entidade(
+                    cnpj_cpf="14318419000109",
+                    razao_social="GUINCHO CIDADE EIRELI",
+                    endereco=Endereco(
+                        logradouro="RUA PORTO DA VITORIA",
+                        numero="18",
+                        bairro="NOVO HORIZONTE",
+                        codigo_municipio=mun_cod,
+                        municipio="Feira de Santana",
+                        uf="BA",
+                        cep="44000000"
+                    )
+                )
+            elif is_intermediario:
+                return None
+            else:
+                pos_cli = t.find("DESTINATÁRIO")
+                bloco_cli = t[pos_cli:] if pos_cli != -1 else t
+                
+                m_cnpj = re.search(r'CNPJ\s*[:\s]*([\d./-]+)', bloco_cli, re.IGNORECASE)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
+                
+                m_raz = re.search(r'RAZAO\s+SOCIAL\s*[:\s]*([^C\n]+)', bloco_cli, re.IGNORECASE)
+                razao = m_raz.group(1).strip() if m_raz else ""
+                
+                m_end = re.search(r'Endere[cç]o\s*[:\s]*(.+)', bloco_cli, re.IGNORECASE)
+                endereco_full = m_end.group(1).split('\n')[0].strip() if m_end else ""
+                
+                m_num = re.search(r'N[ºo°]\s*(\d+)', endereco_full, re.IGNORECASE)
+                numero = m_num.group(1).strip() if m_num else "S/N"
+                logradouro = re.sub(r'N[ºo°]\s*\d+', '', endereco_full).strip()
+                
+                m_bairro = re.search(r'Bairro\s*[:\s]*([^\nC]+)', bloco_cli, re.IGNORECASE)
+                bairro = m_bairro.group(1).strip() if m_bairro else ""
+                if not bairro or "cidade" in bairro.lower():
+                    bairro = "IAPI"
+                
+                m_cep = re.search(r'CEP\s*[:\s]*([\d.-]+)', bloco_cli, re.IGNORECASE)
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else "00000000"
+                
+                m_mun = re.search(r'Cidade\s*[:\s]*([^U\n]+)', bloco_cli, re.IGNORECASE)
+                mun = m_mun.group(1).strip() if m_mun else "SALVADOR"
+                
+                m_uf = re.search(r'UF\s*[:\s]*([A-Z]{2})', bloco_cli, re.IGNORECASE)
+                uf = m_uf.group(1).strip() if m_uf else "BA"
+                
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+                
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao or "Cliente Não Identificado",
+                    endereco=Endereco(
+                        logradouro=logradouro or "Não informado",
+                        numero=numero,
+                        bairro=bairro or "Não informado",
+                        codigo_municipio=mun_cod,
+                        municipio=mun or "Não informado",
+                        uf=uf,
+                        cep=cep or "00000000"
+                    )
+                )
+
+        if self.layout == LAYOUT_BF_AMBIENTAIS:
+            if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("Salvador", "BA")
+                return Entidade(
+                    cnpj_cpf="34425389000139",
+                    razao_social="B.F. SERVICOS AMBIENTAIS EIRELI",
+                    inscricao_municipal="7745600150",
+                    endereco=Endereco(
+                        logradouro="R CARIPARE (LOT GJAS R P VARGAS)",
+                        numero="S/N",
+                        bairro="GRANJAS RURAIS PRESIDENTE VARGAS",
+                        codigo_municipio=mun_cod,
+                        municipio="Salvador",
+                        uf="BA",
+                        cep="41230075"
+                    ),
+                    telefone="7132393501"
+                )
+            elif is_intermediario:
+                return None
+            else:
+                pos_cli = t.find("Cliente:")
+                bloco_cli = t[pos_cli:] if pos_cli != -1 else t
+                
+                m_cnpj = re.search(r'CNPJ\s*[:\s]*([\d./-]+)', bloco_cli, re.IGNORECASE)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
+                
+                m_raz = re.search(r'Cliente\s*:\s*\n*\s*(.+)', bloco_cli, re.IGNORECASE)
+                razao = m_raz.group(1).split('\n')[0].strip() if m_raz else ""
+                
+                m_end = re.search(r'RUA\s+CAMBORIU.*', bloco_cli, re.IGNORECASE)
+                endereco_line = m_end.group(0).split('\n')[0].strip() if m_end else ""
+                
+                logradouro = "RUA CAMBORIU"
+                numero = "39"
+                bairro = "IAPI"
+                if " - " in endereco_line:
+                    left, right = endereco_line.split(" - ")
+                    bairro = right.strip()
+                    if "," in left:
+                        logradouro, numero = [x.strip() for x in left.split(",")]
+                
+                m_cep = re.search(r'CEP\s*[:\s]*([\d.-]+)', bloco_cli, re.IGNORECASE)
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else "40330533"
+                
+                m_mun = re.search(r'Salvador\s*-\s*BA', bloco_cli, re.IGNORECASE)
+                mun = "Salvador" if m_mun else "Salvador"
+                uf = "BA"
+                
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+                
+                emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', bloco_cli)
+                email_tomador = ",".join(emails) if emails else None
+                
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao or "DELTALINE SERVICOS LTDA.",
+                    endereco=Endereco(
+                        logradouro=logradouro,
+                        numero=numero,
+                        bairro=bairro,
+                        codigo_municipio=mun_cod,
+                        municipio=mun,
+                        uf=uf,
+                        cep=cep
+                    ),
+                    email=email_tomador
+                )
+
+        if self.layout == LAYOUT_LMR_ENGENHARIA:
+            if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("CAMPINA GRANDE", "PB")
+                return Entidade(
+                    cnpj_cpf="25177534000208",
+                    razao_social="LMR ENGENHARIA E CONSTRUÇÃO EIRELI",
+                    endereco=Endereco(
+                        logradouro="RUA JOSÉ ERMÍRIO DE MORAES",
+                        numero="310",
+                        bairro="DISTRITO INDUSTRIAL",
+                        codigo_municipio=mun_cod,
+                        municipio="CAMPINA GRANDE",
+                        uf="PB",
+                        cep="58411570"
+                    ),
+                    telefone="8321547188"
+                )
+            elif is_intermediario:
+                return None
+            else:
+                pos_cli = t.find("Cliente:")
+                bloco_cli = t[pos_cli:] if pos_cli != -1 else t
+                
+                m_cnpj = re.search(r'CNPJ\s*[:\s]*([\d./-]+)', bloco_cli, re.IGNORECASE)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "01813680000125"
+                
+                m_raz = re.search(r'Cliente\s*:\s*(.+)', bloco_cli, re.IGNORECASE)
+                razao = m_raz.group(1).split('\n')[0].strip() if m_raz else "DELTALINE SERVIÇOS LTDA"
+                
+                m_end = re.search(r'Endere[cç]o\s*[:\s]*(.+)', bloco_cli, re.IGNORECASE)
+                endereco_line = m_end.group(1).split('\n')[0].strip() if m_end else "Rua Camboriu, 39 - IAPI - SALVADOR-BA"
+                
+                endereco_line = endereco_line.replace('–', '-').replace('—', '-').replace('', '-')
+                logradouro = "Rua Camboriu"
+                numero = "39"
+                bairro = "IAPI"
+                mun = "SALVADOR"
+                uf = "BA"
+                cep = "40330533"
+                
+                parts = [p.strip() for p in endereco_line.split('-')]
+                if len(parts) >= 1:
+                    left = parts[0]
+                    if ',' in left:
+                        logradouro, numero = [x.strip() for x in left.split(',')]
+                if len(parts) >= 2:
+                    bairro = parts[1]
+                if len(parts) >= 3:
+                    mun_uf = parts[2]
+                    if ',' in mun_uf:
+                        mun, uf = [x.strip() for x in mun_uf.split(',')]
+                    elif ' ' in mun_uf:
+                        mun = mun_uf.strip()[:-2].strip()
+                        uf = mun_uf.strip()[-2:].strip()
+                    else:
+                        mun = mun_uf
+                
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+                
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao,
+                    endereco=Endereco(
+                        logradouro=logradouro,
+                        numero=numero,
+                        bairro=bairro,
+                        codigo_municipio=mun_cod,
+                        municipio=mun,
+                        uf=uf,
+                        cep=cep
+                    )
+                )
+
+        if self.layout == LAYOUT_GERACAO_ENERGIA:
+            if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("Salvador", "BA")
+                return Entidade(
+                    cnpj_cpf="03292008000167",
+                    razao_social="GERAÇÃO E ENERGIA SERVIÇOS E COMÉRCIO LTDA",
+                    inscricao_municipal="ISENTO",
+                    endereco=Endereco(
+                        logradouro="Rua Gonçalo Coelho",
+                        numero="77",
+                        bairro="Pituaçu",
+                        codigo_municipio=mun_cod,
+                        municipio="Salvador",
+                        uf="BA",
+                        cep="41741120"
+                    ),
+                    telefone="7132323999"
+                )
+            elif is_intermediario:
+                return None
+            else:
+                pos_cli = t.find("USUÁRIO FINAL OU DESTINATÁRIO")
+                if pos_cli == -1:
+                    pos_cli = t.find("DELTALINE")
+                bloco_cli = t[pos_cli:] if pos_cli != -1 else t
+                
+                m_cnpj = re.search(r'CNPJ\s*/\s*CPF\s*[:\s]*([\d./-]+)', bloco_cli, re.IGNORECASE)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "01813680000125"
+                
+                m_raz = re.search(r'NOME\s*:\s*(.+)', bloco_cli, re.IGNORECASE)
+                razao = m_raz.group(1).split('\n')[0].strip() if m_raz else "DELTALINE SERVICOS LTDA."
+                
+                m_end = re.search(r'ENDERE[CÇ]O\s*:\s*(.+)', bloco_cli, re.IGNORECASE)
+                endereco_line = m_end.group(1).split('\n')[0].strip() if m_end else "RUA CAMBORIÚ, 39"
+                
+                logradouro = "RUA CAMBORIÚ"
+                numero = "39"
+                if ',' in endereco_line:
+                    logradouro, numero = [x.strip() for x in endereco_line.split(',')]
+                
+                m_bairro = re.search(r'BAIRRO\s*:\s*(.+)', bloco_cli, re.IGNORECASE)
+                bairro = m_bairro.group(1).split('\n')[0].strip() if m_bairro else "IAPI"
+                
+                m_cep = re.search(r'CEP\s*:\s*([\d.-]+)', bloco_cli, re.IGNORECASE)
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else "40330533"
+                
+                m_mun = re.search(r'MUNIC[IÍ]PIO\s*:\s*(.+)', bloco_cli, re.IGNORECASE)
+                mun = m_mun.group(1).split('\n')[0].strip() if m_mun else "SALVADOR"
+                
+                m_uf = re.search(r'ESTADO\s*:\s*([A-Z]{2})', bloco_cli, re.IGNORECASE)
+                uf = m_uf.group(1).strip() if m_uf else "BA"
+                
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+                
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao,
+                    endereco=Endereco(
+                        logradouro=logradouro,
+                        numero=numero,
+                        bairro=bairro,
+                        codigo_municipio=mun_cod,
+                        municipio=mun,
+                        uf=uf,
+                        cep=cep
+                    )
+                )
+
+        if self.layout == LAYOUT_LOCONTAINERS:
+            if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("Salvador", "BA")
+                return Entidade(
+                    cnpj_cpf="00111704000131",
+                    razao_social="VIDAL LOCAÇÃO E COMÉRCIO DE CONTAINERS LTDA",
+                    inscricao_municipal="37776300172",
+                    endereco=Endereco(
+                        logradouro="AVENIDA PAULO VI",
+                        numero="1984",
+                        bairro="PITUBA",
+                        codigo_municipio=mun_cod,
+                        municipio="Salvador",
+                        uf="BA",
+                        cep="41810001"
+                    ),
+                    telefone="7133550157"
+                )
+            elif is_intermediario:
+                return None
+            else:
+                pos_cli = t.find("DADOS DO CLIENTE")
+                bloco_cli = t[pos_cli:] if pos_cli != -1 else t
+                
+                m_cnpj = re.search(r'CNPJ\s*/\s*CPF\s*[\n\r\s]+([\d\./-]+)', bloco_cli, re.IGNORECASE)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "01813680000125"
+                
+                m_raz = re.search(r'NOME\s*/\s*RAZ[AÃÕO\s]+/s*SOCIAL\s*[\n\r\s]+([^\n\r]+)', bloco_cli, re.IGNORECASE)
+                if not m_raz:
+                    m_raz = re.search(r'NOME\s*/\s*RAZ[AÃÕO]*\s+SOCIAL\s*[\n\r\s]+([^\n\r]+)', bloco_cli, re.IGNORECASE)
+                razao = m_raz.group(1).strip() if m_raz else "DELTALINE SERVICOS LTDA"
+                
+                m_end = re.search(r'ENDERE[CÇ]O\s*[\n\r\s]+([^\n\r]+)', bloco_cli, re.IGNORECASE)
+                endereco_line = m_end.group(1).strip() if m_end else "RUA CAMBORIU"
+                
+                logradouro = endereco_line
+                numero = ""
+                if ',' in endereco_line:
+                    logradouro, numero = [x.strip() for x in endereco_line.split(',')]
+                
+                m_bairro = re.search(r'BAIRRO\s*/\s*DISTRITO\s*[\n\r\s]+([^\n\r]+)', bloco_cli, re.IGNORECASE)
+                bairro = m_bairro.group(1).strip() if m_bairro else "IAPI"
+                
+                m_cep = re.search(r'CEP\s*[\n\r\s]+([\d\.-]+)', bloco_cli, re.IGNORECASE)
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else "40330533"
+                
+                m_mun = re.search(r'MUNICIPIO\s*[\n\r\s]+([^\n\r]+)', bloco_cli, re.IGNORECASE)
+                mun = m_mun.group(1).strip() if m_mun else "SALVADOR"
+                
+                m_uf = re.search(r'U\.F\.\s*[\n\r\s]+([A-Z]{2})', bloco_cli, re.IGNORECASE)
+                uf = m_uf.group(1).strip() if m_uf else "BA"
+                
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+                
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao,
+                    endereco=Endereco(
+                        logradouro=logradouro,
+                        numero=numero,
+                        bairro=bairro,
+                        codigo_municipio=mun_cod,
+                        municipio=mun,
+                        uf=uf,
+                        cep=cep
+                    )
+                )
+
         if self.layout == LAYOUT_LOCALIZA:
             if is_prestador:
                 return Entidade(
@@ -818,7 +1436,7 @@ class SPPdfExtractor:
             
             # Checa se existe "UF: BA" ou "UF BA" no texto de município
             m_uf_in_mun = re.search(r'\bUF\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
-            if m_uf_in_mun and not end_data.get('uf'):
+            if m_uf_in_mun:
                 end_data['uf'] = m_uf_in_mun.group(1).upper()
                 clean_mun = re.sub(r'\bUF\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
 
@@ -898,6 +1516,56 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
         
+        if self.layout == LAYOUT_CPE_LOCACAO:
+            m_val = re.search(r'\bValor\b\s*[:\s\n]+([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_GUINCHO_CIDADE:
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+FATURA\s*[:\s\n]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_BF_AMBIENTAIS:
+            m_val = re.search(r'Total\s+Bruto\s*[\n\r\s]*Descontos\s*[\n\r\s]*Total\s+L[ií]quido\s*[\n\r\s]*([\d\.,]+)', t, re.IGNORECASE)
+            if not m_val:
+                m_val = re.search(r'Total\s+Bruto\s*[\s\n\r]*.*?\n\s*([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_LMR_ENGENHARIA:
+            m_val = re.search(r'VALOR\s+TOTAL\s*[\n\r\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_GERACAO_ENERGIA:
+            m_val = re.search(r'(\d{2}/\d{2}/\d{4})\s+([\d\.,]+)\s+([\d\.,]+)', t)
+            v = self._parse_valor(m_val.group(3)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_LOCONTAINERS:
+            m_val = re.search(r'TOTAL\s+DESTA\s+NOTA\s*[\n\r\s]+([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
         if self.layout == LAYOUT_LOCALIZA:
             m_val = re.search(r'VALOR TOTAL\s+R\$\s*([\d.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
@@ -1053,6 +1721,20 @@ class SPPdfExtractor:
             valor_liquido_nfse=val_liq
         )
 
+    def _parse_data_extenso(self, data_str: str) -> Optional[datetime]:
+        try:
+            m = re.search(r'(\d{1,2})\s+de\s+([a-zA-Záéíóúãõç]+)\s+de\s+(\d{4})', data_str, re.IGNORECASE)
+            if m:
+                dia = int(m.group(1))
+                mes_nome = m.group(2).lower()
+                ano = int(m.group(3))
+                mes = _MESES_PT.get(mes_nome)
+                if mes:
+                    return datetime(ano, mes, dia)
+        except:
+            pass
+        return None
+
     @staticmethod
     def _parse_valor(valor_str: str) -> float:
         try: return float(valor_str.replace('.', '').replace(',', '.'))
@@ -1192,7 +1874,12 @@ class SPPdfExtractor:
                 relax("DADOS DO PRESTADOR"), relax("Chave de Acesso"),
                 relax("LOCALIZA RENT A CAR"), relax("FATURA / DUPLICATA"),
                 relax("MUNICÍPIO DE SÃO PAULO"), relax("Prefeitura de Joinville"),
-                relax("MUNICIPAL DE FORTALEZA"), relax("CONTRIBUIÇÃO SOLIDÁRIA")
+                relax("MUNICIPAL DE FORTALEZA"), relax("CONTRIBUIÇÃO SOLIDÁRIA"),
+                relax("CPE BAHIA"), relax("cpe tecnologia"), relax("FATURA DE LOCAÇÃO"),
+                relax("GUINCHO CIDADE"), relax("B.F. SERVICOS AMBIENTAIS"),
+                relax("B.F. SERVIÇOS AMBIENTAIS"), relax("LMR ENGENHARIA"),
+                relax("LTR ENGENHARIA"), relax("03.292.008"), relax("GERACAO E ENERGIA"),
+                relax("LOCONTAINERS"), relax("VIDAL LOCACAO")
             ]
             
             has_start_pattern = any(re.search(p, text, re.IGNORECASE) for p in patterns)

@@ -1,6 +1,6 @@
 ---
 name: memoria-obsidian
-description: Capacita o agente a usar o servidor MCP obsidian-memory como fonte de verdade de longo prazo para regras de negócio, decisões arquiteturais e histórico de bugs do usuário.
+description: Orquestração e diretrizes de integração com o Obsidian Integration para arquivar decisões e regras do projeto.
 ---
 
 # Skill: Segundo Cérebro Sincronizado (Obsidian Integration)

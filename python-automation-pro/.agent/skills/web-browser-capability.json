@@ -1,0 +1,34 @@
+{
+  "name": "web_research_capability",
+  "description": "Permite ao Analista de Requisitos fazer consultas e leituras de documentações oficiais diretamente na internet para embasamento técnico.",
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Busca na internet por documentações, APIs, RFCs e regras de negócio atualizadas.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "A string de busca focada na documentação técnica desejada."
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "fetch_url",
+      "description": "Lê o conteúdo textual bruto de uma URL de documentação específica encontrada na busca.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "A URL exata da documentação a ser analisada."
+          }
+        },
+        "required": ["url"]
+      }
+    }
+  ]
+}

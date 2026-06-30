@@ -39,11 +39,17 @@ C:/python/conversornotasabrasf/python-automation-pro
 
 ---
 
-## Next Steps (Pending)
-- **Push the repository** to GitHub (`git push -u origin master`).
-- Optionally add unit tests for the new page‑filtering logic.
-- Review the notes and let me know if any additional documentation or features are required.
+### 5. Correção de Extração de Município e UF (Layout Salvador) - 19/06/2026
+- Corrigida a extração de municípios no layout Salvador/BA. A poluição da string de cidade (ex: `"SALVADOR UF: BA"`) foi resolvida com o ajuste do fluxo de regex em `_extrair_entidade`.
+- Atualizada a lista de layouts de prefeituras mapeadas na documentação do projeto.
+- Testes expandidos para **75 casos de teste** garantindo 100% de sucesso.
 
 ---
 
-*Generated on 2026‑06‑03.*
+## How to Verify
+1. Run `pytest` within the python-automation-pro directory. All 75 tests should pass successfully.
+2. Verify the updated layouts list in both `README.md` and `DOCUMENTACAO_CONVERSAO.md`.
+
+---
+
+*Generated/Updated on 2026-06-19.*
