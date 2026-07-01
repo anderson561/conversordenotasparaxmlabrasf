@@ -46,7 +46,6 @@ LAYOUT_LOCALIZA  = 'localiza_fatura'  # Localiza Rent A Car S/A (Fatura de Loca�
 LAYOUT_SAO_PAULO = 'sao_paulo_sp'     # São Paulo/SP
 LAYOUT_JOINVILLE = 'joinville_sc'     # Joinville/SC
 LAYOUT_FORTALEZA = 'fortaleza_ce'     # Fortaleza/CE
-LAYOUT_BRASILIA  = 'brasilia_df'      # Brasília/DF (Governo do DF)
 LAYOUT_ISBET     = 'isbet_recibo'     # ISBET (Nota de Contribuição)
 LAYOUT_SIMOES_FILHO = 'simoes_filho_ba'  # Simões Filho/BA
 LAYOUT_RIBEIRAO_PIRES = 'ribeirao_pires_sp' # Ribeirão Pires/SP
@@ -167,8 +166,6 @@ class SPPdfExtractor:
             return LAYOUT_JOINVILLE
         if re.search(r'PREFEITURA MUNICIPAL DE FORTALEZA', t, re.IGNORECASE):
             return LAYOUT_FORTALEZA
-        if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
-            return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
             return LAYOUT_ISBET
         if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE):
@@ -216,8 +213,6 @@ class SPPdfExtractor:
             return LAYOUT_JOINVILLE
         if re.search(r'PREFEITURA MUNICIPAL DE FORTALEZA', t, re.IGNORECASE):
             return LAYOUT_FORTALEZA
-        if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
-            return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
             return LAYOUT_ISBET
         if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE):
@@ -725,11 +720,6 @@ class SPPdfExtractor:
         t = self.raw_text
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS):
             return "FATURA"
-        
-        # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
-        if self.layout == LAYOUT_BRASILIA:
-            return self._extrair_codigo_autenticidade_brasilia()
-        
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         # Padrões com relax() forçado para capturar etiquetas ruidosas
@@ -754,41 +744,6 @@ class SPPdfExtractor:
                 print(f"DEBUG: CodVer match: '{raw_code}' -> '{res}'")
                 if len(res) >= 4: return res
         
-        return 'XXXX-XXXX'
-    
-    def _extrair_codigo_autenticidade_brasilia(self) -> str:
-        """
-        Extrai o Código de Autenticidade específico do layout Brasília/DF.
-        
-        O código aparece na seção "Código de Autenticidade" ou "Data Emissão da DPS"
-        como uma sequência numérica contínua (ex: 530001081224929857000159000000000118226051779414799)
-        """
-        t = self.raw_text
-        
-        patterns = [
-            # Padrão 1: Após "Código de Autenticidade" ou "Cód. de Autenticidade"
-            r'C[oó]d(?:igo)?\s+de\s+Autenticidade\s*[:\s\n]*(\d{20,})',
-            # Padrão 2: Na seção de "Data Emissão da DPS" (sequência numérica longa)
-            r'Data\s+Emiss[aã]o\s+da\s+DPS\s*[:\s\n]*(\d{10,20})\s+(\d{20,})',
-            # Padrão 3: Genérico - série da DPS (número longo após identificadores)
-            r'S[eé]rie\s+da\s+DPS\s*[:\s\n]*(\d{20,})',
-            # Padrão 4: Sequência numérica longa isolada (fallback)
-            r'(\d{44,})',  # Código de autenticidade típico tem 44 dígitos
-        ]
-        
-        for p in patterns:
-            m = re.search(p, t, re.IGNORECASE)
-            if m:
-                # Se houver múltiplos grupos, pega o maior (código de autenticidade)
-                groups = [g for g in m.groups() if g and isinstance(g, str)]
-                if groups:
-                    code = max(groups, key=len) if len(groups) > 1 else groups[0]
-                    code_clean = re.sub(r'[^0-9]', '', code).strip()
-                    if len(code_clean) >= 20:  # Código de autenticidade deve ter pelo menos 20 dígitos
-                        print(f"DEBUG: Brasília CodAut match: '{code_clean}'")
-                        return code_clean
-        
-        print(f"DEBUG: Brasília - Código de Autenticidade não encontrado, retornando fallback")
         return 'XXXX-XXXX'
 
     def _extrair_entidade(self, tipo: str) -> Optional[Entidade]:
