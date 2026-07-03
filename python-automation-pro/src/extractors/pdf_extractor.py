@@ -151,8 +151,6 @@ class SPPdfExtractor:
             return LAYOUT_BARREIRAS
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
-        if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
-            return LAYOUT_NACIONAL
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR # Ou um layout genérico da BA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
@@ -175,6 +173,8 @@ class SPPdfExtractor:
             return LAYOUT_SIMOES_FILHO
         if re.search(r'Ribeir[aã]o Pires', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PIRES
+        if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
+            return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
 
     def _detect_layout_page(self, page_text: str) -> str:
@@ -200,8 +200,6 @@ class SPPdfExtractor:
             return LAYOUT_BARREIRAS
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
-        if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
-            return LAYOUT_NACIONAL
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
@@ -224,6 +222,8 @@ class SPPdfExtractor:
             return LAYOUT_SIMOES_FILHO
         if re.search(r'Ribeir[aã]o Pires', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PIRES
+        if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
+            return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
 
     # ------------------------------------------------------------------
@@ -407,9 +407,9 @@ class SPPdfExtractor:
                 patterns.append(r'Emitido\s+em\s+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?')
             elif label == r'Data\s+de':
                 # CPE e similares podem ter Incrição/Inscrição no meio
-                patterns.append(rf'{label}\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?')
+                patterns.append(rf'{label}\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{{2}}/\d{{2}}/\d{{4}})(?:\s+(\d{{2}}:\d{{2}}(?::\d{{2}})?))?')
             else:
-                patterns.append(rf'{label}.*?(?::|\s|\n)+(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?')
+                patterns.append(rf'{label}.*?(?::|\s|\n)+(\d{{2}}/\d{{2}}/\d{{4}})(?:\s+(\d{{2}}:\d{{2}}(?::\d{{2}})?))?')
         for pattern in patterns:
             m = re.search(pattern, t, re.IGNORECASE | re.DOTALL)
             if m:
