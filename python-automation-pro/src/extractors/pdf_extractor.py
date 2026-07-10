@@ -8,6 +8,7 @@ Layouts detectados automaticamente:
   D — NFS-e Nacional (DANFSe):  "Competência da NFS-e"
   E — Genérico/SP (ABRASF):     "Competência" MM/YYYY ou mês extenso
   ? — Imagem/Scan:               texto vazio → aviso de OCR necessário
+  F — Telecom (NF-e mod. 22):    "NOTA FISCAL DE FATURA DE SERVIÇO DE COMUNICAÇÃO ELETRÔNICA"
 """
 
 # pyrefly: ignore[missing-import]
@@ -56,6 +57,7 @@ LAYOUT_BF_AMBIENTAIS = 'bf_ambientais' # B.F. Serviços Ambientais (Fatura de Lo
 LAYOUT_LMR_ENGENHARIA = 'lmr_engenharia' # LMR Engenharia e Construção (Fatura de Locação)
 LAYOUT_GERACAO_ENERGIA = 'geracao_energia' # Geração & Energia (Fatura de Locação)
 LAYOUT_LOCONTAINERS = 'locontainers' # Locontainers (Vidal Locação de Containers)
+LAYOUT_TELECOM_COMUNICACAO = 'telecom_comunicacao' # NF-e Fatura de Serviço de Comunicação Eletrônica
 
 
 # Etiquetas para Identificação de Entidades
@@ -173,6 +175,8 @@ class SPPdfExtractor:
             return LAYOUT_SIMOES_FILHO
         if re.search(r'Ribeir[aã]o Pires', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PIRES
+        if re.search(r'NOTA\s+FISCAL\s+DE\s+FATURA\s+DE\s+SERVI[CÇ]O\s+DE\s+COMUNICA[CÇ][AÃ]O', t, re.IGNORECASE):
+            return LAYOUT_TELECOM_COMUNICACAO
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
@@ -222,6 +226,8 @@ class SPPdfExtractor:
             return LAYOUT_SIMOES_FILHO
         if re.search(r'Ribeir[aã]o Pires', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PIRES
+        if re.search(r'NOTA\s+FISCAL\s+DE\s+FATURA\s+DE\s+SERVI[CÇ]O\s+DE\s+COMUNICA[CÇ][AÃ]O', t, re.IGNORECASE):
+            return LAYOUT_TELECOM_COMUNICACAO
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
@@ -268,6 +274,14 @@ class SPPdfExtractor:
         elif layout == LAYOUT_CAMACARI:
             m = re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_TELECOM_COMUNICACAO:
+            # Campo "REFERÊNCIA (ANO/MÊS): 2026/06" ou "REFERÊNCIA: 2026/06"
+            m = re.search(r'REFER[EÊ]NCIA\s*(?:\([^)]*\))?\s*[:\s]+(\d{4})/(\d{2})', t, re.IGNORECASE)
+            if m:
+                try:
+                    result = datetime(int(m.group(1)), int(m.group(2)), 1)
+                except ValueError:
+                    result = None
         elif layout == LAYOUT_NACIONAL:
             # Captura o trecho logo após a label e busca a primeira data (DD/MM/YYYY ou MM/YYYY)
             m = re.search(r'Compet[eê]ncia\s+da\s+NFS-e', t, re.IGNORECASE)
@@ -311,7 +325,7 @@ class SPPdfExtractor:
             if m:
                 try:
                     mes_str, ano_str = m.group(1).split('/')
-                    mes = _MONTHS.get(mes_str.lower()[:3], 1)
+                    mes = _MESES_PT.get(mes_str.lower()[:3], 1)
                     result = datetime(int(ano_str), mes, 1)
                 except: pass
         elif layout == LAYOUT_FORTALEZA:
@@ -381,6 +395,27 @@ class SPPdfExtractor:
             m = re.search(r'DATA DE EMISS[AÃ]O:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+            # "DATA DE EMISSÃO: 16/06/2026" ou variações com espaços
+            m = re.search(r'DATA\s+DE\s+EMISS[AÃ]O\s*[:\s]+(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_CAMACARI:
+            # Este layout não traz um rótulo "Data de Emissão" — usamos "Data da
+            # prestação do serviço" (mesmo rótulo já usado por _extrair_competencia)
+            # e, como reforço, "Data Impressão". Sem isso, cai no fallback genérico
+            # abaixo, que não reconhece nenhum dos dois e retorna datetime.now().
+            m = re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+            m = re.search(r'Data\s+Impress[aã]o\s*:?\s*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}))?', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
         if self.layout == LAYOUT_NACIONAL:
@@ -525,6 +560,27 @@ class SPPdfExtractor:
             m = re.search(r'Nota\s+Fatura\s+N[ºo°]?\s*[\n\r\s]+(\d+)', t, re.IGNORECASE)
             if m: return str(int(m.group(1)))
 
+        if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+            # "NOTA FISCAL Nº 27528 - SÉRIE: 1" ou "NOTA FISCAL Nº 27528"
+            m = re.search(r'NOTA\s+FISCAL\s+N[ºo°]\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_CAMACARI:
+            # Rótulo "Número da Nota" — o OCR deste layout às vezes troca o "ú" por "i"
+            # ("Nimero da Nota") e, por ser um documento em duas colunas, o valor real
+            # nem sempre fica colado ao rótulo (pode vir depois de texto de outra coluna,
+            # ex: "Número da Nota\nPREFEITURA MUNICIPAL DE CAMAÇARI 961"). Por isso
+            # buscamos o rótulo e pegamos o primeiro número dentro de uma janela após
+            # ele, em vez de exigir adjacência imediata.
+            m_lab = re.search(r'N[uiú]mero\s+da\s+Nota', t, re.IGNORECASE)
+            if m_lab:
+                janela = t[m_lab.end(): m_lab.end() + 80]
+                m_num = re.search(r'\b(\d+)\b', janela)
+                if m_num:
+                    num = m_num.group(1)
+                    if num not in ('2024', '2025', '2026') or len(num) > 4:
+                        return num
+
         # 1. Busca por proximidade do label (Alta prioridade para DANFSe v1.0)
         # Procura o rótulo e pega o primeiro número que aparece depois dele (até 100 caracteres de distância)
         label_patterns = [
@@ -652,6 +708,22 @@ class SPPdfExtractor:
             res = re.sub(r'\s+', ' ', res)
             return res
 
+        if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+            # Coleta os itens da tabela "ITENS DA FATURA" até "TOTAL A PAGAR"
+            m = re.search(
+                r'ITENS\s+DA\s+FATURA.*?\n(.*?)(?=TOTAL\s+A\s+PAGAR|VENCIMENTO|$)',
+                t, re.IGNORECASE | re.DOTALL
+            )
+            if m:
+                linhas = [
+                    l.strip() for l in m.group(1).split('\n')
+                    if l.strip() and not re.match(r'^[\d\.,\s]+$', l.strip())
+                    and not re.match(r'^(UN|cClass|QUANT|VALOR|DESC|PIS|BC|AL[IÍ]Q)', l.strip(), re.IGNORECASE)
+                ]
+                if linhas:
+                    return ' | '.join(linhas[:15])
+            return 'Serviços de telecomunicação conforme nota fiscal.'
+
         if self.layout == LAYOUT_LOCONTAINERS:
             m_start = re.search(r'QUANT\.\s*DESCRI[CÇCçIíiÃãOõoAaSs]*', t, re.IGNORECASE)
             m_end = re.search(r'VALOR\s+UNIT[AÁAáIíiOõoRRsS]*', t, re.IGNORECASE)
@@ -699,7 +771,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO):
             return "0601"
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
@@ -725,7 +797,22 @@ class SPPdfExtractor:
         t = self.raw_text
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS):
             return "FATURA"
-        
+
+        if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+            # Extrai a chave de acesso de 44 dígitos após o rótulo "CHAVE DE ACESSO"
+            m = re.search(r'CHAVE\s+DE\s+ACESSO\s*[:\s]*([\d\s]{44,60})', t, re.IGNORECASE)
+            if m:
+                chave = re.sub(r'\D', '', m.group(1))
+                if len(chave) == 44:
+                    return chave
+            # Fallback: sequência no formato impresso "XXXX XXXX ... XXXX" (11 grupos de 4)
+            m2 = re.search(r'\b(?:\d{4}\s+){10}\d{4}\b', t)
+            if m2:
+                chave = re.sub(r'\D', '', m2.group(0))
+                if len(chave) == 44:
+                    return chave
+            return 'TELECOM'
+
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
             return self._extrair_codigo_autenticidade_brasilia()
@@ -764,10 +851,24 @@ class SPPdfExtractor:
         como uma sequência numérica contínua (ex: 530001081224929857000159000000000118226051779414799)
         """
         t = self.raw_text
-        
+
+        # Padrão 1: Após "Código de Autenticidade" ou "Cód. de Autenticidade".
+        # O código real costuma vir em dois grupos numéricos separados por
+        # espaço (ex: "...517794 14799") que devem ser concatenados — por
+        # isso é tratado à parte da lista genérica abaixo, que só usa o
+        # maior grupo (semântica diferente, ver Padrão 2).
+        m_auth = re.search(
+            r'C[oó]d(?:igo)?\s+de\s+Autenticidade\s*[:\s\n]*(\d{20,})(?:\s+(\d+))?',
+            t, re.IGNORECASE
+        )
+        if m_auth:
+            code = m_auth.group(1) + (m_auth.group(2) or '')
+            code_clean = re.sub(r'[^0-9]', '', code).strip()
+            if len(code_clean) >= 20:
+                print(f"DEBUG: Brasília CodAut match: '{code_clean}'")
+                return code_clean
+
         patterns = [
-            # Padrão 1: Após "Código de Autenticidade" ou "Cód. de Autenticidade"
-            r'C[oó]d(?:igo)?\s+de\s+Autenticidade\s*[:\s\n]*(\d{20,})',
             # Padrão 2: Na seção de "Data Emissão da DPS" (sequência numérica longa)
             r'Data\s+Emiss[aã]o\s+da\s+DPS\s*[:\s\n]*(\d{10,20})\s+(\d{20,})',
             # Padrão 3: Genérico - série da DPS (número longo após identificadores)
@@ -795,7 +896,15 @@ class SPPdfExtractor:
         t = self.raw_text
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
-        
+
+        if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+            if is_intermediario:
+                return None
+            if is_prestador:
+                return self._extrair_prestador_telecom(t)
+            else:
+                return self._extrair_tomador_telecom(t)
+
         if self.layout == LAYOUT_CPE_LOCACAO:
             if is_prestador:
                 mun_cod = _ibge_resolver.extract_and_validate("Lauro de Freitas", "BA")
@@ -1558,9 +1667,151 @@ class SPPdfExtractor:
             telefone=telefone
         )
 
+    def _extrair_prestador_telecom(self, t: str) -> Entidade:
+        """Extrai o emitente (prestador) de uma NF-e de serviço de comunicação.
+
+        O CNPJ do emitente está codificado na chave de acesso de 44 dígitos nas
+        posições 8-21 (0-indexed). O nome da empresa aparece nas primeiras linhas
+        do texto antes do primeiro CNPJ formatado.
+        """
+        cnpj_prest = ""
+        # Estratégia 1: extrai CNPJ das posições 8-21 da chave de acesso
+        m_chave = re.search(r'\b(?:\d{4}\s+){10}\d{4}\b', t)
+        if not m_chave:
+            m_chave = re.search(r'CHAVE\s+DE\s+ACESSO\s*[:\s]*([\d\s]{44,60})', t, re.IGNORECASE)
+        if m_chave:
+            chave = re.sub(r'\D', '', m_chave.group(0) if not m_chave.lastindex else m_chave.group(1))
+            if len(chave) == 44:
+                cnpj_prest = chave[6:20]  # posições 6-19 = CNPJ emitente na chave NF-e mod22
+
+        # Estratégia 2: primeiro CNPJ formatado no texto
+        if not cnpj_prest:
+            m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', t)
+            if m_cnpj:
+                cnpj_prest = re.sub(r'\D', '', m_cnpj.group(1))
+
+        # Nome: primeiras linhas não-vazias antes do primeiro CNPJ/telefone/CEP,
+        # pulando o título fixo "DOCUMENTO AUXILIAR..." do cabeçalho deste layout
+        # (senão o loop parava nele por engano, achando que era o nome do prestador).
+        linhas = [l.strip() for l in t.split('\n') if l.strip()]
+        nome_prest = linhas[0] if linhas else "Prestador de Telecomunicação"
+        for l in linhas:
+            if re.match(r'DOCUMENTO\s+AUXILIAR', l, re.IGNORECASE):
+                continue
+            if re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\(\d{2}\)\s*\d{4}', l):
+                break
+            if re.search(r'[A-Za-zÀ-ú]', l) and len(l) > 3:
+                nome_prest = l
+                break
+
+        # Endereço: linha que contém CEP de 8 dígitos ou padrão "Rua/Av"
+        logradouro, numero, bairro, municipio, uf, cep = ("Não informado", "S/N", "Não informado", "Não informado", "BA", "00000000")
+        m_end = re.search(
+            r'((?:Rua|Av(?:enida)?|Alameda|Rod(?:ovia)?|Estrada|Trav(?:essa)?)[^,\n]+),?\s*(\d+[^\n,]*?)[\n,]',
+            t, re.IGNORECASE
+        )
+        if m_end:
+            logradouro = m_end.group(1).strip()
+            numero = m_end.group(2).strip() or "S/N"
+
+        m_cep = re.search(r'(\d{5}[-\s]?\d{3})', t)
+        if m_cep:
+            cep = re.sub(r'\D', '', m_cep.group(1))
+
+        m_mun = re.search(r'(\w[\w\s]+)\s*[-–]\s*([A-Z]{2})\b', t)
+        if m_mun:
+            municipio = m_mun.group(1).strip()
+            uf = m_mun.group(2).strip()
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+
+        return Entidade(
+            cnpj_cpf=cnpj_prest or "00000000000000",
+            razao_social=nome_prest,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+        )
+
+    def _extrair_tomador_telecom(self, t: str) -> Entidade:
+        """Extrai o destinatário (tomador) de uma NF-e de serviço de comunicação.
+
+        O tomador é identificado pelo rótulo 'CNPJ/CPF' que aparece no bloco
+        do destinatário à esquerda do documento.
+
+        O OCR deste layout costuma confundir a barra "/" do rótulo com a
+        letra "I" (ex: "CNPJ/CPF:" vira "CNPJICPF:"), então o separador é
+        tratado como opcional e tolerante a essa variação.
+        """
+        m_cnpj = re.search(r'CNPJ\s*[/Il|]?\s*CPF\s*[:\s]*([\d./-]+)', t, re.IGNORECASE)
+        cnpj_tom = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
+
+        # Nome: primeira linha "de nome" encontrada subindo a partir do bloco
+        # com "CNPJ/CPF", pulando linhas de endereço (contêm dígitos, ex:
+        # número/CEP) ou no padrão "Município - UF".
+        nome_tom = "Tomador Não Identificado"
+        if m_cnpj:
+            bloco_antes = t[:m_cnpj.start()]
+            linhas_antes = [l.strip() for l in bloco_antes.split('\n') if l.strip()]
+            if linhas_antes:
+                for l in reversed(linhas_antes):
+                    if re.search(r'\d', l):
+                        continue
+                    if re.fullmatch(r'.+\s[-–]\s*[A-Z]{2}', l):
+                        continue
+                    if re.search(r'[A-Za-zÀ-ú]', l) and len(l) > 3:
+                        nome_tom = l
+                        break
+
+        # Endereço: extrai CEP, município e UF do bloco ao redor do CNPJ/CPF
+        pos_cnpj = m_cnpj.start() if m_cnpj else 0
+        bloco_tom = t[max(0, pos_cnpj - 400): pos_cnpj + 400]
+
+        logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
+        m_end = re.search(
+            r'((?:Rua|Av(?:enida)?|Alameda|Rod(?:ovia)?|Estrada|Trav(?:essa)?)[^,\n]+),?\s*(\d+[^\n,]*?)[\n,]',
+            bloco_tom, re.IGNORECASE
+        )
+        if m_end:
+            logradouro = m_end.group(1).strip()
+            numero = m_end.group(2).strip() or "S/N"
+
+        cep = "00000000"
+        m_cep = re.search(r'(\d{5}[-\s]?\d{3})', bloco_tom)
+        if m_cep:
+            cep = re.sub(r'\D', '', m_cep.group(1))
+
+        municipio, uf = "Não informado", "BA"
+        m_mun = re.search(r'(\w[\w\s]+)\s*[-–]\s*([A-Z]{2})\b', bloco_tom)
+        if m_mun:
+            municipio = m_mun.group(1).strip()
+            uf = m_mun.group(2).strip()
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+
+        return Entidade(
+            cnpj_cpf=cnpj_tom,
+            razao_social=nome_tom,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+        )
+
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
-        
+
         if self.layout == LAYOUT_CPE_LOCACAO:
             m_val = re.search(r'\bValor\b\s*[:\s\n]+([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
@@ -1619,13 +1870,76 @@ class SPPdfExtractor:
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
             )
 
+        if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+            # "TOTAL A PAGAR: R$ 129,90" ou "TOTAL A PAGAR R$ 129,90"
+            m_total = re.search(r'TOTAL\s+A\s+PAGAR\s*[:\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_total.group(1)) if m_total else 0.0
+
+            # BC ICMS e alíquota (campos presentes no documento, mapeados para base_calculo/aliquota)
+            m_bc = re.search(r'BC\s+ICMS\s+([\d\.,]+)', t, re.IGNORECASE)
+            bc = self._parse_valor(m_bc.group(1)) if m_bc else v
+
+            m_aliq = re.search(r'AL[IÍ]Q\s*(?:\(%\))?\s*([\d\.,]+)', t, re.IGNORECASE)
+            aliq = (self._parse_valor(m_aliq.group(1)) / 100.0) if m_aliq else 0.0
+
+            # PIS/COFINS declarados na tabela de itens
+            m_pis = re.search(r'PIS/COFINS\s+([\d\.,]+)', t, re.IGNORECASE)
+            pis = self._parse_valor(m_pis.group(1)) if m_pis else 0.0
+
+            return Valores(
+                valor_servicos=v,
+                valor_liquido_nfse=v,
+                base_calculo=bc,
+                aliquota=aliq,
+                valor_iss=0.0,
+                valor_pis=pis,
+            )
+
+        if self.layout == LAYOUT_CAMACARI:
+            def _parse_valor_camacari(raw: str) -> float:
+                # O OCR deste layout costuma ler corretamente rótulos como
+                # "Aliquota (%)", mas perde toda a pontuação (separador de
+                # milhar/decimal) especificamente nos valores da coluna
+                # "Totais (R$)" (ex: "5.115,41" vira "511541"). Quando o valor
+                # capturado é uma sequência de dígitos sem nenhum separador,
+                # tratamos os 2 últimos dígitos como centavos.
+                digits = raw.strip()
+                if re.fullmatch(r'\d{3,}', digits):
+                    return int(digits) / 100
+                return self._parse_valor(digits)
+
+            m_val = re.search(r'Valor\s+dos\s+Servi[cç]os\s*(?:\(R\$\)|\(=\))?\s*([\d\.,]+)', t, re.IGNORECASE)
+            m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
+            # "Al.?quota" tolera o "í" de "Alíquota" ser lido pelo OCR como "i" comum
+            # ou até como o caractere de substituição Unicode "�" (falha total de
+            # reconhecimento daquele glifo específico).
+            m_aliq = re.search(r'Al.?quota\s*\(%\)\s*([\d\.,]+)', t, re.IGNORECASE)
+            m_iss = re.search(r'Valor\s+do\s+ISS\s*\(R\$\)\s*([\d\.,]+)', t, re.IGNORECASE)
+            m_liq = re.search(r'Valor\s+L[ií]quido\s+da\s+Nota\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
+            m_ded = re.search(r'Dedu[cç][oõ]es\s*\(-\)\s*([\d\.,]+)', t, re.IGNORECASE)
+
+            val_serv = _parse_valor_camacari(m_val.group(1)) if m_val else 0.0
+            base = _parse_valor_camacari(m_base.group(1)) if m_base else 0.0
+            aliq = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
+            iss = _parse_valor_camacari(m_iss.group(1)) if m_iss else 0.0
+            liquido = _parse_valor_camacari(m_liq.group(1)) if m_liq else val_serv
+            deducoes = _parse_valor_camacari(m_ded.group(1)) if m_ded else 0.0
+
+            return Valores(
+                valor_servicos=val_serv, base_calculo=base, aliquota=aliq,
+                valor_iss=iss, valor_liquido_nfse=liquido, valor_deducoes=deducoes
+            )
+
         val_serv, base, aliq, iss = 0.0, 0.0, 0.0, 0.0
         pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         
         _val_patterns = [
+            # "Valor Serviço: R$ 27.796,65" (ex: layout Brasília/DF) — sem "do/dos"
+            # antes de "Serviço" e com "R$" logo após os dois-pontos.
+            r'Valor\s+Servi[cç]o\s*:\s*R?\$?\s*([\d\.,]+)',
             r'V[LlIi]\.\s+do\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)',
-            r'VALOR\s+TOTAL\s+DO\s+SERVIÇO:?\s*R\$?\s*([\d\.,]+)',
+            r'VALOR\s+TOTAL\s+DO\s+SERVIÇO\s*[:=]?\s*R\$?\s*([\d\.,]+)',
             r'V[LlIi]\.\s+Total\s+dos\s+Servi[cç]os\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+SERVIÇO\s*(?:\(R\$\))?[:\s\n]*([\d\.,]+)',
             r'Valor\s+total\s+da\s+Nota:?\s*R?\$?\s*([\d\.,]+)',
@@ -1707,7 +2021,12 @@ class SPPdfExtractor:
                 else: val_aliq = 0.0
             aliq = val_aliq / 100
 
-        m_iss = re.search(r'(?:Valor\s+do\s+|Total\s+do\s+)?ISS(?:QN)?\s*(?:\(R\$\))?[=:R\$\s]*(?:.*?\n)?\s*([\d\.,]+)', t, re.IGNORECASE)
+        # Prioriza um rótulo explícito de valor ("Valor (do) ISS" / "Total (do) ISS")
+        # para não casar com "Alíquota ISS: 5,00%", que também contém a palavra
+        # "ISS" mas antecede o rótulo de valor real no texto.
+        m_iss = re.search(r'(?:Valor\s+(?:do\s+)?|Total\s+(?:do\s+)?)ISS(?:QN)?\s*(?:\(R\$\))?[=:R\$\s]*(?:.*?\n)?\s*([\d\.,]+)', t, re.IGNORECASE)
+        if not m_iss:
+            m_iss = re.search(r'ISS(?:QN)?\s*(?:\(R\$\))?[=:R\$\s]*(?:.*?\n)?\s*([\d\.,]+)', t, re.IGNORECASE)
         if m_iss: iss = self._parse_valor(m_iss.group(1))
 
         # Valor Líquido (Tenta capturar ou calcula)
@@ -1785,44 +2104,58 @@ class SPPdfExtractor:
         try: return float(valor_str.replace('.', '').replace(',', '.'))
         except: return 0.0
 
-    def _extract_via_ocr(self) -> str:
-        """Tenta extrair o texto renderizando as páginas do PDF como imagens e passando pelo Tesseract."""
+    def _ocr_page(self, page_num: int) -> str:
+        """Renderiza uma única página do PDF (0-indexed) como imagem e extrai o texto via Tesseract."""
         try:
             import pymupdf  # PyMuPDF
             import pytesseract
             from PIL import Image
             import io
-            
             import os
+
             # Configuração explícita para Windows (caso não esteja no PATH)
             tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
             if os.path.exists(tess_path):
                 pytesseract.pytesseract.tesseract_cmd = tess_path
-            
-            print(f"[*] PDF '{self.pdf_path}' sem texto detectado. Iniciando extração via OCR (Tesseract)...")
-            
+
             doc = pymupdf.open(self.pdf_path)
-            full_ocr_text = []
-            
-            for page_num in range(len(doc)):
+            try:
+                if page_num >= len(doc):
+                    return ""
                 page = doc.load_page(page_num)
                 # Aumenta a resolução para melhorar a precisão do OCR (zoom 2x)
                 zoom = 2.0
                 mat = pymupdf.Matrix(zoom, zoom)
                 pix = page.get_pixmap(matrix=mat)
-                
+
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 # Requer que os dados do idioma português ('por') estejam instalados no Tesseract
-                text = pytesseract.image_to_string(img, lang='por')
-                full_ocr_text.append(text)
-                
-            return "\n\x0c\n".join(full_ocr_text)
+                return pytesseract.image_to_string(img, lang='por')
+            finally:
+                doc.close()
         except ImportError:
             print("[AVISO] Bibliotecas de OCR (pymupdf, pytesseract, pillow) não instaladas.")
             return ""
         except Exception as e:
-            print(f"[AVISO] Falha ao executar OCR (Tesseract instalado no Windows?): {e}")
+            print(f"[AVISO] Falha ao executar OCR na página {page_num + 1}: {e}")
             return ""
+
+    def _extract_via_ocr(self) -> str:
+        """Tenta extrair o texto de TODAS as páginas do PDF renderizando-as como imagens e passando pelo Tesseract."""
+        try:
+            import pymupdf  # PyMuPDF
+            doc = pymupdf.open(self.pdf_path)
+            n_pages = len(doc)
+            doc.close()
+        except ImportError:
+            print("[AVISO] Bibliotecas de OCR (pymupdf, pytesseract, pillow) não instaladas.")
+            return ""
+        except Exception as e:
+            print(f"[AVISO] Falha ao abrir PDF para OCR: {e}")
+            return ""
+
+        print(f"[*] PDF '{self.pdf_path}' sem texto detectado. Iniciando extração via OCR (Tesseract)...")
+        return "\n\x0c\n".join(self._ocr_page(i) for i in range(n_pages))
 
     def parse(self) -> Optional[Nfse]:
         if not self.raw_text: self.extract_raw_text()
@@ -1887,9 +2220,34 @@ class SPPdfExtractor:
             full_text = self._extract_via_ocr()
         
         print(f"[*] Texto extraído ({len(full_text)} caracteres). Iniciando reconhecimento de padrões...")
-        
+
         pages = full_text.split('\x0c')
-        
+
+        # Fallback de OCR por página: em PDFs mistos (algumas páginas com texto
+        # extraível diretamente, outras sendo imagem/scan), o texto do documento
+        # inteiro já "parece" válido o suficiente para pular o OCR global acima,
+        # deixando as páginas escaneadas sem nenhum texto e, portanto, ignoradas
+        # mais adiante. Aqui tentamos OCR pontual apenas nas páginas que renderizaram
+        # pouco ou nenhum texto, sem reprocessar o documento inteiro.
+        OCR_MIN_CHARS = 50
+        try:
+            import pymupdf  # PyMuPDF
+            doc = pymupdf.open(self.pdf_path)
+            n_pages_real = len(doc)
+            doc.close()
+        except Exception:
+            n_pages_real = len(pages)
+
+        if n_pages_real > len(pages):
+            pages.extend([''] * (n_pages_real - len(pages)))
+
+        for idx in range(min(n_pages_real, len(pages))):
+            if len(pages[idx].strip()) < OCR_MIN_CHARS:
+                ocr_text = self._ocr_page(idx)
+                if len(ocr_text.strip()) >= OCR_MIN_CHARS:
+                    print(f"[*] Página {idx + 1} sem texto extraível — usando OCR.")
+                    pages[idx] = ocr_text
+
         self.invalid_pages = []
         filtered_pages = []
         for idx, page in enumerate(pages, start=1):
@@ -1924,7 +2282,9 @@ class SPPdfExtractor:
                 relax("GUINCHO CIDADE"), relax("B.F. SERVICOS AMBIENTAIS"),
                 relax("B.F. SERVIÇOS AMBIENTAIS"), relax("LMR ENGENHARIA"),
                 relax("LTR ENGENHARIA"), relax("03.292.008"), relax("GERACAO E ENERGIA"),
-                relax("LOCONTAINERS"), relax("VIDAL LOCACAO")
+                relax("LOCONTAINERS"), relax("VIDAL LOCACAO"),
+                relax("NOTA FISCAL DE FATURA DE SERVICO DE COMUNICACAO"),
+                relax("NOTA FISCAL DE FATURA DE SERVIÇO DE COMUNICAÇÃO"),
             ]
             
             has_start_pattern = any(re.search(p, text, re.IGNORECASE) for p in patterns)

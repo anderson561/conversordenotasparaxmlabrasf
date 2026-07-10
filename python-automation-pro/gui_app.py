@@ -399,9 +399,18 @@ def main(page: ft.Page):
                         )
                     )
                     
+                    col_content = ft.Column(
+                        [ft.Text("O PDF possui mais de uma nota válida. Qual deseja converter?")] + options,
+                        tight=True,
+                        scroll=ft.ScrollMode.AUTO if len(nfse_list) > 10 else ft.ScrollMode.NONE,
+                    )
                     dialog = ft.AlertDialog(
                         title=ft.Text("Múltiplas Páginas Encontradas"),
-                        content=ft.Column([ft.Text("O PDF possui mais de uma nota válida. Qual deseja converter?")] + options, tight=True)
+                        content=ft.Container(
+                            content=col_content,
+                            height=400 if len(nfse_list) > 10 else None,
+                            width=320,
+                        )
                     )
                     page.overlay.append(dialog)
                     dialog.open = True

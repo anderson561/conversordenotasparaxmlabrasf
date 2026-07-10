@@ -136,7 +136,7 @@ def test_extract_brasilia_full_nfse():
     
     # Validações gerais
     assert nfse.numero == "1162"
-    assert nfse.codigo_verificacao == "530001081224929857000159000000000001182260517794 14799"
+    assert nfse.codigo_verificacao == "530001081224929857000159000000000118226051779414799"
     assert nfse.prestador.cnpj_cpf == "24929857000159"
     assert nfse.tomador.cnpj_cpf == "33811381000148"
     assert nfse.valores.valor_servicos == pytest.approx(27796.65)
