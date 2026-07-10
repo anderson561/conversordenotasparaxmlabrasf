@@ -151,6 +151,11 @@ class SPPdfExtractor:
             return LAYOUT_BARREIRAS
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
+        # Brasília/DF é verificado antes do Nacional pois notas do GDF também
+        # contêm o rótulo genérico "Data de Competência", que faria a nota
+        # ser erroneamente classificada como layout Nacional.
+        if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
+            return LAYOUT_BRASILIA
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
@@ -167,8 +172,6 @@ class SPPdfExtractor:
             return LAYOUT_JOINVILLE
         if re.search(r'PREFEITURA MUNICIPAL DE FORTALEZA', t, re.IGNORECASE):
             return LAYOUT_FORTALEZA
-        if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
-            return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
             return LAYOUT_ISBET
         if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE):
@@ -200,6 +203,11 @@ class SPPdfExtractor:
             return LAYOUT_BARREIRAS
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
+        # Brasília/DF é verificado antes do Nacional pois notas do GDF também
+        # contêm o rótulo genérico "Data de Competência", que faria a nota
+        # ser erroneamente classificada como layout Nacional.
+        if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
+            return LAYOUT_BRASILIA
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
@@ -216,8 +224,6 @@ class SPPdfExtractor:
             return LAYOUT_JOINVILLE
         if re.search(r'PREFEITURA MUNICIPAL DE FORTALEZA', t, re.IGNORECASE):
             return LAYOUT_FORTALEZA
-        if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
-            return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
             return LAYOUT_ISBET
         if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE):
@@ -767,7 +773,8 @@ class SPPdfExtractor:
         
         patterns = [
             # Padrão 1: Após "Código de Autenticidade" ou "Cód. de Autenticidade"
-            r'C[oó]d(?:igo)?\s+de\s+Autenticidade\s*[:\s\n]*(\d{20,})',
+            # O código pode vir dividido em dois blocos separados por espaço (ex: "...517794 14799")
+            r'C[oó]d(?:igo)?\s+de\s+Autenticidade\s*[:\s\n]*(\d{20,}(?:[ \t]+\d+)?)',
             # Padrão 2: Na seção de "Data Emissão da DPS" (sequência numérica longa)
             r'Data\s+Emiss[aã]o\s+da\s+DPS\s*[:\s\n]*(\d{10,20})\s+(\d{20,})',
             # Padrão 3: Genérico - série da DPS (número longo após identificadores)
@@ -1624,6 +1631,8 @@ class SPPdfExtractor:
         
         _val_patterns = [
             r'V[LlIi]\.\s+do\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
+            # Brasília/DF: "Valor Serviço: R$ 27.796,65" (sem "do"/"dos")
+            r'Valor\s+Servi[cç]o\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)',
             r'VALOR\s+TOTAL\s+DO\s+SERVIÇO:?\s*R\$?\s*([\d\.,]+)',
             r'V[LlIi]\.\s+Total\s+dos\s+Servi[cç]os\s*[:\s\n]*R?\$?\s*([\d\.,]+)',
@@ -1707,7 +1716,8 @@ class SPPdfExtractor:
                 else: val_aliq = 0.0
             aliq = val_aliq / 100
 
-        m_iss = re.search(r'(?:Valor\s+do\s+|Total\s+do\s+)?ISS(?:QN)?\s*(?:\(R\$\))?[=:R\$\s]*(?:.*?\n)?\s*([\d\.,]+)', t, re.IGNORECASE)
+        # Lookbehind negativo evita casar "Alíquota ISS: 5,00%" como se fosse o valor do ISS
+        m_iss = re.search(r'(?<!Al[ií]quota\s)(?:Valor\s+do\s+|Total\s+do\s+)?ISS(?:QN)?\s*(?:\(R\$\))?[=:R\$\s]*(?:.*?\n)?\s*([\d\.,]+)', t, re.IGNORECASE)
         if m_iss: iss = self._parse_valor(m_iss.group(1))
 
         # Valor Líquido (Tenta capturar ou calcula)
