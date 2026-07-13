@@ -255,12 +255,15 @@ def test_extract_camacari_razao_social_curta_e_endereco_em_grade():
     assert nfse.prestador.razao_social == "CETREL"
     assert nfse.prestador.cnpj_cpf == "14414973000181"
     assert nfse.prestador.endereco.cep == "42816280"
+    assert nfse.prestador.endereco.codigo_municipio == "2905701"
     assert nfse.prestador.endereco.municipio == "CAMACARI"
+    assert nfse.prestador.endereco.logradouro == "RODOVIA BA-530 - VIA CETREL - VIA ATLANTICA"
     assert nfse.prestador.endereco.bairro == "Polo Industrial de Camaçari"
 
     assert nfse.tomador.razao_social == "TEMIS PROJETOS DE MEIO AMBIENTE E"
     assert nfse.tomador.cnpj_cpf == "07345543000190"
     assert nfse.tomador.endereco.cep == "41830540"
+    assert nfse.tomador.endereco.codigo_municipio == "2927408"
     assert nfse.tomador.endereco.municipio == "SALVADOR"
     assert nfse.tomador.endereco.bairro == "PITUBA"
 

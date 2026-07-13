@@ -1664,9 +1664,9 @@ class SPPdfExtractor:
             end_data['municipio'] = clean_mun
 
         # Tenta extrair Logradouro, Número e Bairro
-        m_end = re.search(rf'(?:{relax("Endereço")}|{relax("Logradouro")})\s*(.*?)(?={relax("Município")}|{relax("Municipio")}|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|{relax("Bairro")}|{relax("Complemento")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
+        m_end = re.search(rf'(?:{relax("Endereço")}|{relax("Logradouro")})[:\s]*(.*?)(?={relax("Município")}|{relax("Municipio")}|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|{relax("Bairro")}|{relax("Complemento")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
         if m_end:
-            partes_end = m_end.group(1).strip()
+            partes_end = m_end.group(1).strip().lstrip(':').strip()
             # Se houver vírgulas, tentamos quebrar em Logradouro, Número, Bairro
             if ',' in partes_end:
                 bits = [b.strip() for b in partes_end.split(',')]
@@ -1730,7 +1730,8 @@ class SPPdfExtractor:
             end_data['uf'] = 'MT'
 
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
-            bloco_clean, detected_uf=end_data['uf'], raw_doc_text=t
+            bloco_clean, detected_uf=end_data['uf'],
+            city_hint=end_data.get('municipio'), raw_doc_text=t
         )
 
         return Entidade(
