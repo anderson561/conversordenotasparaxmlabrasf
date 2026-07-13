@@ -531,7 +531,13 @@ class SPPdfExtractor:
         t = self.raw_text
         
         if self.layout == LAYOUT_LOCALIZA:
-            m = re.search(r'N[ºo]:\s*([A-Z0-9\s-]+)', t, re.IGNORECASE)
+            # "FATURA / DUPLICATANº: ACBUL - 216421CLIENTE: ..." — sem quebra de
+            # linha nem espaço antes de "CLIENTE", então uma captura solta de
+            # [A-Z0-9\s-]+ vazava para dentro do texto seguinte. O nº real da
+            # fatura é a parte numérica após o prefixo alfabético da agência.
+            m = re.search(r'N[ºo]\s*:\s*[A-Z]+\s*-\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+            m = re.search(r'Fatura\s+(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
             
         if self.layout == LAYOUT_SAO_PAULO:
@@ -851,6 +857,17 @@ class SPPdfExtractor:
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
             return self._extrair_codigo_autenticidade_brasilia()
+
+        # Localiza: fatura de aluguel de carro, não uma NFS-e — não existe um
+        # "código de verificação" real. Usamos o "Número do documento" do
+        # boleto como identificador equivalente, em vez de cair no fallback
+        # genérico abaixo (que já capturou lixo de rótulos como "Autenticação
+        # mecânica" da ficha de compensação do próprio boleto).
+        if self.layout == LAYOUT_LOCALIZA:
+            # "Número do documento EPR000647A59Nosso número." — sem espaço entre o
+            # código e o rótulo seguinte, então uma captura gulosa vazava "Nosso".
+            m = re.search(r'N[uú]mero\s+do\s+documento\s*([A-Z0-9]+?)(?=Nosso|$)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
         
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
@@ -1351,29 +1368,57 @@ class SPPdfExtractor:
 
         if self.layout == LAYOUT_LOCALIZA:
             if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("Salvador", "BA")
                 return Entidade(
                     cnpj_cpf="16670085091444",
                     razao_social="LOCALIZA RENT A CAR S/A",
                     endereco=Endereco(
-                        endereco="ROD BR 324, 1084", bairro="CABULA",
+                        logradouro="ROD BR 324", numero="1084", bairro="CABULA",
+                        codigo_municipio=mun_cod,
                         municipio="SALVADOR", uf="BA", cep="41150170"
                     )
                 )
             else:
-                m_cli = re.search(r'CLIENTE:\s*(.+?)(?=\nENDEREÇO:|\nCÓDIGO:)', t, re.IGNORECASE | re.DOTALL)
-                m_end = re.search(r'ENDEREÇO:\s*(.+?)\nCEP/CID/UF:\s*([\d-]+)\s*-\s*([A-Z\s]+)\s*-\s*([A-Z]{2})', t, re.IGNORECASE)
+                # O PDF real não tem quebra de linha entre os rótulos (ex.:
+                # "CLIENTE: ... SUSTENTABILIDADELTDA ENDEREÇO: ..."), diferente do
+                # que os padrões originais (com "\n" literal) assumiam — por isso
+                # eles nunca casavam contra o documento real.
+                m_cli = re.search(r'CLIENTE:\s*(.+?)\s*(?:ENDERE[CÇ]O:|C[OÓ]DIGO:)', t, re.IGNORECASE | re.DOTALL)
+                m_end = re.search(r'ENDERE[CÇ]O:\s*(.+?)\s*CEP/CID/UF:\s*([\d-]+)\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})\b', t, re.IGNORECASE)
                 m_cnpj = re.search(r'CNPJ:\s*([\d./-]+)', t, re.IGNORECASE)
-                
+
                 razao = m_cli.group(1).replace('\n', ' ').strip() if m_cli else ""
+                # O texto extraído às vezes gruda o sufixo societário na palavra
+                # anterior por falta de espaço real no PDF (ex.: "...ADELTDA").
+                razao = re.sub(r'([A-ZÀ-Ú])(LTDA|EIRELI|S/A|SA)\b', r'\1 \2', razao)
+
                 cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ""
                 end_full = m_end.group(1).strip() if m_end else ""
                 cep = re.sub(r'\D', '', m_end.group(2)) if m_end else ""
                 mun = m_end.group(3).strip() if m_end else ""
                 uf = m_end.group(4).strip() if m_end else ""
-                
+
+                logradouro, numero, bairro = end_full, "S/N", "Não informado"
+                if ' - ' in end_full:
+                    endereco_parte, bairro = [p.strip() for p in end_full.rsplit(' - ', 1)]
+                else:
+                    endereco_parte = end_full
+                if ',' in endereco_parte:
+                    bits = [b.strip() for b in endereco_parte.split(',')]
+                    logradouro = bits[0]
+                    if len(bits) > 1: numero = bits[1]
+                else:
+                    logradouro = endereco_parte
+
+                mun_cod = _ibge_resolver.extract_and_validate(mun or "Salvador", uf or "BA")
+
                 return Entidade(
                     cnpj_cpf=cnpj or "00000000000000", razao_social=razao or "Não Identificado",
-                    endereco=Endereco(endereco=end_full, municipio=mun, uf=uf, cep=cep)
+                    endereco=Endereco(
+                        logradouro=logradouro or "Não informado", numero=numero,
+                        bairro=bairro, codigo_municipio=mun_cod,
+                        municipio=mun or "Não informado", uf=uf or "BA", cep=cep or "00000000"
+                    )
                 )
 
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
@@ -2045,7 +2090,13 @@ class SPPdfExtractor:
             )
 
         if self.layout == LAYOUT_LOCALIZA:
-            m_val = re.search(r'VALOR TOTAL\s+R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            # O PDF real não traz quebras de linha entre "VALOR TOTAL" e o "R$" (o
+            # rótulo vem seguido da data de vencimento e "A PRAZO" antes do valor:
+            # "VALOR TOTAL06/06/2026 A PRAZO R$ 6.180,72"). Por isso a janela
+            # tolerante em vez de exigir adjacência direta.
+            m_val = re.search(r'VALOR\s+TOTAL.{0,40}?R\$\s*([\d\.,]+)', t, re.IGNORECASE | re.DOTALL)
+            if not m_val:
+                m_val = re.search(r'Valor\s+da\s+fatura\D{0,20}?R\$\s*([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
