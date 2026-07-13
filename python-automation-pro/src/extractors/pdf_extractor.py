@@ -156,7 +156,7 @@ class SPPdfExtractor:
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
-        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
+        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR # Ou um layout genérico da BA
@@ -209,7 +209,7 @@ class SPPdfExtractor:
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador|MUNICIPIO\s+DE\s+BARREIRAS', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
-        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
+        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR
@@ -428,9 +428,9 @@ class SPPdfExtractor:
             # prestação do serviço" (mesmo rótulo já usado por _extrair_competencia)
             # e, como reforço, "Data Impressão". Sem isso, cai no fallback genérico
             # abaixo, que não reconhece nenhum dos dois e retorna datetime.now().
-            m = re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            m = re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o\s*:\s*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
             if m:
-                res = _parse_dmy(m.group(1))
+                res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
             m = re.search(r'Data\s+Impress[aã]o\s*:?\s*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}))?', t, re.IGNORECASE)
             if m:
@@ -601,11 +601,19 @@ class SPPdfExtractor:
             m_lab = re.search(r'N[uiú]mero\s+da\s+Nota', t, re.IGNORECASE)
             if m_lab:
                 janela = t[m_lab.end(): m_lab.end() + 80]
-                m_num = re.search(r'\b(\d+)\b', janela)
-                if m_num:
+                # Em PDFs gerados digitalmente (não OCR), o marcador de página
+                # ("Pagina 1/1") pode cair dentro dessa janela, antes do valor
+                # real — removê-lo evita capturar o "1" da paginação.
+                janela = re.sub(r'P[áa]gina\s*\d+\s*/\s*\d+', ' ', janela, flags=re.IGNORECASE)
+                for m_num in re.finditer(r'\b(\d+)\b', janela):
                     num = m_num.group(1)
-                    if num not in ('2024', '2025', '2026') or len(num) > 4:
-                        return num
+                    # Descarta números de 1 dígito (paginação residual) e o ano
+                    # isolado (que também pode aparecer perto do rótulo).
+                    if len(num) < 2:
+                        continue
+                    if num in ('2024', '2025', '2026') and len(num) <= 4:
+                        continue
+                    return num
 
         # 1. Busca por proximidade do label (Alta prioridade para DANFSe v1.0)
         # Procura o rótulo e pega o primeiro número que aparece depois dele (até 100 caracteres de distância)
@@ -2106,10 +2114,67 @@ class SPPdfExtractor:
             iss = _parse_valor_camacari(m_iss.group(1)) if m_iss else 0.0
             liquido = _parse_valor_camacari(m_liq.group(1)) if m_liq else val_serv
             deducoes = _parse_valor_camacari(m_ded.group(1)) if m_ded else 0.0
+            pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+
+            # Fallback: em PDFs deste layout gerados digitalmente (não escaneados/OCR),
+            # o pdfminer costuma extrair a tabela em dois blocos separados — primeiro
+            # TODOS os rótulos das colunas "Retenções (R$)" e "Totais (R$)", e só
+            # depois TODOS os valores numéricos correspondentes, na mesma ordem
+            # relativa (efeito comum de extração de tabelas em grade). Nesse caso,
+            # os regexes acima (que exigem o valor logo após o rótulo) não casam com
+            # nada (exceto, por acaso, o último rótulo, que fica adjacente ao
+            # primeiro valor do bloco seguinte — daí a checagem por val_serv == 0
+            # em vez de confiar em "algum regex casou").
+            if val_serv == 0.0 and re.search(r'Reten[çc][õo]es\s*\(R\$\)', t, re.IGNORECASE) and re.search(r'Totais\s*\(R\$\)', t, re.IGNORECASE):
+                label_defs = [
+                    ('pis', r'\bPIS\s*:?'),
+                    ('cofins', r'\bCOFINS\s*:?'),
+                    ('inss', r'\bINSS\s*:?'),
+                    ('ir', r'\bIR\s*:?'),
+                    ('csll', r'\bCSLL\s*:?'),
+                    ('outras', r'\bOutras\s*:?'),
+                    ('total_retencoes', r'Total\s+de\s+Reten[çc][õo]es\s*:?'),
+                    ('val_serv', r'Valor\s+dos\s+Servi[cç]os\s*\(R\$\)'),
+                    ('deducoes', r'Dedu[çc][oõ]es\s*\(-\)'),
+                    ('base', r'Base\s+de\s+C[aá]lculo\s*\(=\)'),
+                    ('aliq', r'Al.?quota\s*\(%\)'),
+                    ('iss', r'Valor\s+(?:do\s+)?ISS\s*\(R\$\)'),
+                    ('liquido', r'Valor\s+L[ií]quido\s+da\s+Nota\s*\(=\)'),
+                ]
+                matches = [(nome, re.search(pat, t, re.IGNORECASE)) for nome, pat in label_defs]
+                encontrados = [(m.start(), nome) for nome, m in matches if m]
+                encontrados.sort(key=lambda x: x[0])
+                fim_labels = max((m.end() for _, m in matches if m), default=0)
+
+                if encontrados and fim_labels:
+                    trecho_valores = t[fim_labels:]
+                    m_corte = re.search(r'Tipo\s+de\s+tributa[çc][aã]o', trecho_valores, re.IGNORECASE)
+                    if m_corte:
+                        trecho_valores = trecho_valores[:m_corte.start()]
+
+                    numeros = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', trecho_valores)
+                    if len(numeros) >= len(encontrados):
+                        por_nome = dict(zip([nome for _, nome in encontrados], numeros))
+
+                        def _v(nome):
+                            raw = por_nome.get(nome)
+                            return _parse_valor_camacari(raw) if raw else 0.0
+
+                        val_serv = _v('val_serv')
+                        deducoes = _v('deducoes')
+                        base = _v('base')
+                        aliq = _v('aliq') / 100
+                        iss = _v('iss')
+                        liquido = _v('liquido')
+                        pis, cofins, inss, ir, csll, outras = (
+                            _v('pis'), _v('cofins'), _v('inss'), _v('ir'), _v('csll'), _v('outras')
+                        )
 
             return Valores(
                 valor_servicos=val_serv, base_calculo=base, aliquota=aliq,
-                valor_iss=iss, valor_liquido_nfse=liquido, valor_deducoes=deducoes
+                valor_iss=iss, valor_liquido_nfse=liquido, valor_deducoes=deducoes,
+                valor_pis=pis, valor_cofins=cofins, valor_inss=inss,
+                valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
             )
 
         val_serv, base, aliq, iss = 0.0, 0.0, 0.0, 0.0
