@@ -5,7 +5,7 @@ from .transformers.contrato_transformer import ContratoLocacaoTransformer
 from .models.contrato_locacao_model import ContratoLocacao
 import os
 
-def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "abrasf", selected_pages: list = None):
+def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "abrasf", selected_pages: list = None, progress_callback=None):
     print(f"[*] Carregando PDF: {pdf_path}")
     extractor = SPPdfExtractor(pdf_path)
 
@@ -40,6 +40,12 @@ def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "ab
         print(f"[*] Salvando XML: {xml_path}")
         with open(xml_path, "w", encoding="utf-8") as f:
             f.write(xml_content)
+
+        if nfse.avisos:
+            msg = f"[AVISO] Nota {nfse.numero}" + (f" (pág {pag_origem})" if pag_origem else "") + f": {'; '.join(nfse.avisos)}"
+            print(msg)
+            if progress_callback:
+                progress_callback(1.0, msg)
 
     print(f"[+] Conversão concluída com sucesso! ({len(nfse_list)} notas extraídas)")
 
@@ -93,7 +99,13 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
                 xml_content = transformer.transform(nfse_data)
                 with open(output_xml_path, "w", encoding="utf-8") as f:
                     f.write(xml_content)
-            
+
+                if getattr(nfse_data, 'avisos', None):
+                    msg = f"[AVISO] {filename} - Nota {num_nota}" + (f" (pág {pag_origem})" if pag_origem else "") + f": {'; '.join(nfse_data.avisos)}"
+                    print(msg)
+                    if progress_callback:
+                        progress_callback(i / total_files, msg)
+
             success_count += len(nfse_list)
 
             print(f"[+] Gerados {len(nfse_list)} XMLs para: {filename}")

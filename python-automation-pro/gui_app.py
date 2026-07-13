@@ -335,7 +335,8 @@ def main(page: ft.Page):
                                 pdf_path=files_to_check[0],
                                 output_xml_path=output_xml,
                                 output_format=format_dropdown.value,
-                                selected_pages=selected_pages
+                                selected_pages=selected_pages,
+                                progress_callback=update_progress
                             )
                             update_progress(1.0, f"[+] Concluído! XMLs gerados em {out_dir}")
                         else:
@@ -366,9 +367,14 @@ def main(page: ft.Page):
                 extractor = SPPdfExtractor(files_to_check[0])
                 nfse_list = extractor.parse_multiple()
                 invalid_pages = getattr(extractor, 'invalid_pages', [])
-                
-                if invalid_pages:
-                    msgs = [f"Pág {p['page']}: {p['reason']}" for p in invalid_pages]
+
+                msgs = [f"Pág {p['page']}: {p['reason']}" for p in invalid_pages]
+                for n in nfse_list:
+                    if n.avisos:
+                        pag = f"Pág {n.pagina_origem}" if n.pagina_origem else f"Nota {n.numero}"
+                        msgs.append(f"{pag}: {'; '.join(n.avisos)}")
+
+                if msgs:
                     page.snack_bar = ft.SnackBar(
                         ft.Text("Atenção: " + " | ".join(msgs)),
                         bgcolor=ft.colors.ORANGE_800

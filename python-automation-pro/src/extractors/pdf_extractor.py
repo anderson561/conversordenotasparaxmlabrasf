@@ -58,6 +58,7 @@ LAYOUT_LMR_ENGENHARIA = 'lmr_engenharia' # LMR Engenharia e Construção (Fatura
 LAYOUT_GERACAO_ENERGIA = 'geracao_energia' # Geração & Energia (Fatura de Locação)
 LAYOUT_LOCONTAINERS = 'locontainers' # Locontainers (Vidal Locação de Containers)
 LAYOUT_TELECOM_COMUNICACAO = 'telecom_comunicacao' # NF-e Fatura de Serviço de Comunicação Eletrônica
+LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrônica de Repasse (NF-R), ex: iFood Benefícios
 
 
 # Etiquetas para Identificação de Entidades
@@ -102,6 +103,10 @@ class SPPdfExtractor:
         self.pdf_path = pdf_path
         self.raw_text = ''
         self.layout: Optional[str] = None
+        # Sinaliza que _extrair_data_emissao não achou nenhuma data no
+        # documento e caiu no fallback de "agora" — usado por parse() para
+        # gerar um aviso de baixa confiança em vez de mascarar o problema.
+        self._data_emissao_fallback = False
 
     # ------------------------------------------------------------------
     # Extração de texto bruto
@@ -177,6 +182,8 @@ class SPPdfExtractor:
             return LAYOUT_RIBEIRAO_PIRES
         if re.search(r'NOTA\s+FISCAL\s+DE\s+FATURA\s+DE\s+SERVI[CÇ]O\s+DE\s+COMUNICA[CÇ][AÃ]O', t, re.IGNORECASE):
             return LAYOUT_TELECOM_COMUNICACAO
+        if re.search(r'Nota\s+Fiscal\s+Eletr[oô]nica\s+de\s+(?:Servi[cç]os\s+)?Repasse|nfe\.osasco\.(?:sp\.)?gov\.br', t, re.IGNORECASE):
+            return LAYOUT_OSASCO_REPASSE
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
@@ -228,6 +235,8 @@ class SPPdfExtractor:
             return LAYOUT_RIBEIRAO_PIRES
         if re.search(r'NOTA\s+FISCAL\s+DE\s+FATURA\s+DE\s+SERVI[CÇ]O\s+DE\s+COMUNICA[CÇ][AÃ]O', t, re.IGNORECASE):
             return LAYOUT_TELECOM_COMUNICACAO
+        if re.search(r'Nota\s+Fiscal\s+Eletr[oô]nica\s+de\s+(?:Servi[cç]os\s+)?Repasse|nfe\.osasco\.(?:sp\.)?gov\.br', t, re.IGNORECASE):
+            return LAYOUT_OSASCO_REPASSE
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
@@ -345,6 +354,15 @@ class SPPdfExtractor:
                     mes_str, ano_str = m.group(1).split('/')
                     result = datetime(int(ano_str), int(mes_str), 1)
                 except: pass
+        elif layout == LAYOUT_OSASCO_REPASSE:
+            # "Ref. Fiscal 06/2026" (cabeçalho) — rótulo não reconhecido pelo
+            # fallback genérico, que só busca "Competência"/"Referência"/"Fato Gerador".
+            m = re.search(r'Ref\.?\s*Fiscal\s*:?\s*(\d{1,2})/(\d{4})', t, re.IGNORECASE)
+            if m:
+                try:
+                    result = datetime(int(m.group(2)), int(m.group(1)), 1)
+                except ValueError:
+                    result = None
 
         if result is None: result = _extrair_competencia_generica(t)
         if result is None: result = datetime(data_emissao.year, data_emissao.month, 1)
@@ -352,6 +370,7 @@ class SPPdfExtractor:
 
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
+        self._data_emissao_fallback = False
         if self.layout == LAYOUT_CPE_LOCACAO:
             m = re.search(r'Data\s+de\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -466,6 +485,7 @@ class SPPdfExtractor:
                         # Extraímos dia 1 pois a chave só nos dá o mês/ano
                         return datetime(ano, mes, 1)
 
+        self._data_emissao_fallback = True
         return datetime.now()
 
     # ------------------------------------------------------------------
@@ -542,6 +562,12 @@ class SPPdfExtractor:
 
         if self.layout == LAYOUT_GUINCHO_CIDADE:
             m = re.search(r'FATURA\s+DE\s+LOCA[CÇ][AÃ]O\s*[\n\s]*N[ºo]\s*[:\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_OSASCO_REPASSE:
+            # Ordem invertida do padrão usual ("Número da Nota"): "Nota No.: 2440738"
+            # ou "Nota Nº: 02479318" (variações vistas em documentos reais).
+            m = re.search(r'Nota\s+N[º°o]\.?\s*:?\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_BF_AMBIENTAIS:
@@ -798,6 +824,15 @@ class SPPdfExtractor:
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS):
             return "FATURA"
 
+        if self.layout == LAYOUT_OSASCO_REPASSE:
+            # "Cód. de Autenticidade: VCWSRSCV" costuma vir na mesma linha/célula
+            # de tabela que o campo seguinte ("Valor do Repasse"), sem quebra de
+            # linha entre eles — usamos [A-Z0-9]+ (sem espaço) para não engolir
+            # o próximo rótulo, diferente do padrão genérico mais abaixo.
+            m = re.search(r'C[oó]d\.?\s+de\s+Autenticidade\s*:?\s*([A-Z0-9]+)', t, re.IGNORECASE)
+            if m:
+                return m.group(1).upper()
+
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
             # Extrai a chave de acesso de 44 dígitos após o rótulo "CHAVE DE ACESSO"
             m = re.search(r'CHAVE\s+DE\s+ACESSO\s*[:\s]*([\d\s]{44,60})', t, re.IGNORECASE)
@@ -904,6 +939,11 @@ class SPPdfExtractor:
                 return self._extrair_prestador_telecom(t)
             else:
                 return self._extrair_tomador_telecom(t)
+
+        if self.layout == LAYOUT_OSASCO_REPASSE:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_osasco_repasse(is_prestador)
 
         if self.layout == LAYOUT_CPE_LOCACAO:
             if is_prestador:
@@ -1809,6 +1849,106 @@ class SPPdfExtractor:
             ),
         )
 
+    @staticmethod
+    def _parse_endereco_livre_osasco(raw: str) -> dict:
+        """Quebra um endereço em linha única e formato livre (separado por
+        vírgulas, sem rótulos de logradouro/número/bairro) em seus componentes.
+        Usado pelo layout Osasco/NF-R, cujo campo "Endereço" vem como uma
+        única string livre (ex: "AV. dos Autonomistas, 1496-BLOCO-B,3º
+        ANDAR,PARTE-Vila Yara-06020012" ou "A AL HUMAITA, 0 - GUARAJUBA
+        ,42840-562")."""
+        raw = raw.strip().rstrip('.').strip()
+        cep = ''
+        m_cep = re.search(r'(\d{5}-?\d{3})\s*$', raw)
+        if m_cep:
+            cep = re.sub(r'\D', '', m_cep.group(1))
+            raw = raw[:m_cep.start()].strip().rstrip(',- ').strip()
+
+        bits = [b.strip() for b in raw.split(',') if b.strip()]
+        logradouro = bits[0] if bits else 'Não informado'
+        numero = 'S/N'
+        bairro = 'Não informado'
+
+        resto = bits[1:]
+        if resto:
+            m_num = re.match(r'\s*(\d+)\s*[-–]?\s*(.*)', resto[0])
+            if m_num:
+                numero = m_num.group(1)
+                sobra = m_num.group(2).strip(' -')
+                if sobra:
+                    bairro = sobra
+            extra = ' '.join(resto[1:]).strip()
+            if extra:
+                bairro = f"{bairro} {extra}".strip() if bairro != 'Não informado' else extra
+
+        return {'logradouro': logradouro, 'numero': numero, 'bairro': bairro, 'cep': cep}
+
+    def _extrair_entidade_osasco_repasse(self, is_prestador: bool) -> Entidade:
+        """Extrai EMITENTE/RECEPTOR do layout Osasco/SP (Nota Fiscal Eletrônica
+        de Repasse - NF-R, ex: iFood Benefícios e Serviços Ltda). Campos em
+        formato "Rótulo: valor", distintos dos rótulos "Prestador"/"Tomador"
+        usados pela maioria dos outros layouts.
+        """
+        t = self.raw_text
+        tipo_label = "Prestador" if is_prestador else "Tomador"
+
+        if is_prestador:
+            m_bloco = re.search(r'EMITENTE(.*?)(?=RECEPTOR|$)', t, re.IGNORECASE | re.DOTALL)
+        else:
+            m_bloco = re.search(r'RECEPTOR(.*?)(?=DISCRIMINA[CÇ][AÃ]O|IMPOSTOS\s+ADICIONAIS|$)', t, re.IGNORECASE | re.DOTALL)
+        bloco = m_bloco.group(1) if m_bloco else t
+
+        # "Razão Social:" ou "Razão Social/Nome:" (variações vistas em documentos reais)
+        m_razao = re.search(r'Raz[ãa]o\s+Social\s*(?:/\s*Nome)?\s*:\s*(.+)', bloco, re.IGNORECASE)
+        razao = m_razao.group(1).split('\n')[0].strip() if m_razao else f'{tipo_label} Não Identificado'
+
+        # "CNPJ/CPF:" ou "CPF/CNPJ:" — ordem varia entre documentos
+        m_cnpj = re.search(r'(?:CNPJ\s*/\s*CPF|CPF\s*/\s*CNPJ)\s*:\s*([\d./-]+)', bloco, re.IGNORECASE)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        m_im = re.search(r'Inscri[cç][aã]o\s+Municipal\s*:\s*(\d+)', bloco, re.IGNORECASE)
+        insc = m_im.group(1).strip() if m_im else None
+
+        # O ":" após "Município"/"UF" nem sempre aparece no texto extraído da
+        # tabela (varia até dentro do mesmo documento, entre EMITENTE/RECEPTOR).
+        m_end = re.search(r'Endere[cç]o\s*:\s*(.+?)(?=Munic[ií]pio\s*:?|\n\s*UF\b|$)', bloco, re.IGNORECASE | re.DOTALL)
+        end_data = self._parse_endereco_livre_osasco(m_end.group(1)) if m_end else {
+            'logradouro': 'Não informado', 'numero': 'S/N', 'bairro': 'Não informado', 'cep': '00000000'
+        }
+
+        m_mun = re.search(r'Munic[ií]pio\s*:\s*([^\n]+?)(?=\s*UF\b|\n|$)', bloco, re.IGNORECASE)
+        municipio = m_mun.group(1).strip() if m_mun else 'Não informado'
+
+        m_uf = re.search(r'\bUF\s*:?\s*([A-Z]{2})\b', bloco, re.IGNORECASE)
+        uf = m_uf.group(1).upper() if m_uf else 'SP'
+
+        # "E-mail:" ou "Email:"
+        m_email = re.search(r'E-?mail\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco, re.IGNORECASE)
+        email = m_email.group(1).strip() if m_email else None
+
+        # "Telefone:" ou "Fone:"
+        m_fone = re.search(r'(?:Telefone|Fone)\s*:\s*([\(\)\d\s-]{6,20})', bloco, re.IGNORECASE)
+        telefone = m_fone.group(1).strip() if m_fone else None
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=end_data['logradouro'],
+                numero=end_data['numero'],
+                bairro=end_data['bairro'],
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=end_data['cep'] or '00000000',
+            ),
+            email=email,
+            telefone=telefone,
+        )
+
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
@@ -1822,6 +1962,21 @@ class SPPdfExtractor:
 
         if self.layout == LAYOUT_GUINCHO_CIDADE:
             m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+FATURA\s*[:\s\n]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_OSASCO_REPASSE:
+            # NF-R de repasse: não discrimina Base de Cálculo/Alíquota/ISS (regime
+            # especial — o próprio documento diz que a apuração do ISS "quando
+            # aplicável" fica a cargo do emitente). Nem todo documento traz
+            # "Valor da Nota" explícito — alguns só mostram "Valor do Repasse",
+            # que na prática sai com o mesmo valor.
+            m_val = re.search(r'Valor\s+da\s+Nota\s*:\s*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            if not m_val:
+                m_val = re.search(r'Valor\s+do\s+Repasse\s*:?\s*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
@@ -2190,6 +2345,24 @@ class SPPdfExtractor:
         if re.search(r'Incentivador\s+Cultural\s*[:\s\n]*Sim', self.raw_text, re.IGNORECASE):
             incentivador = True
 
+        # Avisos de baixa confiança: sinaliza quando um campo caiu em valor de
+        # fallback (número zerado, CNPJ zerado, data de hoje etc.) em vez de
+        # mascarar silenciosamente o problema — foi assim que os bugs de
+        # Camaçari/telecom desta sessão passaram despercebidos até revisão manual.
+        avisos: List[str] = []
+        if numero == '00000000':
+            avisos.append("Número da nota não encontrado")
+        if codigo_verificacao in ('XXXX-XXXX',):
+            avisos.append("Código de verificação/autenticidade não encontrado")
+        if self._data_emissao_fallback:
+            avisos.append("Data de emissão não encontrada (usando a data atual como fallback)")
+        if prestador and prestador.cnpj_cpf in ('00000000000000', ''):
+            avisos.append("Dados do prestador não identificados")
+        if tomador and (tomador.cnpj_cpf in ('00000000000000', '') or tomador.razao_social == 'Tomador Não Identificado'):
+            avisos.append("Dados do tomador não identificados")
+        if valores.valor_servicos == 0.0:
+            avisos.append("Valor dos serviços extraído como zero")
+
         return Nfse(
             numero=numero,
             codigo_verificacao=codigo_verificacao,
@@ -2203,7 +2376,8 @@ class SPPdfExtractor:
             valores=valores,
             optante_simples_nacional=optante_simples,
             regime_especial_tributacao=regime_especial,
-            incentivador_cultural=incentivador
+            incentivador_cultural=incentivador,
+            avisos=avisos
         )
 
     def parse_multiple(self) -> List[Nfse]:
