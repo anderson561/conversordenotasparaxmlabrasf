@@ -54,3 +54,4 @@ class Nfse(BaseModel):
     incentivador_cultural: bool = False
     status: str = "Normal"
     pagina_origem: Optional[int] = None
+    avisos: List[str] = Field(default_factory=list)

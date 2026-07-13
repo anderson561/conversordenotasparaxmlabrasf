@@ -50,7 +50,17 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Cabeçalho**: "PREFEITURA MUNICIPAL DE FORTALEZA"
 - **Data de Competência**: Busca do rótulo `Competência`.
 
-### 10. Simões Filho/BA — `simoes_filho_ba`
+### 10. Brasília/DF — `brasilia_df` ⭐ **NOVO**
+- **Cabeçalho**: "Governo do Distrito Federal", "Secretária de Estado de Economia do Distrito Federal" ou "Coordenação do ISS"
+- **Número da Nota**: Extração do campo `Número da Nota Fiscal` ou equivalente
+- **Código de Autenticidade**: Campo específico extraído com padrão de 20-44 dígitos numéricos contínuos
+  - Localizado na seção "Código de Autenticidade" ou "Data Emissão da DPS"
+  - Exemplo: `5300010812249298570001590000000001182260517794 14799` (após limpeza: `530001081224929857000159000000000118226051779414799`)
+- **Data de Competência**: Busca do rótulo `Data de Competência` ou `Data de Geração de NFS-e`
+- **Entidades**: Suporte completo a extração de Prestador, Tomador e dados de serviço
+- **Status**: ✅ Suportado nativamente
+
+### 11. Simões Filho/BA — `simoes_filho_ba`
 - **Cabeçalho**: "Simões Filho"
 
 ### 11. Ribeirão Pires/SP — `ribeirao_pires_sp`

@@ -37,6 +37,20 @@ class IBGEResolver:
         "SE": "2800308", "SP": "3550308", "TO": "1721000",
     }
 
+    KNOWN_CITIES = {
+        "CAMACARI": "2905701", "CAMAÇARI": "2905701",
+        "LAURO DE FREITAS": "2919207",
+        "FEIRA DE SANTANA": "2910800",
+        "BARREIRAS": "2903201",
+        "OSASCO": "3534401",
+        "CUIABA": "5103403", "CUIABÁ": "5103403",
+        "CAMPINA GRANDE": "2504009",
+        "BRASILIA": "5300108", "BRASÍLIA": "5300108",
+        "SALVADOR": "2927408",
+        "SAO PAULO": "3550308", "SÃO PAULO": "3550308",
+        "RIO DE JANEIRO": "3304557",
+    }
+
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
         """
         Args:
@@ -53,25 +67,16 @@ class IBGEResolver:
         uf = detected_uf.upper()
         prefix_esperado = self.UF_PREFIXES.get(uf, self.UF_PREFIXES.get(self.default_uf, "29"))
 
-        # 1. Fallback por Nome da Cidade (City Hint ou busca no documento todo)
-        # Priorizamos Capitais se houver qualquer menção no documento
-        nome_busca = (city_hint or "").upper() + text.upper() + (raw_doc_text or "").upper()
-        
-        # Padrões relaxados (imunes a espaços extras do OCR entre as letras)
-        p_rio = rf'R\s*I\s*O\s*D\s*E\s*[\s\n]*J\s*A\s*N\s*E\s*I\s*R\s*O'
-        p_sp = rf'S\s*[AÃ]\s*O\s*[\s\n]*P\s*A\s*U\s*L\s*O'
-        p_ssa = rf'S\s*A\s*L\s*V\s*A\s*D\s*O\s*R'
+        # 0. Lookup direto pelo nome do município (city_hint), antes de qualquer
+        #    busca por padrão no texto — evita que "SALVADOR" no endereço do
+        #    tomador retorne o código de Salvador para o prestador de Camaçari.
+        if city_hint:
+            hint_upper = re.sub(r'[^\w\s]', '', city_hint).strip().upper()
+            if hint_upper in self.KNOWN_CITIES:
+                return self.KNOWN_CITIES[hint_upper]
 
-        if uf == "RJ" and re.search(p_rio, nome_busca, re.I):
-            return "3304557"  # Rio de Janeiro/RJ
-        if uf == "SP" and re.search(p_sp, nome_busca, re.I):
-            return "3550308"  # São Paulo/SP
-        if uf == "BA" and re.search(p_ssa, nome_busca, re.I):
-            return "2927408"  # Salvador/BA
-        
-        # 2. Busca todos os números de 5 a 7 dígitos
+        # 1. Busca todos os números de 5 a 7 dígitos no bloco da entidade
         candidates = re.findall(r'\b\d{5,7}\b', text)
-
         for candidate in candidates:
             if candidate.startswith(prefix_esperado):
                 if len(candidate) == 7:
@@ -79,7 +84,25 @@ class IBGEResolver:
                 elif len(candidate) in (5, 6):
                     return candidate.ljust(7, '0')
 
-        # 3. Fallback dinâmico por UF com município válido conhecido.
-        if uf == "BA":
-            return self.default_code  # Salvador/BA = 2927408
+        # 2. Busca no texto completo do documento (códigos IBGE explícitos)
+        if raw_doc_text:
+            candidates_full = re.findall(r'\b\d{7}\b', raw_doc_text)
+            for candidate in candidates_full:
+                if candidate.startswith(prefix_esperado):
+                    return candidate
+
+        # 3. Fallback por nome de capital no bloco da entidade (NÃO no doc inteiro)
+        nome_busca = (city_hint or "").upper() + text.upper()
+        p_rio = rf'R\s*I\s*O\s*D\s*E\s*[\s\n]*J\s*A\s*N\s*E\s*I\s*R\s*O'
+        p_sp = rf'S\s*[AÃ]\s*O\s*[\s\n]*P\s*A\s*U\s*L\s*O'
+        p_ssa = rf'S\s*A\s*L\s*V\s*A\s*D\s*O\s*R'
+
+        if uf == "RJ" and re.search(p_rio, nome_busca, re.I):
+            return "3304557"
+        if uf == "SP" and re.search(p_sp, nome_busca, re.I):
+            return "3550308"
+        if uf == "BA" and re.search(p_ssa, nome_busca, re.I):
+            return "2927408"
+
+        # 4. Fallback final por UF (capital do estado)
         return self.DEFAULT_CODES_BY_UF.get(uf, self.default_code)

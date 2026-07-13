@@ -103,7 +103,7 @@ Sempre que uma demanda for recebida, analise a necessidade e **leia o arquivo do
 
 1. **ANALISE OBRIGATORIA DO PROJETO INTEIRO (ACAO INICIAL):** A primeiríssima coisa que você deve fazer ao carregar o contexto ou receber uma nova demanda é varrer, mapear e analisar minuciosamente o projeto inteiro (toda a árvore de arquivos, dependências, configurações e código existente). Você está proibido de formular qualquer plano, responder ao usuário ou delegar tarefas sem antes ter um entendimento macro e completo de todo o ecossistema do repositório atual.
 
-2. **Fase de Input e Triagem:** Receber o comando ou demanda do usuário e cruzar imediatamente com as dependências e impactos descobridores na análise prévia do projeto.
+2. **Fase de Input e Triagem:** Receber o comando ou demanda do usuário e cruzar imediatamente com as dependências e impactos descobertos na análise prévia do projeto.
 
 3. **Planejamento:** Quebrar a demanda em sub-tarefas lógicas de negócio, produto e arquitetura (sem tocar em código).
 
