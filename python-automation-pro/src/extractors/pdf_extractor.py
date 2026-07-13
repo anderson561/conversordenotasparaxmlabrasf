@@ -158,14 +158,18 @@ class SPPdfExtractor:
             return LAYOUT_BARREIRAS
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
+        # Verificado antes de "FEIRA DE SANTANA": faturas da Localiza emitidas
+        # pela agência de Feira de Santana ("AG CENTRO FEIRA DE SANTANA ...")
+        # continham esse texto no cabeçalho e eram erroneamente detectadas como
+        # o layout municipal de Feira de Santana em vez de Localiza.
+        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
+            return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR # Ou um layout genérico da BA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
-        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
-            return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
             return LAYOUT_SAO_PAULO
         if re.search(r'Prefeitura de Joinville|NF-em', t, re.IGNORECASE):
@@ -211,14 +215,18 @@ class SPPdfExtractor:
             return LAYOUT_BARREIRAS
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica', t, re.IGNORECASE):
             return LAYOUT_CAMACARI
+        # Verificado antes de "FEIRA DE SANTANA": faturas da Localiza emitidas
+        # pela agência de Feira de Santana ("AG CENTRO FEIRA DE SANTANA ...")
+        # continham esse texto no cabeçalho e eram erroneamente detectadas como
+        # o layout municipal de Feira de Santana em vez de Localiza.
+        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
+            return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
-        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
-            return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
             return LAYOUT_SAO_PAULO
         if re.search(r'Prefeitura de Joinville|NF-em', t, re.IGNORECASE):
@@ -858,17 +866,11 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_BRASILIA:
             return self._extrair_codigo_autenticidade_brasilia()
 
-        # Localiza: fatura de aluguel de carro, não uma NFS-e — não existe um
-        # "código de verificação" real. Usamos o "Número do documento" do
-        # boleto como identificador equivalente, em vez de cair no fallback
-        # genérico abaixo (que já capturou lixo de rótulos como "Autenticação
-        # mecânica" da ficha de compensação do próprio boleto).
+        # Localiza: fatura de aluguel de carro, não uma NFS-e — não há um
+        # "código de verificação" real a extrair.
         if self.layout == LAYOUT_LOCALIZA:
-            # "Número do documento EPR000647A59Nosso número." — sem espaço entre o
-            # código e o rótulo seguinte, então uma captura gulosa vazava "Nosso".
-            m = re.search(r'N[uú]mero\s+do\s+documento\s*([A-Z0-9]+?)(?=Nosso|$)', t, re.IGNORECASE)
-            if m: return m.group(1).strip()
-        
+            return "FATURA"
+
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         # Padrões com relax() forçado para capturar etiquetas ruidosas
