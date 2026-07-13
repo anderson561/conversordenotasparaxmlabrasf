@@ -1520,7 +1520,9 @@ class SPPdfExtractor:
             if re.match(r'^\d{2}/\d{2}/\d{4}', line_clean) or re.match(r'^\d{2}:\d{2}', line_clean): return False
             if re.match(r'^[0-9\.\s/\\:-]+$', line_clean): return False
             if re.search(r'Nome\s*/\s*Nome', line_clean, re.I): return False
-            if re.match(r'^[A-Z0-9-]{6,15}$', line_clean, re.I): return False
+            # Só rejeita como "código" (ex.: verificação/autenticidade) se houver dígito
+            # misturado às letras; nomes curtos só-letras (ex.: "CETREL") são razões sociais válidas.
+            if re.match(r'^(?=[A-Z0-9-]{6,15}$)(?=.*\d)[A-Z0-9-]+$', line_clean, re.I): return False
             if '@' in line_clean.lower() or '.com' in line_clean.lower(): return False
             return True
 
@@ -1609,7 +1611,7 @@ class SPPdfExtractor:
             telefone = m_tel.group(1).strip()
 
         # Tenta extrair CEP
-        m_cep = re.search(rf'{relax("CEP")}\s*[:\- ]*\s*([\d\- ]+)', bloco_clean, re.IGNORECASE)
+        m_cep = re.search(rf'{relax("CEP")}\s*[:\- ]*\s*([\d.\- ]+)', bloco_clean, re.IGNORECASE)
         if m_cep:
             end_data['cep'] = re.sub(r'\D', '', m_cep.group(1))
 
@@ -1632,7 +1634,10 @@ class SPPdfExtractor:
             m_uf_in_mun = re.search(r'\bUF\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
             if m_uf_in_mun:
                 end_data['uf'] = m_uf_in_mun.group(1).upper()
-                clean_mun = re.sub(r'\bUF\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
+                # Descarta tudo a partir do "UF:" (inclusive o que vier depois do código
+                # da UF) — texto de outra coluna que "estourou" para essa linha não deve
+                # grudar no nome do município.
+                clean_mun = clean_mun[:m_uf_in_mun.start()].strip()
 
             
             if ' - ' in clean_mun:
@@ -1651,7 +1656,7 @@ class SPPdfExtractor:
             end_data['municipio'] = clean_mun
 
         # Tenta extrair Logradouro, Número e Bairro
-        m_end = re.search(rf'{relax("Endereço")}\s*(.*?)(?={relax("Município")}|{relax("Municipio")}|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
+        m_end = re.search(rf'(?:{relax("Endereço")}|{relax("Logradouro")})\s*(.*?)(?={relax("Município")}|{relax("Municipio")}|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|{relax("Bairro")}|{relax("Complemento")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
         if m_end:
             partes_end = m_end.group(1).strip()
             # Se houver vírgulas, tentamos quebrar em Logradouro, Número, Bairro
@@ -1667,8 +1672,30 @@ class SPPdfExtractor:
             elif ' - ' in partes_end:
                 spl = partes_end.rsplit(' - ', 1)
                 end_data['logradouro'], end_data['bairro'] = spl[0].strip(), spl[1].strip()
-            else:
+            elif partes_end:
                 end_data['logradouro'] = partes_end
+
+        # Rótulo "Bairro" separado (não embutido na linha de Endereço/Logradouro),
+        # comum em layouts de grade (ex.: Camaçari) onde cada campo tem sua própria linha.
+        m_bairro_label = re.search(rf'{relax("Bairro")}\s*[:\s]*(.*?)(?={relax("Município")}|{relax("Municipio")}|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|{relax("UF")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
+        if m_bairro_label:
+            bairro_val = m_bairro_label.group(1).strip(' :-')
+            if bairro_val:
+                end_data['bairro'] = bairro_val
+
+        # Fallback: o rótulo "Bairro:" veio vazio, mas o valor "estourou" para uma
+        # linha isolada logo após a linha de UF (renderização em grade/colunas onde
+        # o valor não fica na mesma linha do rótulo — mesma classe de problema já
+        # visto no "Número da Nota" do Camaçari).
+        if end_data.get('bairro') in (None, '', 'Não informado'):
+            m_overflow = re.search(
+                r'\bUF\s*[:\s]*[A-Z]{2}\s*\n\s*([A-ZÀ-Ú][A-ZÀ-Úa-zà-ú]{2,29})\s*(?:\n|$)',
+                bloco, re.IGNORECASE
+            )
+            if m_overflow:
+                candidato = m_overflow.group(1).strip()
+                if candidato and not _LABELS_NOISE.match(candidato) and not _NOISE_RAZAO.search(candidato):
+                    end_data['bairro'] = candidato
 
         # Detectar UF com base no Layout ou Regex no endereço (Fallback/Refinamento)
         if not end_data.get('uf') or len(end_data['uf']) != 2 or end_data['uf'] == 'EX':
@@ -2069,7 +2096,7 @@ class SPPdfExtractor:
             # ou até como o caractere de substituição Unicode "�" (falha total de
             # reconhecimento daquele glifo específico).
             m_aliq = re.search(r'Al.?quota\s*\(%\)\s*([\d\.,]+)', t, re.IGNORECASE)
-            m_iss = re.search(r'Valor\s+do\s+ISS\s*\(R\$\)\s*([\d\.,]+)', t, re.IGNORECASE)
+            m_iss = re.search(r'Valor\s+(?:do\s+)?ISS\s*\(R\$\)\s*([\d\.,]+)', t, re.IGNORECASE)
             m_liq = re.search(r'Valor\s+L[ií]quido\s+da\s+Nota\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
             m_ded = re.search(r'Dedu[cç][oõ]es\s*\(-\)\s*([\d\.,]+)', t, re.IGNORECASE)
 

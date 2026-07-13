@@ -177,5 +177,101 @@ def test_extract_camacari_valores_ocr_sem_pontuacao():
         os.remove(dummy_path)
 
 
+def test_extract_camacari_razao_social_curta_e_endereco_em_grade():
+    """Regressão: nota real (CETREL -> TEMIS PROJETOS DE MEIO AMBIENTE E, nº 55656)
+    revelou 3 bugs no extrator genérico de entidade (compartilhado por
+    Camaçari/Salvador/Barreiras/Feira):
+
+    1) Razões sociais curtas só-letras (ex.: "CETREL", 6 caracteres) eram
+       rejeitadas por um heurístico que as tratava como "código" (verificação/
+       autenticidade), fazendo o extrator cair num fallback pior que vazava o
+       ":" do rótulo para dentro do nome.
+    2) Este layout usa rótulos "Logradouro:"/"Bairro:" em campos separados (em
+       vez de um único campo "Endereço:"), e o CEP pode vir com pontuação
+       colada ao rótulo (ex.: "CEP:42.816-280"), cortando o valor no primeiro
+       ".".
+    3) Quando o valor do bairro "estoura" para a linha seguinte à de UF (efeito
+       de grade/coluna do PDF), o nome do bairro vazava para dentro do campo
+       Município (ex.: "SALVADOR  PITUBA")."""
+    mock_text = """
+    PREFEITURA MUNICIPAL DE CAMAÇARI
+    CPqD - Gestão Pública
+    NOTA FISCAL DE SERVIÇOS ELETRÔNICA
+    Número da Nota
+    55656
+    Data da emissão
+    09/06/2026 20:21:21
+    Código de autenticidade
+    M7SRYX82B
+    PRESTADOR DE SERVIÇOS
+    Nome/Razão Social:   CETREL
+    CPF/CNPJ:    14.414.973/0001-81
+    Inscrição Municipal:   0000239001
+    Logradouro:   RODOVIA BA-530 - VIA CETREL - VIA ATLANTICA, SN
+    Complemento:
+    Bairro:   Polo Industrial de Camaçari
+    CEP:42.816-280
+    Município:   CAMACARI
+    UF:   BA
+    TOMADOR DE SERVIÇOS
+    Nome/Razão Social: TEMIS PROJETOS DE MEIO AMBIENTE E
+    CPF/CNPJ:    07.345.543/0001-90
+    Inscrição Municipal:
+    Logradouro  RUA TERRITORIO DO AMAPA, 146C
+    Complemento:
+    Bairro:
+    CEP: 41830540
+    Município:   SALVADOR
+    UF:   BA
+    PITUBA
+    DISCRIMINAÇÃO DOS SERVIÇOS
+    133946  Monitoramento Ar 1 18.249,49 18.249,49
+    Retenções (R$) Totais (R$)
+    PIS: 118,62 | Valor dos Serviços (R$) 18.249,49
+    COFINS: 547,48 | Deduções (-) 0,00
+    INSS: 0,00 | Base de Cálculo (=) 18.249,49
+    IR: 273,74 |Aliquota (%) 0,00
+    CSLL: 182,49 |Valor ISS (R$) 547,48
+    Outras: 0,00 |Valor Líquido da Nota (=) 17.127,16
+    Data da prestação do serviço: 09/06/2026 20:21:21
+    """
+
+    dummy_path = "tests/dummy_camacari_grade.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+
+    extractor = SPPdfExtractor(dummy_path)
+    extractor.raw_text = mock_text
+    extractor.layout = extractor._detect_layout()
+
+    assert extractor.layout == LAYOUT_CAMACARI
+
+    nfse = extractor.parse()
+
+    assert nfse.numero == "55656"
+    assert nfse.codigo_verificacao == "M7SRYX82B"
+
+    assert nfse.prestador.razao_social == "CETREL"
+    assert nfse.prestador.cnpj_cpf == "14414973000181"
+    assert nfse.prestador.endereco.cep == "42816280"
+    assert nfse.prestador.endereco.municipio == "CAMACARI"
+    assert nfse.prestador.endereco.bairro == "Polo Industrial de Camaçari"
+
+    assert nfse.tomador.razao_social == "TEMIS PROJETOS DE MEIO AMBIENTE E"
+    assert nfse.tomador.cnpj_cpf == "07345543000190"
+    assert nfse.tomador.endereco.cep == "41830540"
+    assert nfse.tomador.endereco.municipio == "SALVADOR"
+    assert nfse.tomador.endereco.bairro == "PITUBA"
+
+    assert nfse.valores.valor_servicos == pytest.approx(18249.49)
+    assert nfse.valores.valor_iss == pytest.approx(547.48)
+    assert nfse.valores.valor_liquido_nfse == pytest.approx(17127.16)
+    assert nfse.avisos == []
+
+    if os.path.exists(dummy_path):
+        os.remove(dummy_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
