@@ -59,6 +59,7 @@ LAYOUT_GERACAO_ENERGIA = 'geracao_energia' # Geração & Energia (Fatura de Loca
 LAYOUT_LOCONTAINERS = 'locontainers' # Locontainers (Vidal Locação de Containers)
 LAYOUT_TELECOM_COMUNICACAO = 'telecom_comunicacao' # NF-e Fatura de Serviço de Comunicação Eletrônica
 LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrônica de Repasse (NF-R), ex: iFood Benefícios
+LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
 
 
 # Etiquetas para Identificação de Entidades
@@ -184,6 +185,8 @@ class SPPdfExtractor:
             return LAYOUT_TELECOM_COMUNICACAO
         if re.search(r'Nota\s+Fiscal\s+Eletr[oô]nica\s+de\s+(?:Servi[cç]os\s+)?Repasse|nfe\.osasco\.(?:sp\.)?gov\.br', t, re.IGNORECASE):
             return LAYOUT_OSASCO_REPASSE
+        if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
+            return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
@@ -237,6 +240,8 @@ class SPPdfExtractor:
             return LAYOUT_TELECOM_COMUNICACAO
         if re.search(r'Nota\s+Fiscal\s+Eletr[oô]nica\s+de\s+(?:Servi[cç]os\s+)?Repasse|nfe\.osasco\.(?:sp\.)?gov\.br', t, re.IGNORECASE):
             return LAYOUT_OSASCO_REPASSE
+        if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
+            return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         return LAYOUT_GENERICO
@@ -615,6 +620,17 @@ class SPPdfExtractor:
                         continue
                     return num
 
+        if self.layout == LAYOUT_CAMPINAS:
+            # Grade "Número / Série" cujo valor vem em outra linha, no formato
+            # "1712/E" (número da nota + letra da série). O rótulo "Número / Série"
+            # divide a linha de cabeçalho com outros campos, então ancoramos no
+            # próprio valor: dígitos seguidos de "/" e uma única letra de série.
+            # "06/2026" (competência) não casa porque exige letra após a barra;
+            # "5920-1/00-00" (CNAE) também não casa.
+            m = re.search(r'\b(\d{2,7})\s*/\s*[A-Za-z]\b', t)
+            if m:
+                return m.group(1).strip()
+
         # 1. Busca por proximidade do label (Alta prioridade para DANFSe v1.0)
         # Procura o rótulo e pega o primeiro número que aparece depois dele (até 100 caracteres de distância)
         label_patterns = [
@@ -682,6 +698,18 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_CAMPINAS:
+            # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO (...)" até o próximo marcador
+            # (dados bancários / documento / tributação).
+            m = re.search(
+                r'DESCRI[ÇC][AÃ]O\s+DO\s+SERVI[ÇC]O\s+PRESTADO.*?\)\s*(.*?)'
+                r'(?=DADOS\s+BANC|DOCUMENTO\s+EMITIDO|TRIBUTA[ÇC][AÃ]O\s+MUNICIPAL|C[ÁA]LCULO\s+DO\s+ISSQN|$)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                linhas = [ln.strip() for ln in m.group(1).split('\n') if ln.strip()]
+                if linhas:
+                    return " ".join(linhas)
+
         if self.layout == LAYOUT_CPE_LOCACAO:
             m = re.search(r'C[oó]digo\s+e\s+Descri[cç][aã]o.*?\n(.*)', t, re.IGNORECASE | re.DOTALL)
             if m:
@@ -807,6 +835,15 @@ class SPPdfExtractor:
         t = self.raw_text
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO):
             return "0601"
+
+        if self.layout == LAYOUT_CAMPINAS:
+            # Seção "Serviço" traz o item da LC 116/03 no formato "13.02 - FONOGRAFIA...".
+            # O CNAE ("5920-1/00-00") aparece antes, mas tem formato distinto (\d{4}-\d)
+            # e não casa com \d{2}\.\d{2}.
+            m = re.search(r'\b(\d{2})\.(\d{2})\s*-\s*[A-Za-zÀ-ú]', t)
+            if m:
+                return (m.group(1) + m.group(2))
+
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         patterns = [
@@ -952,6 +989,18 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_osasco_repasse(is_prestador)
+
+        if self.layout == LAYOUT_CAMPINAS:
+            if is_intermediario:
+                return None
+            # Duas estruturas de texto possíveis para o MESMO layout:
+            #  - PDF imagem/escaneado (OCR): grade com vários campos por linha
+            #    ("CPF/CNPJ NIF Inscrição Municipal Telefone" numa linha só).
+            #  - PDF digital (pdfminer): tabela de 2 colunas extraída campo a campo,
+            #    com rótulo e valor em linhas próprias e as colunas intercaladas.
+            if re.search(r'CPF\s*/?\s*CNPJ\s*/?\s*NIF[ \t]+(?:Inscri|Telefone)', t, re.IGNORECASE):
+                return self._extrair_entidade_campinas(is_prestador)
+            return self._extrair_entidade_campinas_digital(is_prestador)
 
         if self.layout == LAYOUT_CPE_LOCACAO:
             if is_prestador:
@@ -1919,6 +1968,372 @@ class SPPdfExtractor:
 
         return {'logradouro': logradouro, 'numero': numero, 'bairro': bairro, 'cep': cep}
 
+    def _extrair_entidade_campinas(self, is_prestador: bool) -> Entidade:
+        """Extrai EMITENTE PRESTADOR / TOMADOR do layout Campinas/SP.
+
+        A NFSe de Campinas é uma grade em que os rótulos ficam numa linha e os
+        valores na linha seguinte, com vários campos por linha:
+
+            CPF / CNPJ/ NIF   Inscrição Municipal   Telefone
+            10.983.367/0001-26  00.165.107-2  (19) 9818-9401
+            Nome / Nome Empresarial   E-mail
+            PRESTO COMUNICACAO E SOM LTDA - ME  gabrielduarte2007 @gmail.com
+            Endereço   Município   CEP
+            AVENIDA CARLOS GRIMALDI 1171 D 22 JARDIM CONCEIÇÃO CAMPINAS / SP BRASIL 13091-000
+
+        O parser genérico (baseado em "rótulo: valor" na mesma linha) não decodifica
+        essa grade, por isso o tratamento dedicado.
+        """
+        t = self.raw_text
+
+        if is_prestador:
+            m_bloco = re.search(
+                r'EMITENTE\s+PRESTADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=TOMADOR\s+DO\s+SERVI[CÇ]O|$)',
+                t, re.IGNORECASE | re.DOTALL)
+        else:
+            m_bloco = re.search(
+                r'TOMADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=SERVI[CÇ]O\s+PRESTADO|CNAE\s*/\s*CBO|$)',
+                t, re.IGNORECASE | re.DOTALL)
+
+        bloco = m_bloco.group(1) if m_bloco else ''
+        linhas = [ln.strip() for ln in bloco.split('\n')]
+
+        _HEADER_RE = re.compile(
+            r'(CPF\s*/?\s*CNPJ|Inscri[cç][aã]o\s+Municipal|Telefone|'
+            r'Nome\s*/\s*Nome|E-?mail|Endere[cç]o|Munic[ií]pio|CEP)',
+            re.IGNORECASE)
+
+        def valor_apos(header_re: str) -> str:
+            """Primeira linha não-vazia após o rótulo que não seja outro cabeçalho."""
+            for i, ln in enumerate(linhas):
+                if re.search(header_re, ln, re.IGNORECASE):
+                    for j in range(i + 1, len(linhas)):
+                        cand = linhas[j].strip()
+                        if not cand:
+                            continue
+                        if _HEADER_RE.search(cand):
+                            return ''
+                        return cand
+                    return ''
+            return ''
+
+        # 1. CNPJ/CPF, Inscrição Municipal e Telefone (linha "doc  IM  telefone")
+        linha_doc = valor_apos(r'CPF\s*/?\s*CNPJ')
+        cnpj = '00000000000000'
+        m_doc = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', linha_doc)
+        if m_doc:
+            pure = re.sub(r'\D', '', m_doc.group(1))
+            if self._validate_cnpj_cpf(pure):
+                cnpj = pure
+
+        insc = None
+        telefone = None
+        if m_doc:
+            resto = linha_doc[m_doc.end():].strip()
+            # Inscrição Municipal: próximo token com dígitos (ex: "00.165.107-2");
+            # "-" isolado (tomador sem IM) é ignorado.
+            m_im = re.search(r'([\d][\d.\-/]{3,})', resto)
+            if m_im:
+                insc_dig = re.sub(r'\D', '', m_im.group(1))
+                if insc_dig:
+                    insc = insc_dig
+                    resto = resto[m_im.end():].strip()
+            # Telefone: primeiro trecho que pareça um telefone (com DDD).
+            m_tel = re.search(r'\(?\d{2}\)?\s*[\d.\-\s]{7,}', resto)
+            if m_tel:
+                tel_dig = re.sub(r'\D', '', m_tel.group(0))
+                if 8 <= len(tel_dig) <= 13:
+                    telefone = tel_dig
+
+        # 2. Razão social + e-mail (linha após "Nome / Nome Empresarial")
+        linha_nome = valor_apos(r'Nome\s*/\s*Nome')
+        razao = ''
+        email = None
+        if linha_nome:
+            tokens = linha_nome.split()
+            # Detecta o token de domínio (o OCR costuma mesclar "@gmail.com" em
+            # algo como "GQgmail.com"); o token anterior é o local-part.
+            dom_idx = None
+            for k, tok in enumerate(tokens):
+                if re.search(r'(?i)(@|gmail|hotmail|outlook|yahoo|\.com|\.br|\.net|\.org)', tok):
+                    dom_idx = k
+                    break
+            if dom_idx is not None:
+                local_idx = dom_idx - 1 if dom_idx - 1 >= 0 else dom_idx
+                razao = ' '.join(tokens[:local_idx]).strip()
+                dom_tok = tokens[dom_idx]
+                # Provedores conhecidos: o OCR costuma prefixar lixo ("GQgmail.com"),
+                # então extraímos o provedor + TLD de dentro do token.
+                m_known = re.search(r'(gmail|hotmail|outlook|yahoo|live|icloud|bol|uol|terra)\.com(?:\.br)?', dom_tok, re.IGNORECASE)
+                if m_known:
+                    dominio = m_known.group(0).lower()
+                else:
+                    m_any = re.search(r'[\w-]+\.(?:com(?:\.br)?|br|net|org|gov(?:\.br)?)', dom_tok, re.IGNORECASE)
+                    dominio = (m_any.group(0) if m_any else dom_tok).lstrip('.')
+                local = tokens[local_idx] if local_idx < dom_idx else ''
+                local = re.sub(r'[^\w.%+-]', '', local)
+                if local:
+                    email = f'{local}@{dominio}'
+            else:
+                razao = linha_nome.strip()
+            razao = re.sub(r'[\s/!|:.-]+$', '', razao).strip()
+
+        if not razao:
+            razao = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        # 3. Endereço (linha após o cabeçalho "Endereço ... Município ... CEP")
+        linha_end = valor_apos(r'Endere[cç]o')
+        end_data = {
+            'logradouro': 'Não informado', 'numero': 'S/N', 'bairro': 'Não informado',
+            'municipio': 'Não informado',
+            'codigo_municipio': _ibge_resolver.default_code,
+            'uf': _ibge_resolver.default_uf, 'cep': '00000000',
+        }
+        if linha_end:
+            raw_end = linha_end
+
+            # CEP no fim da linha (ex: "13091-000")
+            m_cep = re.search(r'(\d{5}-?\d{3})\s*$', raw_end)
+            if m_cep:
+                end_data['cep'] = re.sub(r'\D', '', m_cep.group(1))
+                raw_end = raw_end[:m_cep.start()].strip()
+
+            # País "BRASIL" antes do CEP
+            raw_end = re.sub(r'\bBRASIL\b\s*$', '', raw_end, flags=re.IGNORECASE).strip()
+
+            # Município / UF: "<MUNICIPIO> / SP" ou "<MUNICIPIO> | BA" (o OCR troca
+            # a barra por pipe). Captura até 3 palavras antes do separador como
+            # candidato a município (o IBGE resolver valida o nome real).
+            m_mun = re.search(
+                r'([A-Za-zÀ-ú]+(?:\s+[A-Za-zÀ-ú]+){0,2})\s*[/|]\s*([A-Z]{2})\b',
+                raw_end)
+            municipio_hint = None
+            if m_mun:
+                municipio_hint = m_mun.group(1).strip()
+                end_data['uf'] = m_mun.group(2).strip().upper()
+                # O que sobra antes do município é o logradouro/numero/bairro
+                raw_end = raw_end[:m_mun.start()].strip()
+
+            # Município final + bairro que "vazou" para o hint. O regex de município
+            # capta até 3 palavras antes do separador (ex: "JARDIM CONCEIÇÃO
+            # CAMPINAS"); a cidade real é o maior sufixo conhecido ("CAMPINAS") e
+            # as palavras que sobram na frente são, na verdade, o bairro.
+            municipio_final = municipio_hint or ''
+            bairro_do_hint = ''
+            if municipio_hint:
+                palavras = municipio_hint.split()
+                for start in range(len(palavras)):
+                    cand = ' '.join(palavras[start:])
+                    if re.sub(r'[^\w\s]', '', cand).strip().upper() in _ibge_resolver.KNOWN_CITIES:
+                        municipio_final = cand
+                        bairro_do_hint = ' '.join(palavras[:start]).strip()
+                        break
+                else:
+                    municipio_final = palavras[-1]
+                    bairro_do_hint = ' '.join(palavras[:-1]).strip()
+            end_data['municipio'] = municipio_final or 'Não informado'
+            if bairro_do_hint:
+                end_data['bairro'] = bairro_do_hint
+
+            # Divisão best-effort de logradouro / número / complemento na parte
+            # restante (o que vem antes do bairro/município).
+            if raw_end:
+                # Ignora ordinais no nome da via (ex: "5º AVENIDA") ao procurar o
+                # número do imóvel; prefere um número de 2+ dígitos.
+                m_num = None
+                for cand in re.finditer(r'\b(\d{1,6})\b(?![º°ªo])', raw_end):
+                    m_num = cand
+                    if len(cand.group(1)) >= 2:
+                        break
+                if m_num:
+                    end_data['logradouro'] = raw_end[:m_num.start()].strip(' ,.-') or 'Não informado'
+                    end_data['numero'] = m_num.group(1)
+                    complemento = raw_end[m_num.end():].strip(' ,.-;')
+                    if complemento:
+                        end_data['complemento'] = complemento
+                        if not bairro_do_hint:
+                            end_data['bairro'] = complemento
+                            end_data.pop('complemento', None)
+                else:
+                    end_data['logradouro'] = raw_end.strip(' ,.-')
+
+            end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
+                raw_end, detected_uf=end_data['uf'],
+                city_hint=end_data['municipio'], raw_doc_text=None
+            )
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
+            endereco=Endereco(**end_data),
+            email=email,
+            telefone=telefone,
+        )
+
+    @staticmethod
+    def _split_endereco_campinas(raw_end: str) -> dict:
+        """Quebra a linha de endereço do Campinas (sem município, já removido) em
+        logradouro / número / complemento / bairro. Ex.:
+          "AVENIDA CARLOS GRIMALDI 1171 D 22 JARDIM CONCEIÇÃO"
+          "5ª AVENIDA ALTO DO SALDANHA 2671 SALA:1202;   BROTAS"
+        """
+        out = {'logradouro': 'Não informado', 'numero': 'S/N',
+               'complemento': None, 'bairro': 'Não informado'}
+        raw_end = raw_end.strip()
+        if not raw_end:
+            return out
+
+        # Número do imóvel: primeiro número que NÃO seja ordinal ("5ª AVENIDA");
+        # prefere 2+ dígitos.
+        m_num = None
+        for cand in re.finditer(r'\b(\d{1,6})\b(?![º°ªo])', raw_end):
+            m_num = cand
+            if len(cand.group(1)) >= 2:
+                break
+        if not m_num:
+            out['logradouro'] = raw_end.strip(' ,.-')
+            return out
+
+        out['logradouro'] = raw_end[:m_num.start()].strip(' ,.-') or 'Não informado'
+        out['numero'] = m_num.group(1)
+        resto = raw_end[m_num.end():].strip(' ,.-;')
+        if not resto:
+            return out
+
+        # Complemento/bairro: separador ";" quando presente; senão, um complemento
+        # curto do tipo "D 22"/"SALA 1202" no início e o restante como bairro.
+        if ';' in resto:
+            comp, _, bairro = resto.partition(';')
+            out['complemento'] = comp.strip(' ,.-') or None
+            out['bairro'] = bairro.strip(' ,.-;') or 'Não informado'
+        else:
+            m_comp = re.match(r'([A-Za-z]{1,4}\.?\s*\d{1,5}[A-Za-z]?)\s+(.+)', resto)
+            if m_comp:
+                out['complemento'] = m_comp.group(1).strip()
+                out['bairro'] = m_comp.group(2).strip(' ,.-')
+            else:
+                out['bairro'] = resto.strip(' ,.-')
+        return out
+
+    def _extrair_entidade_campinas_digital(self, is_prestador: bool) -> Entidade:
+        """Extrai PRESTADOR/TOMADOR da NFSe Campinas em PDF digital (camada de
+        texto). O pdfminer extrai a tabela de 2 colunas campo a campo, deixando
+        CNPJ/Nome/Endereço contíguos por entidade, mas espalhando os demais
+        campos (Inscrição Municipal, E-mail, Município, Telefone, CEP) num bloco
+        posterior com as colunas intercaladas. A regra estável: a N-ésima
+        ocorrência de cada rótulo pertence à N-ésima entidade (1ª = prestador,
+        2ª = tomador).
+        """
+        t = self.raw_text
+        lines = t.split('\n')
+        idx = 0 if is_prestador else 1
+
+        def ocorrencias(label_re: str):
+            """Valores (1ª linha não-vazia seguinte) de cada linha == rótulo exato."""
+            vals = []
+            for i, l in enumerate(lines):
+                if re.fullmatch(label_re, l.strip(), re.IGNORECASE):
+                    for j in range(i + 1, len(lines)):
+                        if lines[j].strip():
+                            vals.append(lines[j].strip())
+                            break
+            return vals
+
+        def pick(label_re: str) -> str:
+            vals = ocorrencias(label_re)
+            return vals[idx].strip() if len(vals) > idx else ''
+
+        # Bloco contíguo da entidade (CNPJ, Nome, Endereço)
+        if is_prestador:
+            m_bloco = re.search(
+                r'EMITENTE\s+PRESTADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=TOMADOR\s+DO\s+SERVI[CÇ]O|$)',
+                t, re.IGNORECASE | re.DOTALL)
+        else:
+            m_bloco = re.search(
+                r'TOMADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=A\s+autenticidade|Inscri[cç][aã]o\s+Municipal|SERVI[CÇ]O\s+PRESTADO|$)',
+                t, re.IGNORECASE | re.DOTALL)
+        bl = [x.strip() for x in (m_bloco.group(1) if m_bloco else '').split('\n')]
+
+        def apos(lst, label_re: str) -> str:
+            for i, l in enumerate(lst):
+                if re.search(label_re, l, re.IGNORECASE):
+                    for j in range(i + 1, len(lst)):
+                        cand = lst[j].strip()
+                        if cand and not re.search(r'Nome\s*/\s*Nome|Endere[cç]o|CPF\s*/', cand, re.IGNORECASE):
+                            return cand
+            return ''
+
+        # CNPJ/CPF
+        cnpj = '00000000000000'
+        m_doc = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})',
+                          m_bloco.group(1) if m_bloco else '')
+        if m_doc:
+            pure = re.sub(r'\D', '', m_doc.group(1))
+            if self._validate_cnpj_cpf(pure):
+                cnpj = pure
+
+        razao = apos(bl, r'Nome\s*/\s*Nome')
+        razao = re.sub(r'[\s/!|:.-]+$', '', razao).strip()
+        if not razao or re.search(r'Endere[cç]o|CPF', razao, re.IGNORECASE):
+            razao = ''
+        if not razao:
+            razao = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        # Campos espalhados (por índice de ocorrência)
+        im_raw = pick(r'Inscri[cç][aã]o\s+Municipal')
+        insc = re.sub(r'\D', '', im_raw) if im_raw else ''
+        insc = insc or None
+
+        email_raw = pick(r'E-?mail')
+        email = email_raw if (email_raw and '@' in email_raw) else None
+
+        tel_raw = pick(r'Telefone')
+        tel_dig = re.sub(r'\D', '', tel_raw) if tel_raw else ''
+        telefone = tel_dig if (8 <= len(tel_dig) <= 13) else None
+
+        cep_raw = pick(r'CEP')
+        cep = re.sub(r'\D', '', cep_raw) if cep_raw else ''
+        cep = cep or '00000000'
+
+        # Município / UF (ex.: "CAMPINAS / SP BRASIL")
+        mun_raw = pick(r'Munic[ií]pio')
+        municipio = 'Não informado'
+        uf = 'SP'
+        if mun_raw:
+            m_mun = re.search(r'(.+?)\s*[/|]\s*([A-Z]{2})\b', mun_raw)
+            if m_mun:
+                municipio = m_mun.group(1).strip()
+                uf = m_mun.group(2).strip().upper()
+            else:
+                municipio = re.sub(r'\bBRASIL\b', '', mun_raw, flags=re.IGNORECASE).strip()
+
+        # Endereço (logradouro/numero/complemento/bairro) — município não vem aqui
+        end_line = apos(bl, r'Endere[cç]o')
+        end_line = re.sub(r'\bBRASIL\b\s*$', '', end_line, flags=re.IGNORECASE).strip()
+        end_parts = self._split_endereco_campinas(end_line)
+
+        cod_mun = _ibge_resolver.extract_and_validate(
+            mun_raw or municipio, detected_uf=uf, city_hint=municipio, raw_doc_text=None)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=end_parts['logradouro'],
+                numero=end_parts['numero'],
+                complemento=end_parts['complemento'],
+                bairro=end_parts['bairro'],
+                municipio=municipio,
+                uf=uf,
+                codigo_municipio=cod_mun,
+                cep=cep,
+            ),
+            email=email,
+            telefone=telefone,
+        )
+
     def _extrair_entidade_osasco_repasse(self, is_prestador: bool) -> Entidade:
         """Extrai EMITENTE/RECEPTOR do layout Osasco/SP (Nota Fiscal Eletrônica
         de Repasse - NF-R, ex: iFood Benefícios e Serviços Ltda). Campos em
@@ -2017,6 +2432,74 @@ class SPPdfExtractor:
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_CAMPINAS:
+            # Duas grades rótulo-em-cima / valores-embaixo:
+            #  CÁLCULO DO ISSQN: [Valor total, Deduções, Desc. incond., Base de
+            #                     cálculo, Alíquota (%), Valor do ISSQN]
+            #  VALOR TOTAL:      [Base de cálculo, Retenções, Desc. incond.,
+            #                     Desc. condicionado, Valor Líquido]
+            # O OCR às vezes perde o dígito inicial do "Valor total" (700,00 -> 00,00)
+            # e mistura as colunas de alíquota/ISS. A "Base de cálculo do ISSQN"
+            # é o valor que sai limpo de forma consistente, então a usamos como
+            # âncora (para Simples Nacional, base == valor dos serviços).
+            def _nums(regiao: str):
+                return [self._parse_valor(x) for x in re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', regiao)]
+
+            # CÁLCULO termina em RETENÇÕES — NÃO em "VALOR TOTAL", pois o próprio
+            # rótulo desta grade começa com "Valor total da NFSe Campinas".
+            m_calc = re.search(r'C[ÁA]LCULO\s+DO\s+ISSQN(.*?)(?:RETEN[ÇC][ÕO]ES|$)', t, re.IGNORECASE | re.DOTALL)
+            nums_calc = _nums(m_calc.group(1)) if m_calc else []
+
+            # Grade "VALOR TOTAL" (âncora de fim de documento). O OCR às vezes
+            # trunca as últimas colunas desta linha, então ela é usada só como reforço.
+            m_tot = re.search(r'VALOR\s+TOTAL\s*\n(.*?)(?:INFORMA[ÇC][ÕO]ES|$)', t, re.IGNORECASE | re.DOTALL)
+            nums_tot = _nums(m_tot.group(1)) if m_tot else []
+
+            # Colunas da grade CÁLCULO: [valor_total, deduções, desc_incond, base,
+            # alíquota, valor_iss]. A "Base de cálculo do ISSQN" (4ª coluna) sai
+            # limpa de forma consistente; o "Valor total" (1ª) às vezes perde o
+            # dígito inicial no OCR. Por isso a base é a âncora.
+            valor_total = nums_calc[0] if nums_calc else 0.0
+            deducoes = nums_calc[1] if len(nums_calc) >= 2 else 0.0
+            desc_incond = nums_calc[2] if len(nums_calc) >= 3 else 0.0
+            base = nums_calc[3] if len(nums_calc) >= 4 else 0.0
+            aliq = (nums_calc[4] / 100.0) if len(nums_calc) >= 5 else 0.0
+            iss = nums_calc[5] if len(nums_calc) >= 6 else 0.0
+            if base == 0.0 and nums_calc:
+                base = max(nums_calc)
+
+            # Valor dos serviços: usa o "Valor total" se saiu íntegro; senão a base.
+            val_serv = valor_total if valor_total > 0 else base
+            if val_serv == 0.0:
+                val_serv = max(nums_tot) if nums_tot else 0.0
+            if base == 0.0:
+                base = val_serv
+
+            # Colunas da grade VALOR TOTAL: [base, retenções, desc_incond,
+            # desc_cond, líquido]. Como o OCR pode truncar as últimas, derivamos
+            # o líquido por cálculo quando a coluna não veio íntegra.
+            retencoes_tot = nums_tot[1] if len(nums_tot) >= 2 else 0.0
+            desc_cond = nums_tot[3] if len(nums_tot) >= 4 else 0.0
+            liquido_grid = nums_tot[4] if len(nums_tot) >= 5 else 0.0
+            if liquido_grid > 0:
+                liquido = liquido_grid
+            else:
+                liquido = val_serv - deducoes - desc_incond - desc_cond - retencoes_tot
+            if liquido <= 0.0:
+                liquido = val_serv
+
+            return Valores(
+                valor_servicos=val_serv,
+                valor_deducoes=deducoes,
+                base_calculo=base,
+                aliquota=aliq,
+                valor_iss=iss,
+                valor_liquido_nfse=liquido,
+                desconto_incondicionado=desc_incond,
+                desconto_condicionado=desc_cond,
+                outras_retencoes=retencoes_tot,
             )
 
         if self.layout == LAYOUT_BF_AMBIENTAIS:
@@ -2433,7 +2916,16 @@ class SPPdfExtractor:
         elif re.search(r'Optante\s*[-–]?\s*(?:Simples\s+Nacional|Microempresa|EPP|Empresa\s+de\s+Pequeno\s+Porte)', self.raw_text, re.IGNORECASE):
             optante_simples = True
             regime_especial = "6" # ME/EPP
-        
+        elif self.layout == LAYOUT_CAMPINAS and re.search(
+                r'OPTANTE\s+PELO\s+SIMPLES\s+NACIONAL|EPP\s+OPTANTE|'
+                r'perante\s+o\s+Simples\s+Nacional[\s\S]{0,40}?OPTANTE',
+                self.raw_text, re.IGNORECASE):
+            # No Campinas o "OPTANTE" e "SIMPLES NACIONAL" costumam ficar separados
+            # por "PELO" (imagem/OCR) ou em linhas distintas da grade (PDF digital),
+            # fugindo do padrão adjacente acima.
+            optante_simples = True
+            regime_especial = "6" # ME/EPP
+
         incentivador = False
         if re.search(r'Incentivador\s+Cultural\s*[:\s\n]*Sim', self.raw_text, re.IGNORECASE):
             incentivador = True
