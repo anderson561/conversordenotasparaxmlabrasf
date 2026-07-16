@@ -96,8 +96,9 @@ Quando selecionar **"Contrato de Locação (ABRASF XML)"**, o formulário de dad
 
 ## 6. Requisitos do Sistema
 
-- **PDFs**: Certifique-se de que os PDFs são notas fiscais legíveis (não são imagens/fotos sem texto).
+- **PDFs**: notas fiscais legíveis. PDFs **escaneados/imagem (sem texto)** também são aceitos — o conversor aplica OCR automaticamente (requer o **Tesseract OCR** instalado, com o pacote de idioma português `por`). O executável de produção já inclui as dependências Python; o Tesseract precisa estar instalado no sistema para OCR de PDFs de imagem.
 - **Pasta de Saída**: O programa criará a pasta caso ela não exista.
+- **Avisos**: quando um campo não é encontrado com confiança, a nota é gerada mesmo assim e o log exibe um aviso (ex.: "Dados do tomador não identificados") — revise esses casos antes de importar no ERP.
 
 ---
 > [!IMPORTANT]

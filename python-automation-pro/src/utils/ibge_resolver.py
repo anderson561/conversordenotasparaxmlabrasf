@@ -45,6 +45,7 @@ class IBGEResolver:
         "OSASCO": "3534401",
         "CUIABA": "5103403", "CUIABÁ": "5103403",
         "CAMPINA GRANDE": "2504009",
+        "CAMPINAS": "3509502",
         "BRASILIA": "5300108", "BRASÍLIA": "5300108",
         "SALVADOR": "2927408",
         "SAO PAULO": "3550308", "SÃO PAULO": "3550308",
