@@ -2587,7 +2587,15 @@ class SPPdfExtractor:
             # "Al.?quota" tolera o "í" de "Alíquota" ser lido pelo OCR como "i" comum
             # ou até como o caractere de substituição Unicode "�" (falha total de
             # reconhecimento daquele glifo específico).
-            m_aliq = re.search(r'Al.?quota\s*\(%\)\s*([\d\.,]+)', t, re.IGNORECASE)
+            # Exige separador decimal (vírgula) no valor capturado: em notas
+            # fotografadas (ex.: Botelho/Camaçari) o OCR embaralha a grade
+            # "Retenções x Totais" e faz esse rótulo colar num número de outra
+            # linha/coluna sem vírgula (ex.: "27" em vez de "2,79") — uma
+            # alíquota de ISS sem casas decimais é sempre sinal de captura
+            # errada, nunca um valor real (diferente do Valor dos Serviços/ISS,
+            # que legitimamente podem chegar sem nenhuma pontuação quando o
+            # OCR só perde o separador de milhar/decimal — ver `_parse_valor_camacari`).
+            m_aliq = re.search(r'Al.?quota\s*\(%\)\s*(\d{1,2},\d{1,2})', t, re.IGNORECASE)
             m_iss = re.search(r'Valor\s+(?:do\s+)?ISS\s*\(R\$\)\s*([\d\.,]+)', t, re.IGNORECASE)
             m_liq = re.search(r'Valor\s+L[ií]quido\s+da\s+Nota\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
             m_ded = re.search(r'Dedu[cç][oõ]es\s*\(-\)\s*([\d\.,]+)', t, re.IGNORECASE)
@@ -2598,6 +2606,14 @@ class SPPdfExtractor:
             iss = _parse_valor_camacari(m_iss.group(1)) if m_iss else 0.0
             liquido = _parse_valor_camacari(m_liq.group(1)) if m_liq else val_serv
             deducoes = _parse_valor_camacari(m_ded.group(1)) if m_ded else 0.0
+            # Base de cálculo = Valor dos Serviços - Deduções quando o rótulo
+            # "Base de Cálculo" não foi capturado (mesma causa do m_aliq acima).
+            if base == 0.0 and val_serv > 0.0:
+                base = val_serv - deducoes
+            # Alíquota derivada de ISS/Base quando o rótulo da alíquota falhou
+            # mas o valor do ISS foi lido com confiança (formato de moeda).
+            if aliq == 0.0 and iss > 0.0 and base > 0.0:
+                aliq = iss / base
             pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
             # Fallback: em PDFs deste layout gerados digitalmente (não escaneados/OCR),
@@ -2835,8 +2851,37 @@ class SPPdfExtractor:
         try: return float(valor_str.replace('.', '').replace(',', '.'))
         except: return 0.0
 
+    # Termos esperados em qualquer NFS-e/DANFE, usados para pontuar a
+    # qualidade do texto reconhecido em cada tentativa de rotação.
+    _OCR_QUALITY_KEYWORDS = (
+        "PREFEITURA", "MUNICIPAL", "MUNICIPIO", "MUNICÍPIO", "SECRETARIA",
+        "NOTA", "FISCAL", "SERVIC", "SERVIÇ", "PRESTADOR", "TOMADOR",
+        "CNPJ", "CPF", "VALOR", "CEP", "DISCRIMINA", "EMISSAO", "EMISSÃO",
+    )
+
+    @classmethod
+    def _score_ocr_text(cls, text: str) -> int:
+        """Pontua a qualidade de um texto OCR pela presença de termos fiscais
+        esperados. Uma orientação errada (imagem de cabeça para baixo/rotacionada)
+        produz texto embaralhado que praticamente nunca bate com essas palavras,
+        enquanto a orientação correta reconhece várias delas — ver gotcha da
+        rotação de OCR (nota Botelho/Camaçari, PDF originado de foto/JPG).
+        Números em formato de moeda brasileira (ex.: "270,00") pesam mais,
+        pois indicam que a tabela de valores foi reconhecida corretamente."""
+        if not text:
+            return 0
+        upper = text.upper()
+        score = sum(upper.count(kw) for kw in cls._OCR_QUALITY_KEYWORDS)
+        score += 2 * len(re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', text))
+        return score
+
     def _ocr_page(self, page_num: int) -> str:
-        """Renderiza uma única página do PDF (0-indexed) como imagem e extrai o texto via Tesseract."""
+        """Renderiza uma única página do PDF (0-indexed) como imagem e extrai o
+        texto via Tesseract, testando as 4 rotações (0/90/180/270°) quando a
+        leitura na orientação original sai com baixa qualidade — fotos/JPGs
+        convertidos em PDF frequentemente chegam de cabeça para baixo ou de
+        lado, e o OSD do Tesseract (image_to_osd) se mostrou pouco confiável
+        para detectar isso nesses documentos."""
         try:
             import pymupdf  # PyMuPDF
             import pytesseract
@@ -2861,7 +2906,23 @@ class SPPdfExtractor:
 
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 # Requer que os dados do idioma português ('por') estejam instalados no Tesseract
-                return pytesseract.image_to_string(img, lang='por')
+                best_text = pytesseract.image_to_string(img, lang='por')
+                best_score = self._score_ocr_text(best_text)
+
+                # Só vale a pena testar outras rotações se a leitura em 0°
+                # não pareceu um documento fiscal de verdade.
+                if best_score == 0:
+                    for angle in (180, 90, 270):
+                        rotated = img.rotate(-angle, expand=True)
+                        candidate = pytesseract.image_to_string(rotated, lang='por')
+                        score = self._score_ocr_text(candidate)
+                        if score > best_score:
+                            best_score = score
+                            best_text = candidate
+                        if best_score > 0:
+                            break
+
+                return best_text
             finally:
                 doc.close()
         except ImportError:
@@ -2941,9 +3002,13 @@ class SPPdfExtractor:
             avisos.append("Código de verificação/autenticidade não encontrado")
         if self._data_emissao_fallback:
             avisos.append("Data de emissão não encontrada (usando a data atual como fallback)")
-        if prestador and prestador.cnpj_cpf in ('00000000000000', ''):
+        # Alguns extratores de entidade usam '00000000000100' como sentinela de
+        # "CNPJ não encontrado" (em vez de todo-zeros) — comparamos por prefixo
+        # de 11 zeros para cobrir ambos os casos (mesmo critério da trava
+        # antilixo em parse_multiple).
+        if prestador and (prestador.cnpj_cpf.startswith('00000000000') or prestador.cnpj_cpf == ''):
             avisos.append("Dados do prestador não identificados")
-        if tomador and (tomador.cnpj_cpf in ('00000000000000', '') or tomador.razao_social == 'Tomador Não Identificado'):
+        if tomador and (tomador.cnpj_cpf.startswith('00000000000') or tomador.cnpj_cpf == '' or tomador.razao_social == 'Tomador Não Identificado'):
             avisos.append("Dados do tomador não identificados")
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
@@ -3119,9 +3184,20 @@ class SPPdfExtractor:
                 nfse = sub_ext.parse()
                 if not nfse: continue
                 
-                # Trava contra Lixo Residual (Páginas processadas que não são notas)
+                # Trava contra Lixo Residual (Páginas processadas que não são notas).
+                # Fotos/JPGs de baixa qualidade (ex.: nota Botelho/Camaçari) podem
+                # perder número e CNPJ no OCR mas ainda ter nomes de prestador/tomador
+                # legíveis — nesse caso é uma nota real e degradada, não lixo, então
+                # só descartamos quando NENHUM nome de entidade foi reconhecido.
                 if nfse.numero == '00000000' and nfse.prestador.cnpj_cpf.startswith('00000000000'):
-                    continue
+                    placeholders_razao = {
+                        'Não Identificado', 'Prestador Não Identificado',
+                        'Tomador Não Identificado', 'Cliente Não Identificado',
+                    }
+                    tem_nome_prestador = nfse.prestador.razao_social not in placeholders_razao and len(nfse.prestador.razao_social.strip()) > 5
+                    tem_nome_tomador = nfse.tomador and nfse.tomador.razao_social not in placeholders_razao and len(nfse.tomador.razao_social.strip()) > 5
+                    if not (tem_nome_prestador or tem_nome_tomador):
+                        continue
                 
                 # Evita duplicidade se o fatiamento falhou e pegou a mesma nota duas vezes
                 # ou se a nota tem múltiplas páginas e o fatiamento não as uniu
