@@ -596,6 +596,20 @@ class SPPdfExtractor:
             m = re.search(r'NOTA\s+FISCAL\s+N[ºo°]\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
+        if self.layout == LAYOUT_SALVADOR:
+            # A caixa de cabeçalho ("Número da Nota:") é reforçada por um recorte
+            # dedicado em zoom alto (ver _ocr_header_box_salvador), prependido ao
+            # texto — mas o valor pode vir separado do rótulo por texto de outra
+            # coluna (ex.: "Número da Nota:\n\nPREFEITURA MUNICIPAL DO SALVADOR
+            # 00004852") ou com um caractere solto colado ("R 00004852"). Por
+            # isso buscamos o primeiro número plausível numa janela após o rótulo,
+            # em vez de exigir adjacência imediata.
+            m_lab = re.search(r'N[uú]mero\s+da\s+Nota', t, re.IGNORECASE)
+            if m_lab:
+                janela = t[m_lab.end(): m_lab.end() + 80]
+                for m_num in re.finditer(r'\b(\d{4,10})\b', janela):
+                    return m_num.group(1)
+
         if self.layout == LAYOUT_CAMACARI:
             # Rótulo "Número da Nota" — o OCR deste layout às vezes troca o "ú" por "i"
             # ("Nimero da Nota") e, por ser um documento em duas colunas, o valor real
@@ -698,6 +712,21 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_SALVADOR:
+            # O rótulo "DISCRIMINAÇÃO DOS SERVIÇOS" sai truncado/corrompido no
+            # OCR (ex.: "DISCRIMINA! IÇoS"), então ancoramos só no prefixo
+            # "DISCRIMINA" + o sufixo "...IÇ[OÕ]S" tolerante a ruído entre eles.
+            # O texto termina antes de uma linha "IR (" (nota de retenção que
+            # aparece logo depois na mesma caixa) ou dos dados bancários.
+            m = re.search(
+                r'DISCRIMINA[\s\S]{0,25}?I[ÇC][OÕ]S\s*\n+(.*?)'
+                r'(?=\n\s*IR\s*\(|BANCO\s+BRADESCO|VALOR\s+TOTAL\s+DA\s+NOTA|$)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                linhas = [ln.strip() for ln in m.group(1).split('\n') if ln.strip()]
+                if linhas:
+                    return " ".join(linhas)
+
         if self.layout == LAYOUT_CAMPINAS:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO (...)" até o próximo marcador
             # (dados bancários / documento / tributação).
@@ -844,6 +873,14 @@ class SPPdfExtractor:
             if m:
                 return (m.group(1) + m.group(2))
 
+        if self.layout == LAYOUT_SALVADOR:
+            # "Item da Lista de Serviços:\n01714 - Advocacia." — a nota traz um
+            # zero de preenchimento à esquerda do código LC 116 (17.14); removemos
+            # para manter o padrão de 4 dígitos usado pelos demais layouts.
+            m = re.search(r'Item\s+da\s+Lista\s+de\s+Servi[çc]os\s*:?\s*\n?\s*0?(\d{3,4})', t, re.IGNORECASE)
+            if m:
+                return m.group(1)
+
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         patterns = [
@@ -896,7 +933,21 @@ class SPPdfExtractor:
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
             return self._extrair_codigo_autenticidade_brasilia()
-        
+
+        if self.layout == LAYOUT_SALVADOR:
+            # O rótulo "Código de Verificação" quase sempre sai truncado/corrompido
+            # no OCR (ex.: "césigo de Verificação", "aésigo de Verificação"), mas a
+            # palavra "Verificação" em si e o valor logo abaixo saem legíveis de
+            # forma consistente (ver _ocr_header_box_salvador). Ancoramos só em
+            # "erificação" e exigimos que o candidato misture letras e dígitos —
+            # uma palavra só-letras que caia na janela (ex.: fragmento de rótulo
+            # como "ador") nunca é o código real.
+            m = re.search(r'erifica[çc][aã]o\s*:?[\s\S]{0,20}?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
+            if m:
+                candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
+                if len(candidato) >= 6 and re.search(r'\d', candidato) and re.search(r'[A-Z]', candidato):
+                    return candidato
+
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         # Padrões com relax() forçado para capturar etiquetas ruidosas
@@ -1778,6 +1829,26 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_CUIABA and is_prestador and end_data.get('uf') == 'EX':
             end_data['uf'] = 'MT'
 
+        if self.layout == LAYOUT_SALVADOR:
+            # O campo "Endereço" desta nota é texto livre no formato
+            # "<logradouro/complemento> - [<bairro> -] <município> - CEP: ...",
+            # sem rótulos próprios de Bairro/Município. A lógica genérica acima
+            # assume que o único "-" separa logradouro de BAIRRO, então jogava o
+            # nome do MUNICÍPIO (ex.: "Feira de Santana") dentro do campo bairro
+            # — e o IBGE resolver caía no fallback de Salvador (capital) mesmo
+            # para tomadores em outra cidade. Aqui isolamos a linha de Endereço
+            # e tratamos o(s) segmento(s) entre logradouro e "CEP:" como
+            # [bairro,] município (o penúltimo segmento é bairro só quando há 3+).
+            m_end_sv = re.search(r'Endere[çc]o\s*:?\s*\n?\s*(.+?)(?=CEP\s*:|\n\s*E-mail|$)', bloco, re.IGNORECASE | re.DOTALL)
+            if m_end_sv:
+                end_raw = re.sub(r'\s+', ' ', m_end_sv.group(1)).strip(' -,')
+                segs = [s.strip() for s in end_raw.split(' - ') if s.strip()]
+                if len(segs) >= 2:
+                    end_data['logradouro'] = segs[0]
+                    end_data['municipio'] = segs[-1]
+                    if len(segs) >= 3:
+                        end_data['bairro'] = segs[-2]
+
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'],
             city_hint=end_data.get('municipio'), raw_doc_text=t
@@ -2403,6 +2474,53 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout == LAYOUT_SALVADOR:
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            val_serv = self._parse_valor(m_val.group(1)) if m_val else 0.0
+
+            # Grade "Valor INSS / PIS / COFINS / IR / CSLL / Outras Retenções /
+            # Valor Líquido": rótulos numa linha, os 7 valores na linha
+            # seguinte na mesma ordem — mesmo padrão de "grade rótulo-em-cima/
+            # valor-embaixo" já visto em Camaçari/Campinas. Tolera um "]" solto
+            # entre valores (ruído de borda de tabela capturado pelo OCR).
+            NUM = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+            SEP = r'\s*\]?\s*'
+            m_grid = re.search(
+                r'Valor\s+INSS.*?Valor\s+L[ií]quido\s*\(R\$\)\s*:?\s*\n\s*'
+                + NUM + SEP + NUM + SEP + NUM + SEP + NUM + SEP + NUM + SEP + NUM + SEP + NUM,
+                t, re.IGNORECASE
+            )
+            if m_grid:
+                inss, pis, cofins, ir, csll, outras, liquido = (self._parse_valor(g) for g in m_grid.groups())
+            else:
+                inss = pis = cofins = ir = csll = outras = 0.0
+                liquido = val_serv
+
+            # Sociedade de Uniprofissionais com "ISS RECOLHIDO POR QUOTA
+            # PROFISSIONAL ALÍQUOTA FIXA": a própria nota deixa Base de
+            # Cálculo/Alíquota/Valor do ISS em branco ("*") porque o ISS é pago
+            # por quota fixa mensal, não por percentual sobre o serviço —
+            # gravamos 0 nesses três campos em vez de inferir a partir do
+            # Valor dos Serviços (decisão confirmada com o usuário).
+            if re.search(r'RECOLHIDO\s+POR\s+QUOTA\s+PROFISSIONAL', t, re.IGNORECASE):
+                base, aliq, iss = 0.0, 0.0, 0.0
+            else:
+                m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(R\$\)\D*?([\d\.,]+)', t, re.IGNORECASE)
+                base = self._parse_valor(m_base.group(1)) if m_base else val_serv
+                m_aliq = re.search(r'Al[ií]quota\s*\(%\)\D*?(\d{1,2},\d{1,2})', t, re.IGNORECASE)
+                aliq = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
+                m_iss = re.search(r'Valor\s+do\s+ISS\s*\(R\$\)\D*?([\d\.,]+)', t, re.IGNORECASE)
+                iss = self._parse_valor(m_iss.group(1)) if m_iss else 0.0
+
+            return Valores(
+                valor_servicos=val_serv,
+                valor_deducoes=0.0,
+                valor_pis=pis, valor_cofins=cofins, valor_inss=inss,
+                valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
+                base_calculo=base, aliquota=aliq, valor_iss=iss,
+                valor_liquido_nfse=liquido,
+            )
+
         if self.layout == LAYOUT_CPE_LOCACAO:
             m_val = re.search(r'\bValor\b\s*[:\s\n]+([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
@@ -2899,8 +3017,16 @@ class SPPdfExtractor:
                 if page_num >= len(doc):
                     return ""
                 page = doc.load_page(page_num)
-                # Aumenta a resolução para melhorar a precisão do OCR (zoom 2x)
-                zoom = 2.0
+                # Aumenta a resolução para melhorar a precisão do OCR. Subido de 2x
+                # para 3x após validar contra uma nota real de Salvador/BA: em 2x o
+                # CNPJ do tomador perdia a barra ("628/0001"→"62810001", quebrando o
+                # regex de CNPJ e causando um bug grave de troca de CNPJ entre
+                # entidades), o nome de município saía corrompido ("Feira"→"Fora") e
+                # a grade de retenções/valor líquido não era reconhecida. Zoom 5x
+                # recupera ainda mais campos, mas introduz uma regressão nova
+                # (quebra a discriminação do serviço em dois fragmentos
+                # desconectados) — 3x é o ponto de melhor custo-benefício validado.
+                zoom = 3.0
                 mat = pymupdf.Matrix(zoom, zoom)
                 pix = page.get_pixmap(matrix=mat)
 
@@ -2922,6 +3048,22 @@ class SPPdfExtractor:
                         if best_score > 0:
                             break
 
+                # Layout Salvador/BA tem uma caixa de cabeçalho densa e pequena
+                # (Número da Nota / Data e Hora de Emissão / Código de Verificação)
+                # que sai ilegível mesmo em zoom 3x/5x na página inteira — em
+                # ambos os testes contra uma nota real (GABINO 4852) o valor do
+                # código de verificação some ou aparece corrompido junto ao título
+                # do documento. Um recorte dedicado dessa região (canto superior
+                # direito) em zoom mais alto recupera o valor corretamente
+                # ("AF7P-SGPS"), mesmo quando o rótulo "Código" continua truncado
+                # pelo OCR. Prependemos ao texto principal para que os regexes
+                # encontrem esta versão limpa antes de qualquer ocorrência
+                # ambígua no restante do documento.
+                if re.search(r'PREFEITURA\s+MUNICIPAL\s+DO\s+SALVADOR|Nota\s+Salvador', best_text, re.IGNORECASE):
+                    header_text = self._ocr_header_box_salvador(page)
+                    if header_text.strip():
+                        best_text = f"{header_text}\n{best_text}"
+
                 return best_text
             finally:
                 doc.close()
@@ -2930,6 +3072,28 @@ class SPPdfExtractor:
             return ""
         except Exception as e:
             print(f"[AVISO] Falha ao executar OCR na página {page_num + 1}: {e}")
+            return ""
+
+    @staticmethod
+    def _ocr_header_box_salvador(page) -> str:
+        """Recorta e reprocessa em zoom alto (4.5x) o canto superior direito da
+        nota Salvador/BA (caixa "Número da Nota" / "Data e Hora de Emissão" /
+        "Código de Verificação"), usando PSM 6 (bloco único de texto) — a região
+        inteira da página não recupera esses campos de forma confiável em
+        nenhum zoom testado. Validado contra nota real: recupera "00004852" e
+        "AF7P-SGPS" mesmo quando o rótulo "Código" continua truncado."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(4.5, 4.5))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            w, h = img.size
+            crop = img.crop((int(w * 0.60), 0, w, int(h * 0.11)))
+            return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+        except Exception:
             return ""
 
     def _extract_via_ocr(self) -> str:
