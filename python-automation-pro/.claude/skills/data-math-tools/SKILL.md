@@ -1,5 +1,5 @@
 ---
-name: data-science-and-statistical-tools
+name: data-math-tools
 description: Habilidades para inspecionar distribuições de dados, validar integridade estatística e estruturar matrizes de confusão.
 ---
 

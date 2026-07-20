@@ -1,5 +1,5 @@
 ---
-name: xp-refactoring-and-metrics-capability
+name: xp-refactoring-tools
 description: Habilidades técnicas para monitorar a saúde do código, complexidade de software e execução automatizada de testes locais.
 ---
 

@@ -1,5 +1,5 @@
 ---
-name: software-architecture-and-design-inspector
+name: architecture-inspector
 description: Ferramentas para auditar o acoplamento de código, violações de camadas arquiteturais e validação de padrões de projeto.
 ---
 
