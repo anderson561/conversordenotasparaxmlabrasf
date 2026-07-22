@@ -60,6 +60,7 @@ LAYOUT_LOCONTAINERS = 'locontainers' # Locontainers (Vidal Locação de Containe
 LAYOUT_TELECOM_COMUNICACAO = 'telecom_comunicacao' # NF-e Fatura de Serviço de Comunicação Eletrônica
 LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrônica de Repasse (NF-R), ex: iFood Benefícios
 LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
+LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 
 
 # Etiquetas para Identificação de Entidades
@@ -163,6 +164,8 @@ class SPPdfExtractor:
             return LAYOUT_SALVADOR # Ou um layout genérico da BA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
+        if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
+            return LAYOUT_LAURO_FREITAS
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
@@ -218,6 +221,8 @@ class SPPdfExtractor:
             return LAYOUT_SALVADOR
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
+        if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
+            return LAYOUT_LAURO_FREITAS
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
@@ -727,6 +732,20 @@ class SPPdfExtractor:
                 if linhas:
                     return " ".join(linhas)
 
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # O texto do serviço vem colado, na mesma linha, à nota de
+            # transparência fiscal do IBPT ("Valor aproximado dos tributos R$
+            # X Fonte IBPT") — removida por não fazer parte da discriminação
+            # real do serviço prestado.
+            m = re.search(
+                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)(?=\n\s*VALOR\s+TOTAL\s+DA\s+NOTA|$)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                texto = re.sub(r'\s+', ' ', m.group(1)).strip()
+                texto = re.sub(r'\s*Valor\s+aproximado\s+dos\s+tributos.*$', '', texto, flags=re.IGNORECASE).strip()
+                if texto:
+                    return texto
+
         if self.layout == LAYOUT_CAMPINAS:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO (...)" até o próximo marcador
             # (dados bancários / documento / tributação).
@@ -881,6 +900,22 @@ class SPPdfExtractor:
             if m:
                 return m.group(1)
 
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # "ITEM DA LISTA DE SERVIÇOS:\n\n( Lei Municipal 1572/2015 )\n\n110201 -
+            # Vigilância..." — entre o rótulo e o valor há a referência da lei
+            # municipal (que também contém dígitos, ex.: "1572/2015"), então não
+            # basta pegar o primeiro número após o rótulo. Ancoramos no padrão
+            # "dígitos - Texto" (só o código real vem seguido de um hífen e uma
+            # descrição). O código de 6 dígitos é "item.subitem LC116 + subitem
+            # municipal" (ex.: 11.02.01); usamos só os 4 primeiros (11.02) para
+            # manter o padrão LC 116 dos demais layouts.
+            m_lab = re.search(r'ITEM\s+DA\s+LISTA\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+            if m_lab:
+                janela = t[m_lab.end(): m_lab.end() + 150]
+                m_cod = re.search(r'\b(\d{4,6})\s*-\s*[A-ZÀ-Ú]', janela)
+                if m_cod:
+                    return m_cod.group(1)[:4]
+
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         patterns = [
@@ -933,6 +968,23 @@ class SPPdfExtractor:
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
             return self._extrair_codigo_autenticidade_brasilia()
+
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # O valor real ("579312F9A") não fica colado ao rótulo "Código de
+            # Verificação" — entre os dois há um parágrafo inteiro de aviso de
+            # autenticidade ("A autenticidade desta Nota... QR Code."), então os
+            # padrões genéricos abaixo (que exigem proximidade) não capturam
+            # nada útil. Buscamos, na janela entre o rótulo e o cabeçalho
+            # "PRESTADOR DE SERVIÇOS" seguinte, o único token que mistura
+            # letras e dígitos (o parágrafo de aviso é só texto corrido).
+            m_lab = re.search(r'C[oó]digo\s+de\s+Verifica[çc][aã]o', t, re.IGNORECASE)
+            m_prest = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+            if m_lab and m_prest and m_prest.start() > m_lab.end():
+                janela = t[m_lab.end():m_prest.start()]
+                for m_cod in re.finditer(r'\b([A-Z0-9]{6,15})\b', janela):
+                    candidato = m_cod.group(1)
+                    if re.search(r'\d', candidato) and re.search(r'[A-Z]', candidato):
+                        return candidato
 
         if self.layout == LAYOUT_SALVADOR:
             # O rótulo "Código de Verificação" quase sempre sai truncado/corrompido
@@ -1456,6 +1508,11 @@ class SPPdfExtractor:
                         cep=cep
                     )
                 )
+
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_lauro_freitas(is_prestador)
 
         if self.layout == LAYOUT_LOCALIZA:
             if is_prestador:
@@ -2005,6 +2062,93 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_lauro_freitas(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador do layout Lauro de Freitas/BA.
+
+        O pdfminer extrai os campos Município/UF/Email do PRESTADOR fora de
+        ordem: eles saem DEPOIS do cabeçalho "TOMADOR DE SERVIÇOS", mas ANTES
+        do "Nome/Razão" do tomador (a linha correspondente do prestador, no
+        PDF de origem, "vaza" para a caixa seguinte). O texto se divide em
+        3 blocos, delimitados pelos dois cabeçalhos de seção e pelo 2º
+        "Nome/Razão" (do tomador):
+          - bloco_prestador: CNPJ/Inscrição/Nome/Endereço/Bairro/CEP do
+            PRESTADOR (corretos, na ordem esperada).
+          - bloco_vazado: CNPJ do TOMADOR + Município/UF/Email VAZADOS do
+            PRESTADOR.
+          - bloco_tomador: Nome/Endereço/Bairro/Município/UF/CEP/Email do
+            TOMADOR (corretos, na ordem esperada).
+        """
+        t = self.raw_text
+
+        m_prest_header = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        m_tom_header = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        bloco_prestador = t[m_prest_header.end():m_tom_header.start()] if (m_prest_header and m_tom_header) else t
+        resto = t[m_tom_header.end():] if m_tom_header else t
+
+        m_nome_tomador = re.search(r'Nome\s*/\s*Raz[ãa]o', resto, re.IGNORECASE)
+        bloco_vazado = resto[:m_nome_tomador.start()] if m_nome_tomador else ''
+        bloco_tomador = resto[m_nome_tomador.start():] if m_nome_tomador else resto
+
+        def _campo(pattern: str, bloco: str) -> Optional[str]:
+            m = re.search(pattern, bloco, re.IGNORECASE)
+            return m.group(1).strip() if m else None
+
+        def _cnpj_cpf(bloco: str) -> str:
+            m = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', bloco)
+            return re.sub(r'\D', '', m.group(1)) if m else '00000000000000'
+
+        if is_prestador:
+            cnpj = _cnpj_cpf(bloco_prestador)
+            insc = _campo(r'Inscri[çc][aã]o\s*\n+\s*(\d+)', bloco_prestador)
+            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n+\s*(.+)', bloco_prestador) or 'Prestador Não Identificado'
+            endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n+\s*(.+)', bloco_prestador) or 'Não informado'
+            bairro = _campo(r'Bairro\s*:?\s*\n*\s*([^\n]+)', bloco_prestador) or 'Não informado'
+            cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_prestador)
+            municipio = _campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_vazado) or 'LAURO DE FREITAS'
+            uf = _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_vazado) or 'BA'
+            email = _campo(r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_vazado)
+        else:
+            cnpj = _cnpj_cpf(bloco_vazado)
+            insc = None
+            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n+\s*(.+)', bloco_tomador) or 'Tomador Não Identificado'
+            endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n+\s*(.+)', bloco_tomador) or 'Não informado'
+            bairro = _campo(r'Bairro\s*:?\s*\n*\s*([^\n]+)', bloco_tomador) or 'Não informado'
+            cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_tomador)
+            municipio = _campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_tomador) or 'Não informado'
+            uf = _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_tomador) or 'BA'
+            email = _campo(r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_tomador)
+
+        cep = re.sub(r'\D', '', cep_raw) if cep_raw else '00000000'
+
+        # Endereço vem em texto livre com vírgulas ("Rua X, 1184, CENTRO"). O
+        # 3º segmento (quando existe) é complemento/referência solto — o
+        # bairro oficial vem do rótulo "Bairro:" à parte, não deste segmento.
+        partes_end = [p.strip() for p in endereco_raw.split(',')]
+        logradouro = partes_end[0] if partes_end else 'Não informado'
+        numero = partes_end[1] if len(partes_end) >= 2 and partes_end[1] else 'S/N'
+        complemento = None
+        if len(partes_end) >= 3:
+            complemento = ', '.join(partes_end[2:]).strip() or None
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+            email=email,
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -2518,6 +2662,56 @@ class SPPdfExtractor:
                 valor_pis=pis, valor_cofins=cofins, valor_inss=inss,
                 valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
                 base_calculo=base, aliquota=aliq, valor_iss=iss,
+                valor_liquido_nfse=liquido,
+            )
+
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # Grade "Valor Total Deduções / Base de Cálculo / Alíquota (%) /
+            # Valor do ISS / ISSQN Retido": rótulos numa linha, os 5 valores
+            # na sequência seguinte, na mesma ordem.
+            m_row = re.search(
+                r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\)\s*'
+                r'Al[íi]quota\s*\(%\)\s*Valor\s+do\s+ISS\s*\(R\$\)\s*ISSQN\s+Retido\s*\(R\$\)\s*'
+                r'R\$\s*([\d\.,]+)\s*R\$\s*([\d\.,]+)\s*([\d\.,]+)\s*([\d\.,]+)\s*(Sim|N[ãa]o)',
+                t, re.IGNORECASE
+            )
+            if m_row:
+                deducoes = self._parse_valor(m_row.group(1))
+                base = self._parse_valor(m_row.group(2))
+                aliquota = self._parse_valor(m_row.group(3)) / 100
+                iss = self._parse_valor(m_row.group(4))
+                iss_retido = m_row.group(5).strip().lower() == 'sim'
+            else:
+                deducoes = base = aliquota = iss = 0.0
+                iss_retido = False
+
+            m_val_total = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s+FISCAL\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
+            val_serv = self._parse_valor(m_val_total.group(1)) if m_val_total else base
+
+            # Grade "RETENÇÃO DE IMPOSTOS": rótulos PIS/COFINS/INSS/IRRF/CSLL/
+            # Outras Retenções seguidos dos valores na mesma ordem, mas o
+            # número de valores impressos pode ser menor que o de rótulos
+            # (coluna em branco) — completamos com 0,00 os que faltarem.
+            def _nums(regiao: str):
+                return [self._parse_valor(x) for x in re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', regiao)]
+
+            m_ret_block = re.search(
+                r'RETEN[ÇC][ÃA]O\s+DE\s+IMPOSTOS(.*?)VALOR\s+L[ÍI]QUIDO\s+DA\s+NOTA\s+FISCAL',
+                t, re.IGNORECASE | re.DOTALL
+            )
+            ret_nums = (_nums(m_ret_block.group(1)) if m_ret_block else []) + [0.0] * 6
+            pis, cofins, inss, ir, csll, outras = ret_nums[:6]
+
+            m_liq = re.search(r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NOTA\s+FISCAL\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
+            liquido = self._parse_valor(m_liq.group(1)) if m_liq else val_serv
+
+            return Valores(
+                valor_servicos=val_serv,
+                valor_deducoes=deducoes,
+                valor_pis=pis, valor_cofins=cofins, valor_inss=inss,
+                valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
+                base_calculo=base, aliquota=aliquota, valor_iss=iss,
+                iss_retido=iss_retido,
                 valor_liquido_nfse=liquido,
             )
 
