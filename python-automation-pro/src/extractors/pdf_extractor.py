@@ -62,6 +62,7 @@ LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrôni
 LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
+LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS-e eNotas Gateway, Lauro de Freitas/BA)
 
 
 # Etiquetas para Identificação de Entidades
@@ -145,6 +146,12 @@ class SPPdfExtractor:
         t = self.raw_text
         if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
             return LAYOUT_SULSEG_COBRANCA
+        # PASSWORD/eNotas: detecção específica do emitente (CNPJ 04.021.023 ou
+        # razão social), conforme decidido — não casar por marca genérica do
+        # gateway "eNotas" para evitar colisão com futuras notas de outros
+        # emitentes que usem o mesmo provedor.
+        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR', t, re.IGNORECASE):
+            return LAYOUT_PASSWORD_ENOTAS
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
         if re.search(r'03\.292\.008/0001-67|03\.292\.008', t, re.IGNORECASE):
@@ -204,6 +211,8 @@ class SPPdfExtractor:
         t = page_text
         if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
             return LAYOUT_SULSEG_COBRANCA
+        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR', t, re.IGNORECASE):
+            return LAYOUT_PASSWORD_ENOTAS
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
         if re.search(r'03\.292\.008/0001-67|03\.292\.008', t, re.IGNORECASE):
@@ -544,7 +553,14 @@ class SPPdfExtractor:
 
     def _extrair_numero(self) -> str:
         t = self.raw_text
-        
+
+        if self.layout == LAYOUT_PASSWORD_ENOTAS:
+            # "NÚMERO DA NOTA\n\n202600000038558" — ancorado no rótulo próprio
+            # para não casar com o "RPS 38591" do cabeçalho nem com a inscrição
+            # municipal (14 dígitos) mais abaixo.
+            m = re.search(r'N[ÚU]MERO\s+DA\s+NOTA\s*[\n\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_LOCALIZA:
             m = re.search(r'N[ºo]:\s*([A-Z0-9\s-]+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
@@ -771,6 +787,24 @@ class SPPdfExtractor:
                 if texto:
                     return texto
 
+        if self.layout == LAYOUT_PASSWORD_ENOTAS:
+            # Bloco entre "DISCRIMINAÇÃO DOS SERVIÇOS" e "CÓDIGO DO SERVIÇO".
+            # O item vem como "1 Locação do Sistema de Alarme. 214,44" (número
+            # do item + descrição + valor colados na mesma linha), seguido da
+            # descrição detalhada e do "Cód. 2172" (código interno do item) —
+            # removemos os três ruídos (item nº, valor solto, código interno)
+            # para manter só o texto descritivo do serviço.
+            m = re.search(
+                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)(?=\n\s*C[ÓO]DIGO\s+DO\s+SERVI[ÇC]O|$)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                texto = re.sub(r'\s+', ' ', m.group(1)).strip()
+                texto = re.sub(r'\s*C[óo]d\.\s*\d+\s*$', '', texto).strip()
+                texto = re.sub(r'^\d+\s+', '', texto)
+                texto = re.sub(r'(\.)\s*[\d\.]+,\d{2}\s+', r'\1 ', texto).strip()
+                if texto:
+                    return texto
+
         if self.layout == LAYOUT_CAMPINAS:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO (...)" até o próximo marcador
             # (dados bancários / documento / tributação).
@@ -925,6 +959,14 @@ class SPPdfExtractor:
             if m:
                 return m.group(1)
 
+        if self.layout == LAYOUT_PASSWORD_ENOTAS:
+            # "CÓDIGO DO SERVIÇO\n\n15.03 / 1503 - Locação e manutenção..." — a
+            # nota traz o código LC116 em dois formatos (com e sem ponto); usamos
+            # os 4 dígitos sem ponto (1503) para manter o padrão dos demais layouts.
+            m = re.search(r'(\d{2})\.(\d{2})\s*/\s*(\d{4})\s*-', t)
+            if m:
+                return m.group(3)
+
         if self.layout == LAYOUT_LAURO_FREITAS:
             # "ITEM DA LISTA DE SERVIÇOS:\n\n( Lei Municipal 1572/2015 )\n\n110201 -
             # Vigilância..." — entre o rótulo e o valor há a referência da lei
@@ -989,6 +1031,14 @@ class SPPdfExtractor:
                 if len(chave) == 44:
                     return chave
             return 'TELECOM'
+
+        if self.layout == LAYOUT_PASSWORD_ENOTAS:
+            # "CÓDIGO DE VERIFICAÇÃO\n\n043BE7B2F" — valor alfanumérico logo após
+            # o rótulo próprio (o rótulo genérico abaixo também casaria, mas
+            # ancoramos aqui para evitar depender da ordem das seções).
+            m = re.search(r'C[ÓO]DIGO\s+DE\s+VERIFICA[ÇC][ÃA]O\s*[\n\s]*([A-Z0-9]+)', t, re.IGNORECASE)
+            if m:
+                return m.group(1).strip().upper()
 
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
@@ -1198,6 +1248,11 @@ class SPPdfExtractor:
                         cep=cep,
                     ),
                 )
+
+        if self.layout == LAYOUT_PASSWORD_ENOTAS:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_password_enotas(is_prestador)
 
         if self.layout == LAYOUT_CPE_LOCACAO:
             if is_prestador:
@@ -2243,6 +2298,132 @@ class SPPdfExtractor:
             email=email,
         )
 
+    def _extrair_entidade_password_enotas(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador do layout PASSWORD/eNotas (Lauro de Freitas/BA).
+
+        O texto do pdfminer vem limpo e em ordem. O PRESTADOR fica no topo, em
+        formato livre (razão social, endereço, "BAIRRO - Município - UF - CEP",
+        telefone, e-mail, CNPJ, IM). O TOMADOR fica na seção "DADOS DO TOMADOR",
+        em grade rótulo-em-cima/valor-embaixo (Nome, Endereço, E-mail, Telefone,
+        Bairro, CEP, Município, UF, País, CPF/CNPJ).
+        """
+        t = self.raw_text
+
+        m_tom = re.search(r'DADOS\s+DO\s+TOMADOR', t, re.IGNORECASE)
+        m_discrim = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        bloco_prest = t[:m_tom.start()] if m_tom else t
+        fim_tom = m_discrim.start() if m_discrim else len(t)
+        bloco_tom = t[m_tom.end():fim_tom] if m_tom else t
+
+        def _split_endereco(raw: str):
+            """'EVERALDINA B DA PAZ, 400' -> (logradouro, numero, complemento)."""
+            partes = [p.strip() for p in raw.split(',')]
+            logradouro = partes[0] if partes and partes[0] else 'Não informado'
+            numero = 'S/N'
+            complemento = None
+            if len(partes) >= 2:
+                m_num = re.match(r'(\d+)\s*(.*)', partes[1])
+                if m_num:
+                    numero = m_num.group(1)
+                    resto = m_num.group(2).strip()
+                    extras = ([resto] if resto else []) + partes[2:]
+                    complemento = ', '.join([e for e in extras if e]).strip() or None
+                else:
+                    complemento = ', '.join(partes[1:]).strip() or None
+            return logradouro, numero, complemento
+
+        if is_prestador:
+            b = bloco_prest
+            m_cnpj = re.search(r'CNPJ\s*:?\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', b, re.IGNORECASE)
+            cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+            m_im = re.search(r'INSCRI[ÇC][ÃA]O\s+MUNICIPAL\s*:?\s*(\d+)', b, re.IGNORECASE)
+            insc = m_im.group(1) if m_im else None
+            m_email = re.search(r'EMAIL\s*:?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', b, re.IGNORECASE)
+            email = m_email.group(1) if m_email else None
+            m_tel = re.search(r'TELEFONE\s*:?\s*(\d+)', b, re.IGNORECASE)
+            telefone = m_tel.group(1) if m_tel else None
+
+            # Razão social: primeira linha de conteúdo após o cabeçalho "emitido em".
+            m_raz = re.search(r'emitido\s+em\s*:?\s*\d{2}/\d{2}/\d{4}\s*\n+\s*(.+)', b, re.IGNORECASE)
+            razao = m_raz.group(1).strip() if m_raz else 'Prestador Não Identificado'
+
+            # Endereço: linha logo após a razão social.
+            endereco_raw = 'Não informado'
+            if m_raz:
+                resto = b[m_raz.end():]
+                m_end = re.search(r'\s*([^\n]+)', resto)
+                if m_end:
+                    endereco_raw = m_end.group(1).strip()
+
+            # "ITINGA - Lauro de Freitas - BA - 42738495"
+            bairro, municipio, uf, cep = 'Não informado', 'Lauro de Freitas', 'BA', '00000000'
+            m_loc = re.search(r'\n\s*([^\n]+?)\s*-\s*([^\n]+?)\s*-\s*([A-Z]{2})\s*-\s*(\d{8})', b)
+            if m_loc:
+                bairro = m_loc.group(1).strip()
+                municipio = m_loc.group(2).strip()
+                uf = m_loc.group(3).strip()
+                cep = re.sub(r'\D', '', m_loc.group(4))
+
+            logradouro, numero, complemento = _split_endereco(endereco_raw)
+            mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+            return Entidade(
+                cnpj_cpf=cnpj,
+                inscricao_municipal=insc,
+                razao_social=razao,
+                endereco=Endereco(
+                    logradouro=logradouro,
+                    numero=numero,
+                    complemento=complemento,
+                    bairro=bairro,
+                    codigo_municipio=mun_cod,
+                    municipio=municipio,
+                    uf=uf,
+                    cep=cep,
+                ),
+                email=email,
+                telefone=telefone,
+            )
+
+        # Tomador — grade rótulo/valor.
+        b = bloco_tom
+
+        def _campo(rotulo: str) -> Optional[str]:
+            m = re.search(rotulo + r'\s*\n+\s*([^\n]+)', b, re.IGNORECASE)
+            return m.group(1).strip() if m else None
+
+        razao = _campo(r'NOME\s*/\s*RAZ[ÃA]O\s+SOCIAL') or 'Tomador Não Identificado'
+        endereco_raw = _campo(r'ENDERE[ÇC]O') or 'Não informado'
+        m_email = re.search(r'E-?MAIL\s*\n+\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', b, re.IGNORECASE)
+        email = m_email.group(1) if m_email else None
+        bairro = _campo(r'BAIRRO\s*/\s*DISTRITO') or _campo(r'BAIRRO') or 'Não informado'
+        municipio = _campo(r'MUNIC[ÍI]PIO') or 'Não informado'
+        m_uf = re.search(r'\bUF\s*\n+\s*([A-Z]{2})\b', b, re.IGNORECASE)
+        uf = m_uf.group(1).strip() if m_uf else 'BA'
+        m_cep = re.search(r'\bCEP\s*\n+\s*(\d{5}-?\d{3}|\d{8})', b, re.IGNORECASE)
+        cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else '00000000'
+        m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', b)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        logradouro, numero, complemento = _split_endereco(endereco_raw)
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+            email=email,
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -2807,6 +2988,33 @@ class SPPdfExtractor:
                 base_calculo=base, aliquota=aliquota, valor_iss=iss,
                 iss_retido=iss_retido,
                 valor_liquido_nfse=liquido,
+            )
+
+        if self.layout == LAYOUT_PASSWORD_ENOTAS:
+            # NFS-e tributada (ISS 3%, Simples Nacional). Cada valor tem rótulo
+            # próprio com o valor na linha seguinte. O "VALOR DO ISS" é
+            # renderizado como "-" (não destacado, recolhido via DAS do Simples),
+            # então espelhamos a face: base e alíquota preenchidas, ISS = 0,00.
+            def _val_apos(rotulo: str) -> float:
+                m = re.search(rotulo + r'\s*:?\s*\n+\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+                return self._parse_valor(m.group(1)) if m else 0.0
+
+            val_serv = _val_apos(r'VALOR\s+DOS\s+SERVI[ÇC]OS')
+            base = _val_apos(r'BASE\s+DE\s+C[ÁA]LCULO')
+            deducoes = _val_apos(r'\(-\)\s*DEDU[ÇC][ÕO]ES')
+            liquido = _val_apos(r'VALOR\s+L[ÍI]QUIDO')
+
+            m_aliq = re.search(r'AL[ÍI]QUOTA\s*:?\s*\n+\s*(\d{1,2},\d{1,2})\s*%', t, re.IGNORECASE)
+            aliquota = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
+
+            return Valores(
+                valor_servicos=val_serv,
+                valor_deducoes=deducoes,
+                base_calculo=base,
+                aliquota=aliquota,
+                valor_iss=0.0,
+                iss_retido=False,
+                valor_liquido_nfse=liquido if liquido else val_serv,
             )
 
         if self.layout == LAYOUT_SULSEG_COBRANCA:
@@ -3440,13 +3648,16 @@ class SPPdfExtractor:
         elif re.search(r'Optante\s*[-–]?\s*(?:Simples\s+Nacional|Microempresa|EPP|Empresa\s+de\s+Pequeno\s+Porte)', self.raw_text, re.IGNORECASE):
             optante_simples = True
             regime_especial = "6" # ME/EPP
-        elif self.layout == LAYOUT_CAMPINAS and re.search(
+        elif re.search(
                 r'OPTANTE\s+PELO\s+SIMPLES\s+NACIONAL|EPP\s+OPTANTE|'
                 r'perante\s+o\s+Simples\s+Nacional[\s\S]{0,40}?OPTANTE',
                 self.raw_text, re.IGNORECASE):
-            # No Campinas o "OPTANTE" e "SIMPLES NACIONAL" costumam ficar separados
-            # por "PELO" (imagem/OCR) ou em linhas distintas da grade (PDF digital),
-            # fugindo do padrão adjacente acima.
+            # "OPTANTE" e "SIMPLES NACIONAL" costumam ficar separados por "PELO"
+            # (ex.: Campinas em OCR/imagem, ou o texto corrido "Documento emitido
+            # por ME ou EPP optante pelo simples nacional" do layout PASSWORD/
+            # eNotas) ou em linhas distintas de grade (PDF digital), fugindo do
+            # padrão adjacente do elif anterior. Deixamos de restringir a
+            # LAYOUT_CAMPINAS pois a frase em si já é específica o suficiente.
             optante_simples = True
             regime_especial = "6" # ME/EPP
 
