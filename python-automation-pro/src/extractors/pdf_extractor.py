@@ -61,6 +61,7 @@ LAYOUT_TELECOM_COMUNICACAO = 'telecom_comunicacao' # NF-e Fatura de Serviço de 
 LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrônica de Repasse (NF-R), ex: iFood Benefícios
 LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
+LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
 
 
 # Etiquetas para Identificação de Entidades
@@ -142,6 +143,8 @@ class SPPdfExtractor:
         Identifica o layout da nota a partir de marcas textuais únicas.
         """
         t = self.raw_text
+        if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
+            return LAYOUT_SULSEG_COBRANCA
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
         if re.search(r'03\.292\.008/0001-67|03\.292\.008', t, re.IGNORECASE):
@@ -199,6 +202,8 @@ class SPPdfExtractor:
         Returns a layout constant or LAYOUT_GENERICO if none match.
         """
         t = page_text
+        if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
+            return LAYOUT_SULSEG_COBRANCA
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
         if re.search(r'03\.292\.008/0001-67|03\.292\.008', t, re.IGNORECASE):
@@ -570,6 +575,13 @@ class SPPdfExtractor:
             m_top = re.search(r'N[ºo]\s*(\d+)', t, re.IGNORECASE)
             if m_top: return m_top.group(1).strip()
 
+        if self.layout == LAYOUT_SULSEG_COBRANCA:
+            # "NOTA DE COBRANÇA Nº\n\n20260000012366" — evita casar com o campo
+            # "DADOS DO DOCUMENTO / NÚMERO" mais abaixo, que é o número de
+            # cadastro do cliente na SUL&SEG, não o número da nota.
+            m = re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A\s+N[ºo]\s*[\n\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_GUINCHO_CIDADE:
             m = re.search(r'FATURA\s+DE\s+LOCA[CÇ][AÃ]O\s*[\n\s]*N[ºo]\s*[:\s]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
@@ -746,6 +758,19 @@ class SPPdfExtractor:
                 if texto:
                     return texto
 
+        if self.layout == LAYOUT_SULSEG_COBRANCA:
+            # A descrição do item ("LOCAÇÃO DO EQUIPAMENTO DE ALARME") sai, no
+            # texto do pdfminer, ANTES do cabeçalho da tabela ("DESCRIÇÃO
+            # QUANTIDADE VALOR UNITÁRIO VALOR TOTAL") — mesma inversão de ordem
+            # de outros layouts em grade. Ancoramos em "ISENTO" (Inscrição
+            # Estadual do tomador, que sempre precede o item nesta nota) e
+            # paramos antes da quantidade + valor unitário que seguem.
+            m = re.search(r'ISENTO\s*\n+(.+?)\n+\d+\s*\n+R\$', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                texto = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if texto:
+                    return texto
+
         if self.layout == LAYOUT_CAMPINAS:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO (...)" até o próximo marcador
             # (dados bancários / documento / tributação).
@@ -881,7 +906,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA):
             return "0601"
 
         if self.layout == LAYOUT_CAMPINAS:
@@ -938,7 +963,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA):
             return "FATURA"
 
         if self.layout == LAYOUT_OSASCO_REPASSE:
@@ -1104,6 +1129,75 @@ class SPPdfExtractor:
             if re.search(r'CPF\s*/?\s*CNPJ\s*/?\s*NIF[ \t]+(?:Inscri|Telefone)', t, re.IGNORECASE):
                 return self._extrair_entidade_campinas(is_prestador)
             return self._extrair_entidade_campinas_digital(is_prestador)
+
+        if self.layout == LAYOUT_SULSEG_COBRANCA:
+            if is_intermediario:
+                return None
+            if is_prestador:
+                # Emitente fixo (mesma empresa/IM/IBGE já validados no layout
+                # de NFS-e da SUL&SEG — a nota de cobrança traz Inscrição
+                # Estadual em vez da Municipal, então reaproveitamos a IM
+                # já confirmada). Endereço conforme impresso nesta nota.
+                mun_cod = _ibge_resolver.extract_and_validate("Lauro de Freitas", "BA", city_hint="Lauro de Freitas")
+                return Entidade(
+                    cnpj_cpf="18294792000110",
+                    razao_social="SUL&SEG SERVICOS DE MANUT ELET EIRELI - ME",
+                    inscricao_municipal="0010030574",
+                    endereco=Endereco(
+                        logradouro="AV. BRIGADEIRO ALBERTO COSTA MATOS",
+                        numero="103",
+                        bairro="Aracuí",
+                        codigo_municipio=mun_cod,
+                        municipio="Lauro de Freitas",
+                        uf="BA",
+                        cep="42702010",
+                    ),
+                )
+            else:
+                m_label = re.search(r'C\.N\.P\.J\.?\s*/\s*C\.P\.F\.', t, re.IGNORECASE)
+                janela = t[m_label.end(): m_label.end() + 400] if m_label else t
+
+                m_raz = re.search(r'\d+\s*\n+([A-Z][A-Z0-9 .,&-]+?)\s*\n', janela)
+                razao = m_raz.group(1).strip() if m_raz else "Tomador Não Identificado"
+
+                m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', janela)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
+
+                m_end = re.search(r'ENDERE[CÇ]O\s*\n+(.+?)\n+MUNIC[IÍ]PIO', janela, re.IGNORECASE | re.DOTALL)
+                linhas_end = [ln.strip() for ln in m_end.group(1).split('\n') if ln.strip()] if m_end else []
+                logradouro = linhas_end[0] if linhas_end else "Não informado"
+                complemento = None
+                if len(linhas_end) > 1:
+                    complemento = ', '.join(linhas_end[1:]).strip() or None
+
+                m_mun = re.search(r'MUNIC[IÍ]PIO\s*\n+(.+?)\n', janela, re.IGNORECASE)
+                municipio = m_mun.group(1).strip() if m_mun else "Não informado"
+
+                m_bairro = re.search(r'BAIRRO\s*\n+(.+?)\n', janela, re.IGNORECASE)
+                bairro = m_bairro.group(1).strip() if m_bairro else "Não informado"
+
+                m_cep = re.search(r'CEP\s*\n+([\d-]+)', janela, re.IGNORECASE)
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else "00000000"
+
+                m_uf = re.search(r'\bUF\s*\n+([A-Z]{2})', janela, re.IGNORECASE)
+                uf = m_uf.group(1).strip() if m_uf else "BA"
+
+                mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao,
+                    endereco=Endereco(
+                        logradouro=logradouro,
+                        numero="S/N",
+                        complemento=complemento,
+                        bairro=bairro,
+                        codigo_municipio=mun_cod,
+                        municipio=municipio,
+                        uf=uf,
+                        cep=cep,
+                    ),
+                )
 
         if self.layout == LAYOUT_CPE_LOCACAO:
             if is_prestador:
@@ -2715,6 +2809,17 @@ class SPPdfExtractor:
                 valor_liquido_nfse=liquido,
             )
 
+        if self.layout == LAYOUT_SULSEG_COBRANCA:
+            # Nota de cobrança de locação de bens móveis — "OPERAÇÃO NÃO SUJEITA
+            # AO I.S.S. DE ACORDO COM A LEI COMPLEMENTAR 116/03." (base/ISS/
+            # alíquota zerados, como nos demais layouts de locação).
+            m_val = re.search(r'VALOR\s+L[IÍ]QUIDO\s+DA\s+NOTA\s+DE\s+COBRAN[ÇC]A\s*[\n\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
         if self.layout == LAYOUT_CPE_LOCACAO:
             m_val = re.search(r'\bValor\b\s*[:\s\n]+([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
@@ -3464,7 +3569,7 @@ class SPPdfExtractor:
                 relax("GUINCHO CIDADE"), relax("B.F. SERVICOS AMBIENTAIS"),
                 relax("B.F. SERVIÇOS AMBIENTAIS"), relax("LMR ENGENHARIA"),
                 relax("LTR ENGENHARIA"), relax("03.292.008"), relax("GERACAO E ENERGIA"),
-                relax("LOCONTAINERS"), relax("VIDAL LOCACAO"),
+                relax("LOCONTAINERS"), relax("VIDAL LOCACAO"), relax("NOTA DE COBRANÇA"),
                 relax("NOTA FISCAL DE FATURA DE SERVICO DE COMUNICACAO"),
                 relax("NOTA FISCAL DE FATURA DE SERVIÇO DE COMUNICAÇÃO"),
             ]
