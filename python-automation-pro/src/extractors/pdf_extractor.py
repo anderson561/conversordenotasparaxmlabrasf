@@ -64,6 +64,7 @@ LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS-e eNotas Gateway, Lauro de Freitas/BA)
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
+LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
 
 
 # Etiquetas para Identificação de Entidades
@@ -203,10 +204,15 @@ class SPPdfExtractor:
             return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
+        # ARMAC (locadora específica, fatura escaneada) — precede o genérico de
+        # locação por ter estrutura própria (blocos "Dados do Locador/Tomador",
+        # tabela multi-item) que exige extração dedicada + re-OCR em zoom alto.
+        if re.search(r'00\.?242\.?184', t) or (re.search(r'\bARMAC\b', t, re.IGNORECASE) and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
+            return LAYOUT_ARMAC_LOCACAO
         # Fatura de Locação genérica: DEVE ficar por último, depois de todos os
         # emitentes específicos de locação (CPE, Guincho, BF, LMR, Geração,
-        # Locontainers, SUL&SEG) e de todos os layouts municipais — cada um
-        # desses ganha por marca própria; só cai aqui uma fatura de locação de
+        # Locontainers, SUL&SEG, ARMAC) e de todos os layouts municipais — cada
+        # um desses ganha por marca própria; só cai aqui uma fatura de locação de
         # locadora ainda não catalogada (ex.: LOC BAHIA). Ver gotcha Forma A
         # (ordem da cadeia de detecção).
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
@@ -272,6 +278,8 @@ class SPPdfExtractor:
             return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
+        if re.search(r'00\.?242\.?184', t) or (re.search(r'\bARMAC\b', t, re.IGNORECASE) and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
+            return LAYOUT_ARMAC_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
             return LAYOUT_FATURA_LOCACAO_GENERICA
         return LAYOUT_GENERICO
@@ -406,6 +414,13 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
+        if self.layout == LAYOUT_ARMAC_LOCACAO:
+            # "Data Documento: | 10.07.2026" (datas com ponto no OCR da ARMAC).
+            m = re.search(r'Data\s+Documento\s*:?\s*\|?\s*(\d{2}[./]\d{2}[./]\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1).replace('.', '/'))
+                if res: return res
+
         if self.layout == LAYOUT_CPE_LOCACAO:
             m = re.search(r'Data\s+de\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -564,6 +579,12 @@ class SPPdfExtractor:
 
     def _extrair_numero(self) -> str:
         t = self.raw_text
+
+        if self.layout == LAYOUT_ARMAC_LOCACAO:
+            # "Fatura de Locação Número Fatura: | 90109539" (o "|" é ruído de
+            # borda de célula do OCR).
+            m = re.search(r'N[úu]mero\s+Fatura\s*:?\s*\|?\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
             # "NÚMERO:\n\n788" — ancorado no rótulo próprio, evitando casar com
@@ -833,6 +854,21 @@ class SPPdfExtractor:
                 if texto:
                     return texto
 
+        if self.layout == LAYOUT_ARMAC_LOCACAO:
+            # Tabela multi-item: cada linha começa com um código de item
+            # (ex.: "ES01501", "RC00824", "MO00199") seguido da descrição do
+            # equipamento e das datas de locação. Capturamos só a descrição
+            # (entre o código e a 1ª data), deduplicando itens repetidos.
+            itens = []
+            for ln in t.split('\n'):
+                m = re.match(r'^[A-Za-z][A-Za-z0-9]{4,}\s+(.+?)\s+\d{2}[.\s]\d{2}[.\s/]*\d{4}', ln.strip())
+                if m:
+                    desc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                    if desc and desc not in itens:
+                        itens.append(desc)
+            if itens:
+                return " | ".join(itens)
+
         if self.layout == LAYOUT_CAMPINAS:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO (...)" até o próximo marcador
             # (dados bancários / documento / tributação).
@@ -968,7 +1004,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO):
             return "0601"
 
         if self.layout == LAYOUT_CAMPINAS:
@@ -1033,7 +1069,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO):
             return "FATURA"
 
         if self.layout == LAYOUT_OSASCO_REPASSE:
@@ -1212,6 +1248,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_fatura_locacao_generica(is_prestador)
+
+        if self.layout == LAYOUT_ARMAC_LOCACAO:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_armac(is_prestador)
 
         if self.layout == LAYOUT_SULSEG_COBRANCA:
             if is_intermediario:
@@ -2556,6 +2597,90 @@ class SPPdfExtractor:
             telefone=telefone,
         )
 
+    def _extrair_entidade_armac(self, is_prestador: bool) -> Entidade:
+        """Extrai locador/tomador da Fatura de Locação da ARMAC (OCR zoom4/PSM6).
+
+        Estrutura: blocos "Dados do Locador" e "Dados do Tomador", cada um com
+        "Razão Social:", "CNPJ[/CPF]:" e duas linhas "Endereço:" — a 1ª é
+        logradouro+número[+complemento], a 2ª é "CEP Cidade - UF". O OCR insere
+        ruído de borda de célula ("|", "*", "e", "Es:") logo após os rótulos,
+        que limpamos; o CNPJ do locador vem com máscara e o do tomador cru
+        (14 dígitos). A nota ARMAC não traz bairro em campo próprio.
+        """
+        t = self.raw_text
+
+        m_loc = re.search(r'Dados\s+do\s+Locador', t, re.IGNORECASE)
+        m_tom = re.search(r'Dados\s+do\s+Tomador', t, re.IGNORECASE)
+        fim_loc = m_tom.start() if m_tom else len(t)
+        bloco_loc = t[m_loc.end():fim_loc] if m_loc else t
+        resto = t[m_tom.end():] if m_tom else t
+        # Fim do bloco do tomador: início da tabela de itens ou das observações.
+        m_fim = re.search(
+            r'\n[A-Za-z][A-Za-z0-9]{4,}\s+.+\d{2}[.\s]\d{2}[.\s/]*\d{4}|Observa[çc][õo]es|Consultor|Total\s+antes',
+            resto, re.IGNORECASE)
+        bloco_tom = resto[:m_fim.start()] if m_fim else resto
+
+        bloco = bloco_loc if is_prestador else bloco_tom
+        placeholder = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        def _limpa(v: str) -> str:
+            return re.sub(r'^[^0-9A-Za-zÀ-Úà-ú]+', '', v).strip()
+
+        m_raz = re.search(r'Raz[ãa]o\s+Social\s*:?\s*(.+)', bloco, re.IGNORECASE)
+        razao = _limpa(m_raz.group(1)) if m_raz else ''
+        razao = razao or placeholder
+
+        m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', bloco) or re.search(r'\b(\d{14})\b', bloco)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        enderecos = [_limpa(e) for e in re.findall(r'Endere[çc]o\s*:?\s*(.+)', bloco, re.IGNORECASE)]
+        street_raw, cep, cidade, uf = '', '', 'Não informado', 'BA'
+        for e in enderecos:
+            m_cml = re.search(r'(\d{5}-?\d{3})\s+(.+?)\s*-\s*([A-Z]{2})\b', e)
+            if m_cml:
+                cep = re.sub(r'\D', '', m_cml.group(1))
+                cidade = m_cml.group(2).strip()
+                uf = m_cml.group(3).upper()
+            else:
+                street_raw = e
+
+        # Corta ruído de OCR antes do início real do logradouro (ex.: "Es: - RUA
+        # ...") ancorando num tipo de logradouro conhecido.
+        m_st = re.search(
+            r'\b(RUA|R\.|AV|AVENIDA|ESTRADA|EST\.|TRAVESSA|TRV|ALAMEDA|AL\.|PRA[CÇ]A|ROD|RODOVIA)\b.*',
+            street_raw, re.IGNORECASE)
+        if m_st:
+            street_raw = m_st.group(0).strip()
+
+        logradouro, numero, complemento = street_raw or 'Não informado', 'S/N', None
+        partes = [p.strip() for p in street_raw.split(',')]
+        if partes and partes[0]:
+            m_num = re.search(r'(.+?)\s+(\d+)\s*$', partes[0])
+            if m_num:
+                logradouro = m_num.group(1).strip()
+                numero = m_num.group(2)
+            else:
+                logradouro = partes[0]
+            if len(partes) > 1:
+                complemento = ', '.join(partes[1:]).strip() or None
+
+        mun_cod = _ibge_resolver.extract_and_validate(cidade, uf, city_hint=cidade, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=numero,
+                complemento=complemento,
+                bairro='Não informado',
+                codigo_municipio=mun_cod,
+                municipio=cidade,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -3149,6 +3274,17 @@ class SPPdfExtractor:
                 valor_liquido_nfse=liquido if liquido else val_serv,
             )
 
+        if self.layout == LAYOUT_ARMAC_LOCACAO:
+            # Fatura de locação de bens móveis (não sujeita a ISS). O "Valor
+            # total" (ex.: "Valortotal: 103.640,00", às vezes colado no OCR) é o
+            # total já com seguro/acréscimos, que é o valor faturado.
+            m = re.search(r'Valor\s*total\s*:?\s*\|?\s*R?\$?\s*([\d.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m.group(1)) if m else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
         if self.layout == LAYOUT_SULSEG_COBRANCA:
             # Nota de cobrança de locação de bens móveis — "OPERAÇÃO NÃO SUJEITA
             # AO I.S.S. DE ACORDO COM A LEI COMPLEMENTAR 116/03." (base/ISS/
@@ -3714,6 +3850,17 @@ class SPPdfExtractor:
                     if header_text.strip():
                         best_text = f"{header_text}\n{best_text}"
 
+                # ARMAC (Fatura de Locação escaneada): a leitura padrão (3x, PSM
+                # automático) embaralha a grade multi-item e perde a linha
+                # "Valor total" e os blocos de entidade. Reprocessar a página
+                # inteira em zoom 4x com PSM 6 (bloco único) recupera tudo de
+                # forma limpa (validado contra a nota real 90109539) — trocamos o
+                # texto inteiro, pois é estritamente melhor para esta página.
+                if re.search(r'00\.?242\.?184', best_text) or (re.search(r'\bARMAC\b', best_text, re.IGNORECASE) and re.search(r'FATURA\s+DE\s+LOCA', best_text, re.IGNORECASE)):
+                    armac_text = self._ocr_armac(page)
+                    if armac_text.strip():
+                        best_text = armac_text
+
                 return best_text
             finally:
                 doc.close()
@@ -3722,6 +3869,27 @@ class SPPdfExtractor:
             return ""
         except Exception as e:
             print(f"[AVISO] Falha ao executar OCR na página {page_num + 1}: {e}")
+            return ""
+
+    @staticmethod
+    def _ocr_armac(page) -> str:
+        """Reprocessa a página inteira da Fatura de Locação da ARMAC em zoom 4x
+        com PSM 6 (assume um único bloco uniforme de texto). A leitura padrão
+        (3x, PSM automático) trata a grade multi-item de equipamentos como
+        colunas soltas e embaralha os valores, além de perder a linha
+        "Valor total" e colar os blocos "Dados do Locador/Tomador". Validado
+        contra a nota real 90109539: recupera "Valor total: 103.640,00", as
+        datas, os dois CNPJs e os endereços de forma consistente."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 6')
+        except Exception:
             return ""
 
     @staticmethod

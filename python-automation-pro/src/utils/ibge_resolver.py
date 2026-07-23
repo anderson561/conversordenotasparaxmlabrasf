@@ -50,6 +50,8 @@ class IBGEResolver:
         "SALVADOR": "2927408",
         "SAO PAULO": "3550308", "SÃO PAULO": "3550308",
         "RIO DE JANEIRO": "3304557",
+        "VARGEM GRANDE PAULISTA": "3556453",
+        "POJUCA": "2925303",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
