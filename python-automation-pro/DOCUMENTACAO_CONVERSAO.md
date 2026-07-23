@@ -6,7 +6,7 @@ Este documento detalha os layouts e formatos suportados pelo conversor.
 
 ## Layouts Suportados (PDF → XML)
 
-O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **25 layouts** ao todo, agrupados abaixo por tipo. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
+O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **31 layouts** ao todo (30 específicos + o genérico de fallback), agrupados abaixo por tipo. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
 
 > **Nota sobre OCR:** o texto pós-OCR (e às vezes até o de PDF com texto embutido) diverge do que parece "óbvio" na imagem — troca de caracteres, glifos ilegíveis, colunas intercaladas. As regras por layout são propositalmente tolerantes a esses ruídos.
 
@@ -70,7 +70,7 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 ### 12. Ribeirão Pires/SP — `ribeirao_pires_sp`
 - **Cabeçalho**: "Ribeirão Pires"
 
-### 13. Campinas/SP — `campinas_sp` ⭐ **NOVO**
+### 13. Campinas/SP — `campinas_sp`
 - **Sistema**: NFSe Campinas (Secretaria Municipal de Finanças de Campinas).
 - **Detecção**: "NFSe Campinas", "Prefeitura Municipal Campinas" ou "Nota Fiscal de Serviços eletrônica de Campinas".
 - **Número/Série**: rótulo `Número / Série`, valor no formato `NNNN/L` (ex.: `1712/E` → `1712`).
@@ -86,48 +86,78 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Competência**: Rótulos `Competência da NFS-e` (aceita `MM/YYYY` e `DD/MM/YYYY`) com regra de prioridade sobre a *Data/Hora da Emissão* em caso de conflitos.
 - **Entidades**: Suporte avançado a extração segmentada para **Prestador**, **Tomador** e **Intermediário do Serviço**, isolando perfeitamente seus respectivos CNPJs e controlando contaminações cruzadas quando campos vêm indicados como "NÃO IDENTIFICADO".
 
+### 15. Lauro de Freitas/BA — `lauro_de_freitas_ba`
+- **Detecção**: "MUNICÍPIO DE LAURO DE FREITAS" ou domínio `laurodefreitas.ba.gov.br`.
+- **Item de serviço**: código municipal de 6 dígitos (item.subitem LC116 + subitem municipal, ex.: `110201`) → usamos os 4 primeiros (`1102`).
+- **⚠️ Campos deslocados pelo pdfminer**: Município/UF/E-mail do **prestador** saem *depois* do cabeçalho "TOMADOR DE SERVIÇOS" (mas antes do nome do tomador). Extração dedicada particiona o texto em 3 blocos pelos cabeçalhos de seção para o tomador não herdar o município/e-mail do prestador.
+
+### 16. Iaçu/BA — `iacu_nfse`
+- **Sistema**: Prefeitura Municipal de Iaçu/BA via plataforma **nfservico.com.br** (NFS-e tributada, escaneada → OCR).
+- **Detecção**: "PREFEITURA MUNICIPAL DE IAÇU" (tolerante ao "ç" corrompido no OCR) ou `nfservico.com.br/iacu`. Específico do município — **não** casa pela marca genérica da plataforma, para não colidir com outros municípios do mesmo SaaS.
+- **⚠️ Caixa de cabeçalho + QR**: Número da nota / Data e hora / Código de Verificação ficam ilegíveis na leitura de página inteira (caixa pequena ao lado de um QR Code). Recorte dedicado do canto superior direito em zoom alto + PSM 6 (`_ocr_header_box_iacu`) recupera os três campos, prependido ao texto principal (mesmo padrão do Salvador).
+- **Item de serviço**: item LC116 no formato `7.02` → `0702`.
+- **Valores**: NFS-e **tributada** (ISS real, ex.: 3% sobre a base) — grade "Valor total das deduções / Base de cálculo / Alíquota / Valor do ISS / Crédito"; base/alíquota/ISS espelhados da face (diferente da família de locação).
+- **Entidades**: endereço em linha única (`RUA X N, - BAIRRO - CEP: NNNNNNNN - CIDADE - UF`); parser ignora o ruído do carimbo de recebimento intercalado no bloco do tomador (o CNPJ correto é o primeiro de 14 dígitos).
+
 ### Faturas de locação / serviços específicos
 
 Layouts de emissores fixos (a razão social e o endereço do prestador são conhecidos e, em vários casos, fixados no código). Geralmente `CodigoVerificacao = "FATURA"` e item de serviço `0601` (locação de bens móveis).
 
-### 15. Localiza — `localiza_fatura`
+### 17. Localiza — `localiza_fatura`
 - Faturas de locação/revenda de serviços veiculares da Localiza Rent A Car.
 - Identificado por "LOCALIZA RENT A CAR S/A" ou "FATURA / DUPLICATA".
 
-### 16. CPE Tecnologia — `cpe_locacao`
+### 18. CPE Tecnologia — `cpe_locacao`
 - Fatura de locação; detecção por "CPE BAHIA" ou "cpe tecnologia".
 
-### 17. Guincho Cidade — `guincho_cidade`
+### 19. Guincho Cidade — `guincho_cidade`
 - Fatura de locação; detecção por "GUINCHO CIDADE".
 
-### 18. B.F. Serviços Ambientais — `bf_ambientais`
+### 20. B.F. Serviços Ambientais — `bf_ambientais`
 - Fatura de locação; detecção por "B.F. SERVIÇOS AMBIENTAIS" (com/sem cedilha).
 
-### 19. LMR Engenharia — `lmr_engenharia`
+### 21. LMR Engenharia — `lmr_engenharia`
 - Fatura/duplicata; detecção por "LMR ENGENHARIA" (tolerante a OCR: "LTR"/"L.M.R.").
 
-### 20. Geração & Energia — `geracao_energia`
+### 22. Geração & Energia — `geracao_energia`
 - Fatura de locação; detecção pelo CNPJ `03.292.008/0001-67`.
 
-### 21. Locontainers — `locontainers`
+### 23. Locontainers — `locontainers`
 - Locação de containers (Vidal Locação); detecção por "LOCONTAINERS", "VIDAL LOCAÇÃO" ou CNPJ `00.111.704`.
+
+### 24. SUL&SEG — Nota de Cobrança — `sulseg_cobranca`
+- **Nota de Cobrança privada** de locação de bens móveis (equipamento de alarme), distinta da NFS-e prefeitural da mesma empresa. Traz "OPERAÇÃO NÃO SUJEITA AO I.S.S.".
+- Detecção por "NOTA DE COBRANÇA" + CNPJ da emitente (`18.294.792`). Prestador fixo; tomador extraído. Número ancorado em "NOTA DE COBRANÇA Nº" (evita colidir com o rótulo genérico "NÚMERO").
+
+### 25. Fatura de Locação Genérica — `fatura_locacao_generica`
+- Cobre **qualquer** "FATURA DE LOCAÇÃO" ainda não catalogada por emissor específico, parseando **locadora e locatário direto do texto** (sem hardcode).
+- Detecção ancorada em "FATURA DE LOCAÇÃO", posicionada **por último** nas duas cadeias (depois de todos os emissores específicos e layouts municipais) para não "roubar" a detecção deles.
+
+### 26. ARMAC — `armac_locacao`
+- Fatura de locação de equipamentos pesados da ARMAC (CNPJ `00.242.184`), **PDF 100% imagem** (escaneado), com **tabela multi-item**.
+- Detecção por CNPJ/"ARMAC" **antes** do genérico de locação (estrutura própria: blocos "Dados do Locador/Tomador", grade de equipamentos). A leitura padrão embaralha a grade; um **re-OCR dedicado da página inteira em zoom 4x + PSM 6** (`_ocr_armac`) recupera "Valor total", datas, CNPJs e endereços.
 
 ### Outros documentos fiscais
 
-### 22. NF-e de Serviço de Comunicação (Telecom) — `telecom_comunicacao`
+### 27. NF-e de Serviço de Comunicação (Telecom) — `telecom_comunicacao`
 - **Cabeçalho**: "NOTA FISCAL DE FATURA DE SERVIÇO DE COMUNICAÇÃO".
 - CNPJ do emitente decodificado da chave de acesso de 44 dígitos; total via "TOTAL A PAGAR"; BC/alíquota de ICMS mapeados.
 
-### 23. Osasco/SP — NF-R de Repasse — `osasco_nfr_repasse`
+### 28. Osasco/SP — NF-R de Repasse — `osasco_nfr_repasse`
 - **Cabeçalho**: "Nota Fiscal Eletrônica de Repasse" ou domínio `nfe.osasco.gov.br` (ex.: iFood Benefícios).
 - Campos no formato "Rótulo: valor"; regime especial (sem BC/alíquota/ISS discriminados); competência via "Ref. Fiscal MM/AAAA".
 
-### 24. ISBET — `isbet_recibo`
+### 29. PASSWORD / eNotas Gateway — `password_enotas`
+- NFS-e **tributada** (ISS 3%, Simples Nacional) emitida via **eNotas Gateway** pelo prestador PASSWORD - SISTEMAS ELETRONICOS LTDA (Lauro de Freitas/BA). Não faz parte da família "locação não sujeita a ISS".
+- Detecção ancorada especificamente no **CNPJ do emitente** (`04.021.023`), para não colidir com futuras notas de outros emitentes que usem o mesmo gateway.
+- Código do serviço LC116 `15.03 / 1503` → `1503`; "VALOR DO ISS" impresso como "-" (recolhido via DAS do Simples) → base/alíquota preenchidas, ISS = 0,00.
+
+### 30. ISBET — `isbet_recibo`
 - **Cabeçalho**: "NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" ou "ISBET".
 
 ### Fallback
 
-### 25. Genérico — `generico`
+### 31. Genérico — `generico`
 - Fallback para layouts de prefeituras ainda não mapeadas. Usa heurísticas universais de busca de tags de XML padrão ABRASF.
 
 ---
@@ -201,4 +231,4 @@ O sistema conta com um motor de fatiamento inteligente que suporta:
 
 ---
 
-*Documentação atualizada em: 2026-07-16 (25 layouts; adicionado Campinas/SP).*
+*Documentação atualizada em: 2026-07-23 (31 layouts; adicionados Lauro de Freitas/BA, Iaçu/BA, SUL&SEG Cobrança, Fatura de Locação Genérica, ARMAC e PASSWORD/eNotas).*
