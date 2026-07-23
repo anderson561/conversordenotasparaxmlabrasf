@@ -63,6 +63,7 @@ LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretari
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS-e eNotas Gateway, Lauro de Freitas/BA)
+LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 
 
 # Etiquetas para Identificação de Entidades
@@ -202,6 +203,14 @@ class SPPdfExtractor:
             return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
+        # Fatura de Locação genérica: DEVE ficar por último, depois de todos os
+        # emitentes específicos de locação (CPE, Guincho, BF, LMR, Geração,
+        # Locontainers, SUL&SEG) e de todos os layouts municipais — cada um
+        # desses ganha por marca própria; só cai aqui uma fatura de locação de
+        # locadora ainda não catalogada (ex.: LOC BAHIA). Ver gotcha Forma A
+        # (ordem da cadeia de detecção).
+        if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
+            return LAYOUT_FATURA_LOCACAO_GENERICA
         return LAYOUT_GENERICO
 
     def _detect_layout_page(self, page_text: str) -> str:
@@ -263,6 +272,8 @@ class SPPdfExtractor:
             return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
+        if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
+            return LAYOUT_FATURA_LOCACAO_GENERICA
         return LAYOUT_GENERICO
 
     # ------------------------------------------------------------------
@@ -554,6 +565,12 @@ class SPPdfExtractor:
     def _extrair_numero(self) -> str:
         t = self.raw_text
 
+        if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
+            # "NÚMERO:\n\n788" — ancorado no rótulo próprio, evitando casar com
+            # "CONTRATO: 702" (número do contrato, não da fatura).
+            m = re.search(r'N[ÚU]MERO\s*:\s*[\n\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
             # "NÚMERO DA NOTA\n\n202600000038558" — ancorado no rótulo próprio
             # para não casar com o "RPS 38591" do cabeçalho nem com a inscrição
@@ -805,6 +822,17 @@ class SPPdfExtractor:
                 if texto:
                     return texto
 
+        if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
+            # "1 - CGB-0001   CORTADOR DE GRAMA A BATERIA" — nº do item, código
+            # interno do produto e descrição colados na mesma linha, logo após
+            # o cabeçalho da tabela ("QTDE - DESCRIÇÃO ... VALOR").
+            m = re.search(r'\n\s*\d+\s*-\s*([A-Z0-9][A-Z0-9\-]*)\s+([^\n]+)', t)
+            if m:
+                codigo, desc = m.group(1).strip(), m.group(2).strip()
+                texto = f"{codigo} {desc}".strip()
+                if texto:
+                    return texto
+
         if self.layout == LAYOUT_CAMPINAS:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO (...)" até o próximo marcador
             # (dados bancários / documento / tributação).
@@ -940,7 +968,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA):
             return "0601"
 
         if self.layout == LAYOUT_CAMPINAS:
@@ -1005,7 +1033,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA):
             return "FATURA"
 
         if self.layout == LAYOUT_OSASCO_REPASSE:
@@ -1179,6 +1207,11 @@ class SPPdfExtractor:
             if re.search(r'CPF\s*/?\s*CNPJ\s*/?\s*NIF[ \t]+(?:Inscri|Telefone)', t, re.IGNORECASE):
                 return self._extrair_entidade_campinas(is_prestador)
             return self._extrair_entidade_campinas_digital(is_prestador)
+
+        if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_fatura_locacao_generica(is_prestador)
 
         if self.layout == LAYOUT_SULSEG_COBRANCA:
             if is_intermediario:
@@ -2424,6 +2457,105 @@ class SPPdfExtractor:
             email=email,
         )
 
+    def _extrair_entidade_fatura_locacao_generica(self, is_prestador: bool) -> Entidade:
+        """Extrai locadora/locatário do layout de Fatura de Locação genérico
+        (qualquer locadora ainda não catalogada com detecção própria — ver
+        LAYOUT_FATURA_LOCACAO_GENERICA).
+
+        Estrutura de texto (pdfminer, PDF digital, sem OCR): dois blocos com o
+        mesmo vocabulário de rótulos ("Razão Social"/"Nome/Razão Social",
+        "Endereço", "Cidade", "Telefone", "E-mail", "CNPJ", "Estado"),
+        delimitados pelos cabeçalhos "LOCADORA"/"LOCATÁRIO" e pelo início da
+        tabela de itens ("QTDE - DESCRIÇÃO"). Quando um campo (Telefone,
+        Estado) não tem valor logo após o rótulo na mesma linha, o pdfminer
+        empurra o valor para depois do próximo rótulo vazio (ex.: "Estado:\\n
+        \\nE-mail:\\n\\nBA" — o "BA" é o valor de Estado, deslocado) — mesmo
+        padrão de vazamento de campo já visto no layout Lauro de Freitas
+        (Forma E do gotcha de colisão de layout).
+        """
+        t = self.raw_text
+
+        m_locadora = re.search(r'\bLOCADORA\b', t, re.IGNORECASE)
+        m_locatario = re.search(r'\bLOCAT[ÁA]RIO\b', t, re.IGNORECASE)
+        m_tabela = re.search(r'QTDE\s*-\s*DESCRI[ÇC][ÃA]O', t, re.IGNORECASE)
+
+        fim_locadora = m_locatario.start() if m_locatario else len(t)
+        bloco_locadora = t[m_locadora.end():fim_locadora] if m_locadora else ''
+        inicio_locatario = m_locatario.end() if m_locatario else 0
+        fim_locatario = m_tabela.start() if m_tabela else len(t)
+        bloco_locatario = t[inicio_locatario:fim_locatario] if m_locatario else t
+
+        bloco = bloco_locadora if is_prestador else bloco_locatario
+        placeholder = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        def _campo(rotulo: str) -> str:
+            m = re.search(rotulo + r'\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+            return m.group(1).strip() if m else ''
+
+        razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s+Social') or _campo(r'Raz[ãa]o\s+Social') or placeholder
+
+        endereco_raw = _campo(r'Endere[çc]o')
+        cep = ''
+        m_cep = re.search(r'CEP\s*:\s*([\d-]+)', endereco_raw, re.IGNORECASE)
+        if m_cep:
+            cep = re.sub(r'\D', '', m_cep.group(1))
+            endereco_raw = endereco_raw[:m_cep.start()].strip()
+
+        logradouro, numero, bairro, complemento = endereco_raw or 'Não informado', 'S/N', 'Não informado', None
+        m_num = re.search(r'N[ºo°]\s*(\d+)\s*(.*)$', endereco_raw, re.IGNORECASE)
+        if m_num:
+            logradouro = endereco_raw[:m_num.start()].strip() or 'Não informado'
+            numero = m_num.group(1)
+            resto_words = m_num.group(2).strip().split()
+            # Primeiro segmento após o número costuma ser um qualificador de
+            # unidade (galpão/sala/loja/...), não o bairro propriamente dito —
+            # confirmado com a mesma tomadora (FOLHAS URBANAS) no layout
+            # PASSWORD/eNotas, onde "GALPAO" é complemento e "PITANGUEIRAS" é
+            # o bairro real.
+            complemento_keywords = {
+                'GALPAO', 'GALPÃO', 'SALA', 'LOJA', 'APTO', 'APARTAMENTO',
+                'BLOCO', 'CASA', 'ANDAR', 'TERREO', 'TÉRREO', 'FUNDOS', 'COBERTURA',
+            }
+            if resto_words and resto_words[0].upper() in complemento_keywords and len(resto_words) > 1:
+                complemento = resto_words[0]
+                bairro = ' '.join(resto_words[1:])
+            elif resto_words:
+                bairro = ' '.join(resto_words)
+
+        cidade = _campo(r'Cidade') or 'Não informado'
+
+        uf = ''
+        m_uf_inline = re.search(r'Estado\s*:\s*([A-Z]{2})\b', bloco, re.IGNORECASE)
+        if m_uf_inline:
+            uf = m_uf_inline.group(1).upper()
+        else:
+            m_uf_orfao = re.search(r'\n\s*([A-Z]{2})\s*\n', bloco)
+            uf = m_uf_orfao.group(1) if m_uf_orfao else 'BA'
+
+        m_cnpj = re.search(r'CNPJ\s*:\s*([\d./-]+)', bloco, re.IGNORECASE)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        m_tel = re.search(r'Telefone\s*:?\s*\n*\s*(\(\d{2}\)\s*\d{4,5}-\d{4})', bloco, re.IGNORECASE)
+        telefone = m_tel.group(1) if m_tel else None
+
+        mun_cod = _ibge_resolver.extract_and_validate(cidade, uf, city_hint=cidade, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=cidade,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+            telefone=telefone,
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -3022,6 +3154,17 @@ class SPPdfExtractor:
             # AO I.S.S. DE ACORDO COM A LEI COMPLEMENTAR 116/03." (base/ISS/
             # alíquota zerados, como nos demais layouts de locação).
             m_val = re.search(r'VALOR\s+L[IÍ]QUIDO\s+DA\s+NOTA\s+DE\s+COBRAN[ÇC]A\s*[\n\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
+            # "Não é fato gerador do ISSQN a locação de bens móveis..." — mesmo
+            # tratamento da família de locação (base/alíquota/ISS zerados).
+            # "TOTAL: R$ 69,00" já é líquido (desconto/acréscimo aplicados).
+            m_val = re.search(r'TOTAL\s*:\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
