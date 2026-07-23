@@ -52,6 +52,7 @@ class IBGEResolver:
         "RIO DE JANEIRO": "3304557",
         "VARGEM GRANDE PAULISTA": "3556453",
         "POJUCA": "2925303",
+        "IACU": "2912707", "IAÇU": "2912707",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):

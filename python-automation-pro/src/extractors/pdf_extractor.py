@@ -65,6 +65,7 @@ LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Loc
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS-e eNotas Gateway, Lauro de Freitas/BA)
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
+LAYOUT_IACU_NFSE = 'iacu_nfse'  # Prefeitura Municipal de Iaçu/BA (plataforma nfservico.com.br) - NFS-e tributada, escaneada; caixa de cabeçalho via recorte dedicado
 
 
 # Etiquetas para Identificação de Entidades
@@ -204,6 +205,12 @@ class SPPdfExtractor:
             return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
+        # Iaçu/BA (plataforma nfservico.com.br) — específico do município (decidido
+        # com o usuário: NÃO casar por marca genérica da plataforma para evitar
+        # colisão com outros municípios do mesmo SaaS). O "ç" de IAÇU pode sair
+        # corrompido no OCR ("IA?U"), então toleramos até 2 chars entre "IA" e "U".
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U\b', t, re.IGNORECASE) or re.search(r'nfservico\.com\.br\S*iacu', t, re.IGNORECASE):
+            return LAYOUT_IACU_NFSE
         # ARMAC (locadora específica, fatura escaneada) — precede o genérico de
         # locação por ter estrutura própria (blocos "Dados do Locador/Tomador",
         # tabela multi-item) que exige extração dedicada + re-OCR em zoom alto.
@@ -278,6 +285,8 @@ class SPPdfExtractor:
             return LAYOUT_CAMPINAS
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U\b', t, re.IGNORECASE) or re.search(r'nfservico\.com\.br\S*iacu', t, re.IGNORECASE):
+            return LAYOUT_IACU_NFSE
         if re.search(r'00\.?242\.?184', t) or (re.search(r'\bARMAC\b', t, re.IGNORECASE) and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
             return LAYOUT_ARMAC_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
@@ -361,6 +370,14 @@ class SPPdfExtractor:
                 if m:
                     mes, ano = m.group(1).split('/')
                     result = datetime(int(ano), int(mes), 1)
+        elif layout == LAYOUT_IACU_NFSE:
+            # "- COMPETÊNCIA: 07/2026 (mês/ano)"
+            m = re.search(r'COMPET[EÊ]NCIA\s*:?\s*(\d{2})/(\d{4})', t, re.IGNORECASE)
+            if m:
+                try:
+                    result = datetime(int(m.group(2)), int(m.group(1)), 1)
+                except ValueError:
+                    result = None
         elif layout == LAYOUT_FEIRA:
             m = re.search(r'Fato\s+Gerador\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
@@ -419,6 +436,13 @@ class SPPdfExtractor:
             m = re.search(r'Data\s+Documento\s*:?\s*\|?\s*(\d{2}[./]\d{2}[./]\d{4})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1).replace('.', '/'))
+                if res: return res
+
+        if self.layout == LAYOUT_IACU_NFSE:
+            # "Data e hora de Emissão:\n\n10/07/2026 16:37:22" (recorte do cabeçalho).
+            m = re.search(r'Data\s+e\s+hora\s+de\s+Emiss[aã]o\s*:?\s*[\n\s]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
         if self.layout == LAYOUT_CPE_LOCACAO:
@@ -584,6 +608,13 @@ class SPPdfExtractor:
             # "Fatura de Locação Número Fatura: | 90109539" (o "|" é ruído de
             # borda de célula do OCR).
             m = re.search(r'N[úu]mero\s+Fatura\s*:?\s*\|?\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_IACU_NFSE:
+            # "Número da nota:\n\n2" — vindo do recorte dedicado do cabeçalho
+            # (_ocr_header_box_iacu), prependido ao texto. Ancorado no rótulo
+            # próprio; o valor pode ser um único dígito.
+            m = re.search(r'N[úu]mero\s+da\s+nota\s*:?\s*[\n\s]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
@@ -783,6 +814,14 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_IACU_NFSE:
+            # Bloco entre "DISCRIMINAÇÃO DOS SERVIÇOS" e "LOCAL DE PRESTAÇÃO DOS
+            # SERVIÇOS", em várias linhas; normalizamos os espaços numa linha só.
+            m = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS(.*?)LOCAL\s+DE\s+PRESTA[ÇC][ÃA]O', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc: return disc
+
         if self.layout == LAYOUT_SALVADOR:
             # O rótulo "DISCRIMINAÇÃO DOS SERVIÇOS" sai truncado/corrompido no
             # OCR (ex.: "DISCRIMINA! IÇoS"), então ancoramos só no prefixo
@@ -1015,6 +1054,13 @@ class SPPdfExtractor:
             if m:
                 return (m.group(1) + m.group(2))
 
+        if self.layout == LAYOUT_IACU_NFSE:
+            # "Item da lista de serviços:\n7.02 - Execução..." — código LC116 no
+            # formato N.NN; normalizamos para 4 dígitos (0702), como os demais.
+            m = re.search(r'Item\s+da\s+lista\s+de\s+servi[çc]os\s*:?\s*\n?\s*(\d{1,2})\.(\d{2})', t, re.IGNORECASE)
+            if m:
+                return m.group(1).zfill(2) + m.group(2)
+
         if self.layout == LAYOUT_SALVADOR:
             # "Item da Lista de Serviços:\n01714 - Advocacia." — a nota traz um
             # zero de preenchimento à esquerda do código LC 116 (17.14); removemos
@@ -1103,6 +1149,14 @@ class SPPdfExtractor:
             m = re.search(r'C[ÓO]DIGO\s+DE\s+VERIFICA[ÇC][ÃA]O\s*[\n\s]*([A-Z0-9]+)', t, re.IGNORECASE)
             if m:
                 return m.group(1).strip().upper()
+
+        if self.layout == LAYOUT_IACU_NFSE:
+            # "Código de Verificação:\n\nc5cae3fd79" (recorte do cabeçalho). É um
+            # hash alfanumérico minúsculo — preservamos exatamente como impresso
+            # (sem uppercase), pois é a chave de consulta de autenticidade.
+            m = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*:?\s*[\n\s]*([A-Za-z0-9]{6,})', t, re.IGNORECASE)
+            if m:
+                return m.group(1).strip()
 
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
@@ -1253,6 +1307,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_armac(is_prestador)
+
+        if self.layout == LAYOUT_IACU_NFSE:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_iacu(is_prestador)
 
         if self.layout == LAYOUT_SULSEG_COBRANCA:
             if is_intermediario:
@@ -2681,6 +2740,69 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_iacu(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da NFS-e de Iaçu/BA (plataforma nfservico.com.br).
+
+        Estrutura: blocos "PRESTADOR DE SERVIÇOS" e "TOMADOR DE SERVIÇOS", cada
+        um com "Nome/Razão Social:", "CPF/CNPJ:"/"Inscrição Municipal:" e um
+        "Endereço:" em linha única no formato "RUA X N, - BAIRRO - CEP: NNNNNNNN
+        - CIDADE - UF". O bloco do tomador vem contaminado com o texto de um
+        carimbo de recebimento (nome/cargo de quem recebeu); o parsing ancora em
+        rótulos e no formato fixo do endereço, ignorando esse ruído.
+        """
+        t = self.raw_text
+        m_prest = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        m_tom = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        m_disc = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+
+        if is_prestador:
+            ini = m_prest.end() if m_prest else 0
+            fim = m_tom.start() if m_tom else len(t)
+        else:
+            ini = m_tom.end() if m_tom else 0
+            fim = m_disc.start() if m_disc else len(t)
+        bloco = t[ini:fim]
+        placeholder = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        m_raz = re.search(r'Nome\s*/?\s*Raz[ãa]o\s+Social\s*:?\s*[\n\s]*(.+)', bloco, re.IGNORECASE)
+        razao = m_raz.group(1).strip() if m_raz else placeholder
+        razao = razao or placeholder
+
+        m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', bloco) or re.search(r'\b(\d{14})\b', bloco)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        logradouro, numero, bairro = 'Não informado', 'S/N', 'Não informado'
+        cep, municipio, uf = '00000000', 'Não informado', 'BA'
+        # "RUA JUVENTINO MEDRADO 94, - BOIADEIRA - CEP: 46860000 - IACU - BA"
+        # (o logradouro não cruza linha: char class sem \n).
+        m_end = re.search(
+            r'([A-Za-zÀ-Úà-ú][A-Za-zÀ-Úà-ú0-9 .\']+?)\s+(\d+|S/?N),?\s*-\s*'
+            r'([^\n-]+?)\s*-\s*CEP\s*:?\s*(\d{5}-?\d{3})\s*-\s*([^\n-]+?)\s*-\s*([A-Z]{2})\b',
+            bloco, re.IGNORECASE)
+        if m_end:
+            logradouro = m_end.group(1).strip()
+            numero = m_end.group(2).strip()
+            bairro = m_end.group(3).strip()
+            cep = re.sub(r'\D', '', m_end.group(4))
+            municipio = m_end.group(5).strip()
+            uf = m_end.group(6).upper()
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=numero,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -3244,6 +3366,41 @@ class SPPdfExtractor:
                 valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
                 base_calculo=base, aliquota=aliquota, valor_iss=iss,
                 iss_retido=iss_retido,
+                valor_liquido_nfse=liquido,
+            )
+
+        if self.layout == LAYOUT_IACU_NFSE:
+            # NFS-e tributada (Prefeitura de Iaçu/BA). Grade "Valor total das
+            # deduções / Base de cálculo / Alíquota (%) / Valor do ISS / Crédito":
+            # os rótulos numa linha e os 5 valores na linha seguinte, na mesma
+            # ordem. Diferente da família de locação, aqui há ISS real (3%),
+            # então espelhamos a face (base/alíquota/ISS preenchidos).
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*=?\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            val_serv = self._parse_valor(m_val.group(1)) if m_val else 0.0
+
+            NUM = r'([\d\.]*,\d{2})'
+            m_grid = re.search(
+                r'Valor\s+total\s+das\s+dedu[çc][õo]es.*?Cr[ée]dito\s*\(R\$\)\s*:?\s*\n\s*'
+                + NUM + r'\s+' + NUM + r'\s+' + NUM + r'\s+' + NUM + r'\s+' + NUM,
+                t, re.IGNORECASE | re.DOTALL)
+            if m_grid:
+                deducoes = self._parse_valor(m_grid.group(1))
+                base = self._parse_valor(m_grid.group(2))
+                aliquota = self._parse_valor(m_grid.group(3)) / 100
+                iss = self._parse_valor(m_grid.group(4))
+            else:
+                deducoes, base, aliquota, iss = 0.0, val_serv, 0.0, 0.0
+
+            m_liq = re.search(r'Valor\s+l[íi]quido\s*\(R\$\)\s*:?\s*\n\s*([\d\.,]+)', t, re.IGNORECASE)
+            liquido = self._parse_valor(m_liq.group(1)) if m_liq else val_serv
+
+            return Valores(
+                valor_servicos=val_serv,
+                valor_deducoes=deducoes,
+                base_calculo=base,
+                aliquota=aliquota,
+                valor_iss=iss,
+                iss_retido=False,
                 valor_liquido_nfse=liquido,
             )
 
@@ -3861,6 +4018,16 @@ class SPPdfExtractor:
                     if armac_text.strip():
                         best_text = armac_text
 
+                # Iaçu/BA (plataforma nfservico.com.br): a caixa do canto superior
+                # direito (Número da nota / Data e hora de Emissão / Código de
+                # Verificação) fica vazia na leitura de página inteira — é pequena
+                # e divide espaço com um QR Code. Um recorte dedicado em zoom alto
+                # recupera esses três campos; prependemos ao texto principal.
+                if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U', best_text, re.IGNORECASE) or re.search(r'nfservico\.com\.br', best_text, re.IGNORECASE):
+                    header_iacu = self._ocr_header_box_iacu(page)
+                    if header_iacu.strip():
+                        best_text = f"{header_iacu}\n{best_text}"
+
                 return best_text
             finally:
                 doc.close()
@@ -3910,6 +4077,28 @@ class SPPdfExtractor:
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             w, h = img.size
             crop = img.crop((int(w * 0.60), 0, w, int(h * 0.11)))
+            return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_header_box_iacu(page) -> str:
+        """Recorta e reprocessa em zoom alto (5x) o canto superior direito da
+        NFS-e de Iaçu/BA (plataforma nfservico.com.br): a caixa "Número da nota"
+        / "Data e hora de Emissão" / "Código de Verificação". Esses três campos
+        saem vazios na leitura de página inteira (a caixa é pequena e tem um QR
+        Code logo abaixo). Usa PSM 6 (bloco único). Validado contra a nota real
+        N'S ASSUNÇÃO nº 2: recupera "2", "10/07/2026 16:37:22" e "c5cae3fd79"."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            w, h = img.size
+            crop = img.crop((int(w * 0.65), int(h * 0.08), w, int(h * 0.26)))
             return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
         except Exception:
             return ""
