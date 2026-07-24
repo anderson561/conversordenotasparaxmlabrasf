@@ -24,9 +24,18 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Cabeçalho**: "MUNICIPIO DE BARREIRAS"
 - **Data de Competência**: Baseia-se no rótulo `Data Fato Gerador` ou através do recorte do Mês/Ano diretamente na **Chave de Acesso Nacional** (quando há falha estrutural de OCR nas datas).
 
-### 3. Camaçari/BA — `camacari`
-- **Sistema**: CPqD - Gestão Pública
-- **Data de Competência**: Rótulo `Data da prestação do serviço`
+### 3. Camaçari/BA — `camacari` (digital + escaneado) / `camacari_ba_scan` ⚠️ **DOIS LAYOUTS**
+- **Sistema / Cabeçalho** (ambos): CPqD - Gestão Pública / "PREFEITURA MUNICIPAL DE CAMAÇARI".
+- **Data de Competência**: Rótulo `Data da prestação do serviço`.
+- **Discriminador**: a **origem do texto** decide o layout via `self.from_ocr`. PDF com texto embutido (pdfminer) → `camacari`. PDF **escaneado** (foto/JPG → OCR) → `camacari_ba_scan` (`LAYOUT_CAMACARI_2`).
+- **Diferença em relação ao SP**: o `camacari` original **já tratava notas escaneadas** (grade OCR "Retenções × Totais", valores sem pontuação, CETREL). Por isso o `camacari_ba_scan` é um **SUPERSET**: herda todos os branches do `camacari` como fallback e só sobrepõe o tratamento próprio quando dá match. Assim as notas escaneadas que já funcionavam não regridem, e a nova família de fotos de baixa qualidade é atendida.
+- **`camacari_ba_scan` (escaneado)**: para fotos de baixa qualidade em que a leitura padrão (zoom 3) **descarta a metade inferior inteira** da nota (grade de totais) e a caixa de cabeçalho:
+  - **Re-OCR de página inteira** em zoom 4 + PSM 6 (`_ocr_camacari_scan`) recupera o corpo (grade, `Serviço: 000713`, entidades), na orientação já corrigida.
+  - **Recorte dedicado do cabeçalho** (`_ocr_header_box_camacari`, zoom 6) recupera o número (ex.: `1050`) e a data/hora de emissão — a caixa some no zoom 3.
+  - **Alíquota × ISS trocados**: a grade lê "Aliquota (%) 35,75" e "ISS 6,5%", mas o real é alíquota **6,5%** e ISS **35,75**. Regra imune à troca: a alíquota é o único token seguido de `%`; o ISS é **derivado de base × alíquota**.
+  - **CNPJ do tomador com 1º dígito trocado** (OCR `49...` → real `19...`): corrigido por validação do dígito verificador (`_corrige_cnpj_primeiro_digito`), testando só as 10 variações do 1º dígito e aceitando apenas quando **exatamente uma** valida.
+  - **Município do prestador some** no OCR → default Camaçari (toda NFS-e municipal de Camaçari é emitida por prestador local).
+  - **Código de autenticidade** impresso em fonte fraca → ilegível mesmo com recorte; fica sinalizado em `avisos` (não fabricamos valor errado).
 
 ### 4. Salvador/BA — `salvador_ba` (Nota Salvador)
 - **Cabeçalho**: "PREFEITURA MUNICIPAL DO SALVADOR" ou "NOTA SALVADOR" ou "Xique-Xique"
@@ -233,4 +242,4 @@ O sistema conta com um motor de fatiamento inteligente que suporta:
 
 ---
 
-*Documentação atualizada em: 2026-07-24 (32 layouts; adicionado São Paulo/SP escaneado — `sao_paulo_sp_scan`, layout dedicado para NFS-e SP em JPG/foto via OCR).*
+*Documentação atualizada em: 2026-07-24 (33 layouts; adicionado Camaçari/BA escaneado — `camacari_ba_scan`, layout dedicado/SUPERSET para NFS-e de Camaçari em foto/JPG de baixa qualidade via OCR, com re-OCR zoom4/PSM6, recorte de cabeçalho, grade com alíquota↔ISS trocados e correção do 1º dígito do CNPJ do tomador).*
