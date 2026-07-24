@@ -68,6 +68,7 @@ LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fa
 LAYOUT_IACU_NFSE = 'iacu_nfse'  # Prefeitura Municipal de Iaçu/BA (plataforma nfservico.com.br) - NFS-e tributada, escaneada; caixa de cabeçalho via recorte dedicado
 LAYOUT_SAO_PAULO_2 = 'sao_paulo_sp_scan'  # São Paulo/SP ESCANEADO (JPG/foto -> OCR) - mesmo cabeçalho do LAYOUT_SAO_PAULO digital, mas via OCR ruidoso; caixa de cabeçalho via recorte dedicado
 LAYOUT_CAMACARI_2 = 'camacari_ba_scan'  # Camaçari/BA ESCANEADO (foto/JPG -> OCR) - mesmo cabeçalho do LAYOUT_CAMACARI, gated por from_ocr; SUPERSET (herda os branches do CAMACARI como fallback) + tratamento próprio: re-OCR zoom4/PSM6, recorte de cabeçalho, grade com alíquota↔ISS trocados e ISS calculado, correção do 1º dígito do CNPJ do tomador
+LAYOUT_MATA_SAO_JOAO = 'mata_sao_joao_ba'  # Mata de São João/BA (plataforma SAATRI - matadesaojoao.saatri.com.br) - NFS-e tributada, escaneada de boa qualidade (OCR zoom3 limpo, sem rotação); layout dedicado do município. Estrutura: blocos "Prestador/Tomador do(s) Serviço(s)" contíguos, grade de valores rótulo-em-cima/valor-embaixo, código de serviço "01.01.01" (item LC 116) -> 4 dígitos
 
 
 # Etiquetas para Identificação de Entidades
@@ -196,6 +197,12 @@ class SPPdfExtractor:
             return LAYOUT_FEIRA
         if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
+        # Mata de São João/BA (plataforma SAATRI) — específico do município
+        # (decidido com o usuário: NÃO casar só por "saatri.com.br" para evitar
+        # rotear outras prefeituras SAATRI ainda não testadas). O "ã" pode sair
+        # corrompido no OCR, por isso toleramos [ãa]. Precede layouts genéricos.
+        if re.search(r'Mata\s+de\s+S[ãa]o\s+Jo[ãa]o', t, re.IGNORECASE) or re.search(r'matadesaojoao\.saatri', t, re.IGNORECASE):
+            return LAYOUT_MATA_SAO_JOAO
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
@@ -286,6 +293,9 @@ class SPPdfExtractor:
             return LAYOUT_FEIRA
         if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
+        # Mata de São João/BA (plataforma SAATRI) — específico do município.
+        if re.search(r'Mata\s+de\s+S[ãa]o\s+Jo[ãa]o', t, re.IGNORECASE) or re.search(r'matadesaojoao\.saatri', t, re.IGNORECASE):
+            return LAYOUT_MATA_SAO_JOAO
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
@@ -367,6 +377,12 @@ class SPPdfExtractor:
         elif layout == LAYOUT_CAMACARI:
             m = re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_MATA_SAO_JOAO:
+            # "Data do Fato Gerador\n25/05/2026" — a competência é o mês do fato gerador.
+            m = re.search(r'Data\s+do\s+Fato\s+Gerador\s*\n\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: result = datetime(res.year, res.month, 1)
         elif layout == LAYOUT_TELECOM_COMUNICACAO:
             # Campo "REFERÊNCIA (ANO/MÊS): 2026/06" ou "REFERÊNCIA: 2026/06"
             m = re.search(r'REFER[EÊ]NCIA\s*(?:\([^)]*\))?\s*[:\s]+(\d{4})/(\d{2})', t, re.IGNORECASE)
@@ -473,6 +489,14 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_IACU_NFSE:
             # "Data e hora de Emissão:\n\n10/07/2026 16:37:22" (recorte do cabeçalho).
             m = re.search(r'Data\s+e\s+hora\s+de\s+Emiss[aã]o\s*:?\s*[\n\s]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
+        if self.layout == LAYOUT_MATA_SAO_JOAO:
+            # "Data e Hora de Emissão\n\nRaros\n\n25/05/2026 12:23:13" — pode haver
+            # ruído de OCR entre o rótulo e a data, por isso toleramos até 40 chars.
+            m = re.search(r'Data\s+e\s+Hora\s+de\s+Emiss[ãa]o[\s\S]{0,40}?(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
@@ -671,10 +695,17 @@ class SPPdfExtractor:
             m = re.search(r'N[ÚU]MERO\s+DA\s+NOTA\s*[\n\s]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
+        if self.layout == LAYOUT_MATA_SAO_JOAO:
+            # "Número da Nota [ruído]\n\n00000018" — ancorado no rótulo próprio;
+            # o valor vem zero-preenchido (8 dígitos), então removemos os zeros
+            # à esquerda ("00000018" -> "18").
+            m = re.search(r'N[úu]mero\s+da\s+Nota.*?\n+\s*0*(\d+)', t, re.IGNORECASE | re.DOTALL)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_LOCALIZA:
             m = re.search(r'N[ºo]:\s*([A-Z0-9\s-]+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
-            
+
         if self.layout == LAYOUT_SAO_PAULO:
             m = re.search(r'N[uú]mero\s+da\s+Nota[:\s\n]+(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
@@ -863,6 +894,19 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_MATA_SAO_JOAO:
+            # "Discriminação do(s) Serviço(s)\n\nSERVIÇOS DE MARKETING DIGITAL\n\n
+            # Classificação do Serviço (LEI 116/2003)..." — bloco entre o rótulo
+            # e a Classificação do Serviço (próxima seção). OCR limpo neste layout.
+            m = re.search(
+                r'Discrimina[çc][ãa]o\s+do\(s\)\s+Servi[çc]o\(s\)(.*?)'
+                r'Classifica[çc][ãa]o\s+do\s+Servi[çc]o',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_SAO_PAULO_2:
             # Bloco entre "DISCRIMINAÇÃO DE SERVIÇOS" e "ALÍQUOTAS DOS TRIBUTOS"
             # (ou "VALOR TOTAL DO SERVIÇO"), no OCR de 2 colunas ruidoso. A
@@ -1154,6 +1198,16 @@ class SPPdfExtractor:
         t = self.raw_text
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO):
             return "0601"
+
+        if self.layout == LAYOUT_MATA_SAO_JOAO:
+            # "Classificação do Serviço (LEI 116/2003) + Desdobro\n\n01.01.01 -
+            # Análise e desenvolvimento de sistemas." — o item da LC 116 vem como
+            # "XX.XX.XX" (o 3º par é o desdobro municipal). O código ABRASF são os
+            # 2 primeiros pares -> "0101". Ancorado no rótulo próprio para não
+            # casar com o NBS ("115021000") logo abaixo.
+            m = re.search(r'Classifica[çc][ãa]o\s+do\s+Servi[çc]o.*?\n+\s*(\d{2})\.(\d{2})\.\d{2}', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                return m.group(1) + m.group(2)
 
         if self.layout == LAYOUT_SAO_PAULO_2:
             # "Código do Serviço a ” ;\n02498 - Inserção de textos..." — código
@@ -1455,6 +1509,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_iacu(is_prestador)
+
+        if self.layout == LAYOUT_MATA_SAO_JOAO:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_mata_sao_joao(is_prestador)
 
         if self.layout == LAYOUT_CAMACARI_2:
             if is_intermediario:
@@ -2300,7 +2359,7 @@ class SPPdfExtractor:
         if not end_data.get('uf') or len(end_data['uf']) != 2 or end_data['uf'] == 'EX':
             if self.layout == LAYOUT_RIO:
                 end_data['uf'] = "RJ"
-            elif self.layout in (LAYOUT_SALVADOR, LAYOUT_BARREIRAS, LAYOUT_FEIRA, LAYOUT_CAMACARI, LAYOUT_CAMACARI_2):
+            elif self.layout in (LAYOUT_SALVADOR, LAYOUT_BARREIRAS, LAYOUT_FEIRA, LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_MATA_SAO_JOAO):
                 end_data['uf'] = "BA"
             elif self.layout == LAYOUT_CUIABA:
                 end_data['uf'] = "MT"
@@ -3010,6 +3069,85 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_mata_sao_joao(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da NFS-e de Mata de São João/BA (plataforma
+        SAATRI). Estrutura (OCR limpo, sem rótulos por linha): blocos
+        "Prestador do(s) Serviço(s)" e "Tomador do(s) Serviço(s)" com as linhas
+        na ordem: Razão Social / Nome Fantasia / Logradouro (+ nº/compl.) /
+        "Bairro - MUNICÍPIO/UF CEP: NNNNN-NNN" / "CNPJ Insc. Municipal: NNN".
+
+        Os rótulos "Nome/Razão Social:", "CPF/CNPJ:" etc. aparecem dumpados em
+        bloco separado no fim da nota (coluna de labels do PDF) e são ignorados.
+        O município é resolvido pelo IBGEResolver a partir do "MUNICÍPIO/UF" da
+        linha de endereço (Mata de São João -> 2921005; sem essa entrada o
+        resolver cairia no default Salvador/2927408)."""
+        t = self.raw_text
+        m_prest = re.search(r'Prestador\s+do\(s\)\s+Servi[çc]o\(s\)', t, re.IGNORECASE)
+        m_tom = re.search(r'Tomador\s+do\(s\)\s+Servi[çc]o\(s\)', t, re.IGNORECASE)
+        m_exig = re.search(r'Exigibilidade\s+do\s+ISS', t, re.IGNORECASE)
+
+        if is_prestador:
+            if not (m_prest and m_tom):
+                bloco = ''
+            else:
+                bloco = t[m_prest.end():m_tom.start()]
+        else:
+            if not m_tom:
+                bloco = ''
+            else:
+                fim = m_exig.start() if (m_exig and m_exig.start() > m_tom.end()) else len(t)
+                bloco = t[m_tom.end():fim]
+
+        linhas = [ln.strip() for ln in bloco.split('\n') if ln.strip()]
+
+        razao = linhas[0] if linhas else ''
+
+        m_cnpj = re.search(r'(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})', bloco)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        m_im = re.search(r'Insc\.?\s*Municipal:?\s*(\d+)', bloco, re.IGNORECASE)
+        inscricao = m_im.group(1) if m_im else ''
+
+        # A linha de localização é "Bairro - MUNICÍPIO/UF CEP: NNNNN-NNN".
+        # Isolamos essa linha (não a regex sobre o bloco inteiro, senão o "\s"
+        # cruzaria quebras e o bairro capturaria a linha anterior).
+        mun_idx = -1
+        bairro, municipio, uf = 'Não informado', '', 'BA'
+        for i, ln in enumerate(linhas):
+            m_loc = re.search(r'^(.*?)\s*-\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s]+?)/([A-Z]{2})\s+CEP', ln)
+            if m_loc:
+                mun_idx = i
+                bairro = m_loc.group(1).strip() or 'Não informado'
+                municipio = m_loc.group(2).strip()
+                uf = m_loc.group(3).upper()
+                break
+
+        m_cep = re.search(r'CEP:?\s*(\d{5}-?\d{3})', bloco, re.IGNORECASE)
+        cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else '00000000'
+
+        # Logradouro: a linha imediatamente anterior à linha de município/CEP
+        # (ordem SAATRI: razão / [fantasia] / logradouro / bairro-município-CEP).
+        logradouro = ''
+        if mun_idx > 0 and linhas[mun_idx - 1] != razao:
+            logradouro = linhas[mun_idx - 1]
+
+        cod_mun = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio) if municipio else ''
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao or ('Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'),
+            inscricao_municipal=inscricao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero='S/N',
+                bairro=bairro or 'Não informado',
+                codigo_municipio=cod_mun,
+                municipio=municipio or 'Não informado',
+                uf=uf,
+                cep=cep,
+            ),
+        )
+
     def _extrair_entidade_iacu(self, is_prestador: bool) -> Entidade:
         """Extrai prestador/tomador da NFS-e de Iaçu/BA (plataforma nfservico.com.br).
 
@@ -3541,6 +3679,57 @@ class SPPdfExtractor:
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
+
+        if self.layout == LAYOUT_MATA_SAO_JOAO:
+            # Duas grades "rótulo-em-cima / valores-embaixo" (padrão SAATRI):
+            #  1) "Valor do(s) Serviço(s) | Valor Dedução | Desconto Incondicionado |
+            #     Base de Cálculo ISS"  ->  "10.000,00 0,00 0,00 10.000,00"
+            #     (serviços, dedução, desconto incondicionado, base de cálculo)
+            #  2) "Alíquota ISS (%) | Valor do ISS | Valor ISS Retido | Desconto
+            #     Condicionado"  ->  "0,00 0,00 0,00 0,00"
+            #  E o total em "Total do(s) Serviço(s) | Total Líquido" -> "10.000,00 10.000,00".
+            serv = base = 0.0
+            deducoes = desc_incond = 0.0
+            aliquota = iss = iss_retido_val = desc_cond = 0.0
+            liquido = 0.0
+
+            m1 = re.search(
+                r'Valor\s+do\(s\)\s+Servi[çc]o\(s\).*?Base\s+de\s+C[áa]lculo\s+ISS\s*\n\s*'
+                r'([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)',
+                t, re.IGNORECASE)
+            if m1:
+                serv = self._parse_valor(m1.group(1))
+                deducoes = self._parse_valor(m1.group(2))
+                desc_incond = self._parse_valor(m1.group(3))
+                base = self._parse_valor(m1.group(4))
+
+            m2 = re.search(
+                r'Al[íi]quota\s+ISS\s*\(%\).*?Desconto\s+Condicionado\s*\n\s*'
+                r'([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)',
+                t, re.IGNORECASE)
+            if m2:
+                aliquota = self._parse_valor(m2.group(1)) / 100
+                iss = self._parse_valor(m2.group(2))
+                iss_retido_val = self._parse_valor(m2.group(3))
+                desc_cond = self._parse_valor(m2.group(4))
+
+            m_tot = re.search(
+                r'Total\s+do\(s\)\s+Servi[çc]o\(s\)\s+Total\s+L[íi]quido\s*\n[-\s]*([\d.,]+)\s+([\d.,]+)',
+                t, re.IGNORECASE)
+            liquido = self._parse_valor(m_tot.group(2)) if m_tot else (serv or base)
+
+            return Valores(
+                valor_servicos=serv,
+                valor_deducoes=deducoes,
+                base_calculo=base or serv,
+                aliquota=aliquota,
+                valor_iss=iss,
+                iss_retido=iss_retido_val > 0,
+                valor_iss_retido=iss_retido_val,
+                desconto_incondicionado=desc_incond,
+                desconto_condicionado=desc_cond,
+                valor_liquido_nfse=liquido or serv,
+            )
 
         if self.layout == LAYOUT_SAO_PAULO_2:
             # NFS-e tributada de São Paulo (escaneada). A grade oficial
@@ -4603,7 +4792,7 @@ class SPPdfExtractor:
             optante_simples = True
             regime_especial = "6" # ME/EPP
         elif re.search(
-                r'OPTANTE\s+PELO\s+SIMPLES\s+NACIONAL|EPP\s+OPTANTE|'
+                r'OPTANTE\s+(?:PELO|DO)\s+SIMPLES\s+NACIONAL|EPP\s+OPTANTE|'
                 r'perante\s+o\s+Simples\s+Nacional[\s\S]{0,40}?OPTANTE',
                 self.raw_text, re.IGNORECASE):
             # "OPTANTE" e "SIMPLES NACIONAL" costumam ficar separados por "PELO"
