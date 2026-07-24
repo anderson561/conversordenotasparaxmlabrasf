@@ -6,7 +6,7 @@ Este documento detalha os layouts e formatos suportados pelo conversor.
 
 ## Layouts Suportados (PDF → XML)
 
-O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **31 layouts** ao todo (30 específicos + o genérico de fallback), agrupados abaixo por tipo. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
+O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **32 layouts** ao todo (31 específicos + o genérico de fallback), agrupados abaixo por tipo. Obs.: o São Paulo tem **duas variantes dedicadas** (digital e escaneada) sob a entrada nº 7 — por isso há 31 entradas numeradas para 32 constantes de layout. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
 
 > **Nota sobre OCR:** o texto pós-OCR (e às vezes até o de PDF com texto embutido) diverge do que parece "óbvio" na imagem — troca de caracteres, glifos ilegíveis, colunas intercaladas. As regras por layout são propositalmente tolerantes a esses ruídos.
 
@@ -42,9 +42,11 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Cabeçalho**: "RIO DE JANEIRO" ou "NOTA CARIOCA"
 - **Data de Competência**: Busca do campo `Mês de Competência`.
 
-### 7. São Paulo/SP — `sao_paulo_sp`
-- **Cabeçalho**: "PREFEITURA DO MUNICÍPIO DE SÃO PAULO"
-- **Data de Competência**: Busca do rótulo `Compe:` em formato mes/ano (ex: `Jan/2026`).
+### 7. São Paulo/SP — `sao_paulo_sp` (digital) / `sao_paulo_sp_scan` (escaneado) ⚠️ **DOIS LAYOUTS**
+- **Cabeçalho** (ambos): "PREFEITURA DO MUNICÍPIO DE SÃO PAULO".
+- **Discriminador**: a **origem do texto** decide o layout, sem ambiguidade. PDF **digital** (texto embutido, pdfminer) → `sao_paulo_sp`; PDF **escaneado** (JPG/foto → OCR) → `sao_paulo_sp_scan` (`LAYOUT_SAO_PAULO_2`). Só o escaneado passa por OCR, então a flag `self.from_ocr` roteia entre os dois. **Os dois são layouts/constantes separados** — o digital fica 100% isolado das regras do escaneado.
+- **`sao_paulo_sp` (digital)**: competência via rótulo `Compe:` (mês/ano, ex.: `Jan/2026`); demais campos via regras genéricas (texto limpo).
+- **`sao_paulo_sp_scan` (escaneado)**: OCR ruidoso de 2 colunas, frequentemente **rotacionado** (foto). A caixa "Número da Nota" do canto superior direito sai ilegível na página inteira (o número vira "5") → **recorte dedicado** (`_ocr_header_box_sao_paulo`, zoom 6 + PSM 6 + whitelist de dígitos, reaproveitando o ângulo de rotação já corrigido) recupera o número (ex.: `00331020`). Branches próprias: código de verificação `XXXX-XXXX` no fim da linha do RPS (evita casar "RPS Nº"→"RPSN"); item de serviço do cadastro paulistano (`02498`); valores pela grade oficial "Base de Cálculo / Alíquota (%) / Valor do ISS", ignorando os **valores-isca** do corpo (ex.: "Valor ISS: 137,06" que é o COFINS de 7,60%); discriminação limpando rótulos/Lei 12.741 vazados.
 
 ### 8. Joinville/SC — `joinville_sc`
 - **Cabeçalho**: "Prefeitura de Joinville" ou "NF-em"
@@ -231,4 +233,4 @@ O sistema conta com um motor de fatiamento inteligente que suporta:
 
 ---
 
-*Documentação atualizada em: 2026-07-23 (31 layouts; adicionados Lauro de Freitas/BA, Iaçu/BA, SUL&SEG Cobrança, Fatura de Locação Genérica, ARMAC e PASSWORD/eNotas).*
+*Documentação atualizada em: 2026-07-24 (32 layouts; adicionado São Paulo/SP escaneado — `sao_paulo_sp_scan`, layout dedicado para NFS-e SP em JPG/foto via OCR).*

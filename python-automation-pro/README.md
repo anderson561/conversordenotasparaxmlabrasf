@@ -4,8 +4,8 @@
 
 Este projeto fornece um conversor de PDFs de Notas Fiscais de Serviço (NFS‑e) e Contratos de Locação para o padrão **ABRASF 2.01 XML**. Ele inclui:
 
-- **Extratores de PDF** com detecção automática de layout, cobrindo **31 layouts** (30 específicos + genérico de fallback) de múltiplos municípios e emissores:
-  - **Prefeituras/NFS-e:** Cuiabá/MT, Barreiras/BA, Camaçari/BA, Salvador/BA, Feira de Santana/BA, Simões Filho/BA, Lauro de Freitas/BA, **Iaçu/BA**, Rio de Janeiro/RJ (Nota Carioca), São Paulo/SP, Ribeirão Pires/SP, Campinas/SP, Joinville/SC, Fortaleza/CE, Brasília/DF (GDF) e o Portal Nacional (DANFSe v1.0).
+- **Extratores de PDF** com detecção automática de layout, cobrindo **32 layouts** (31 específicos + genérico de fallback) de múltiplos municípios e emissores:
+  - **Prefeituras/NFS-e:** Cuiabá/MT, Barreiras/BA, Camaçari/BA, Salvador/BA, Feira de Santana/BA, Simões Filho/BA, Lauro de Freitas/BA, Iaçu/BA, Rio de Janeiro/RJ (Nota Carioca), São Paulo/SP (digital **e escaneado/OCR** como layouts dedicados), Ribeirão Pires/SP, Campinas/SP, Joinville/SC, Fortaleza/CE, Brasília/DF (GDF) e o Portal Nacional (DANFSe v1.0).
   - **Faturas de locação / serviços específicos:** Localiza Rent A Car, CPE Tecnologia, Guincho Cidade, B.F. Serviços Ambientais, LMR Engenharia, Geração & Energia, Locontainers, SUL&SEG (Nota de Cobrança), **Fatura de Locação Genérica** (qualquer locadora não catalogada) e **ARMAC** (escaneada, tabela multi-item).
   - **Outros:** NF-e de Serviço de Comunicação (Telecom), Osasco/SP NF-R de Repasse (ex.: iFood Benefícios), PASSWORD/eNotas Gateway (NFS-e tributada), ISBET (Nota de Contribuição) e um layout **Genérico** de fallback.
 - **OCR integrado** (Tesseract via `pytesseract` + PyMuPDF) para PDFs escaneados/imagem sem camada de texto — o extrator tolera os erros de reconhecimento típicos de cada layout.
@@ -89,4 +89,4 @@ O extrator é escalável por layout, sem reescrever o núcleo. O checklist típi
 
 ---
 
-*Documentação atualizada em 2026‑07‑23 (31 layouts suportados).*
+*Documentação atualizada em 2026‑07‑24 (32 layouts suportados).*
