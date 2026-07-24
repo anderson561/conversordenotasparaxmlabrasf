@@ -66,6 +66,7 @@ LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
 LAYOUT_IACU_NFSE = 'iacu_nfse'  # Prefeitura Municipal de Iaçu/BA (plataforma nfservico.com.br) - NFS-e tributada, escaneada; caixa de cabeçalho via recorte dedicado
+LAYOUT_SAO_PAULO_2 = 'sao_paulo_sp_scan'  # São Paulo/SP ESCANEADO (JPG/foto -> OCR) - mesmo cabeçalho do LAYOUT_SAO_PAULO digital, mas via OCR ruidoso; caixa de cabeçalho via recorte dedicado
 
 
 # Etiquetas para Identificação de Entidades
@@ -114,6 +115,16 @@ class SPPdfExtractor:
         # documento e caiu no fallback de "agora" — usado por parse() para
         # gerar um aviso de baixa confiança em vez de mascarar o problema.
         self._data_emissao_fallback = False
+        # Sinaliza que o texto veio de OCR (PDF imagem/escaneado), não de texto
+        # embutido (pdfminer). Usado para distinguir layouts que existem em duas
+        # origens — ex.: SP digital (LAYOUT_SAO_PAULO) vs SP escaneado
+        # (LAYOUT_SAO_PAULO_2) compartilham o mesmo cabeçalho, mas só o segundo
+        # passa por OCR.
+        self.from_ocr = False
+        # Ângulo (0/90/180/270) escolhido pelo _ocr_page ao corrigir a rotação
+        # de fotos/scans — reaproveitado por recortes dedicados (ex.: caixa de
+        # cabeçalho do SP2) para renderizar a região na mesma orientação.
+        self._ocr_rotation = 0
 
     # ------------------------------------------------------------------
     # Extração de texto bruto
@@ -184,7 +195,12 @@ class SPPdfExtractor:
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
             return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
-            return LAYOUT_SAO_PAULO
+            # Mesmo cabeçalho para o SP digital (texto embutido) e o SP
+            # escaneado (JPG/foto -> OCR). Só o escaneado passa por OCR, e sua
+            # estrutura textual (2 colunas ruidosas, caixa de cabeçalho densa)
+            # exige regras próprias — roteia para LAYOUT_SAO_PAULO_2 sem tocar
+            # no layout digital, que continua 100% intacto.
+            return LAYOUT_SAO_PAULO_2 if self.from_ocr else LAYOUT_SAO_PAULO
         if re.search(r'Prefeitura de Joinville|NF-em', t, re.IGNORECASE):
             return LAYOUT_JOINVILLE
         if re.search(r'PREFEITURA MUNICIPAL DE FORTALEZA', t, re.IGNORECASE):
@@ -264,7 +280,12 @@ class SPPdfExtractor:
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
             return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
-            return LAYOUT_SAO_PAULO
+            # Mesmo cabeçalho para o SP digital (texto embutido) e o SP
+            # escaneado (JPG/foto -> OCR). Só o escaneado passa por OCR, e sua
+            # estrutura textual (2 colunas ruidosas, caixa de cabeçalho densa)
+            # exige regras próprias — roteia para LAYOUT_SAO_PAULO_2 sem tocar
+            # no layout digital, que continua 100% intacto.
+            return LAYOUT_SAO_PAULO_2 if self.from_ocr else LAYOUT_SAO_PAULO
         if re.search(r'Prefeitura de Joinville|NF-em', t, re.IGNORECASE):
             return LAYOUT_JOINVILLE
         if re.search(r'PREFEITURA MUNICIPAL DE FORTALEZA', t, re.IGNORECASE):
@@ -637,7 +658,15 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_SAO_PAULO:
             m = re.search(r'N[uú]mero\s+da\s+Nota[:\s\n]+(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
-            
+
+        if self.layout == LAYOUT_SAO_PAULO_2:
+            # "Número da Nota\n00331020" vindo do recorte dedicado do cabeçalho
+            # (_ocr_header_box_sao_paulo), prependido ao texto. Na página inteira
+            # o valor sai corrompido (vira "5"), então priorizamos a linha limpa
+            # do recorte, que é a 1ª ocorrência do rótulo no texto.
+            m = re.search(r'N[uú]mero\s+da\s+Nota\s*:?\s*[\n\s]*(\d{3,})', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_JOINVILLE:
             m = re.search(r'N[uú]mero\s*/\s*S[eé]rie[\s\n]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
@@ -814,6 +843,29 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_SAO_PAULO_2:
+            # Bloco entre "DISCRIMINAÇÃO DE SERVIÇOS" e "ALÍQUOTAS DOS TRIBUTOS"
+            # (ou "VALOR TOTAL DO SERVIÇO"), no OCR de 2 colunas ruidoso. A
+            # descrição real ("IMC - PLANO ZAP+ (ZAP+VIVA+OLX)") vem misturada
+            # com rótulos vazados (Inscrição Municipal, Valor Bruto) e o texto da
+            # Lei 12.741/PIS/COFINS — filtramos essas linhas de ruído.
+            m = re.search(
+                r'DISCRIMINA[ÇC][ÃA]O\s+D[EO]S?\s+SERVI[ÇC]OS(.*?)'
+                r'(?:AL[IÍ]QUOTAS\s+DOS\s+TRIBUTOS|VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                linhas = []
+                for ln in m.group(1).split('\n'):
+                    ln = ln.strip().lstrip('|').strip()
+                    if not ln:
+                        continue
+                    if re.search(r'Inscri[çc][ãa]o\s+Municipal|Valor\s+Bruto|REF\.?\s*A\s*LEI|PERC\.|VALOR\s+(?:PIS|COFINS)|^R\$|12\.?741', ln, re.IGNORECASE):
+                        continue
+                    linhas.append(ln)
+                disc = ' '.join(linhas).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_IACU_NFSE:
             # Bloco entre "DISCRIMINAÇÃO DOS SERVIÇOS" e "LOCAL DE PRESTAÇÃO DOS
             # SERVIÇOS", em várias linhas; normalizamos os espaços numa linha só.
@@ -1046,6 +1098,18 @@ class SPPdfExtractor:
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO):
             return "0601"
 
+        if self.layout == LAYOUT_SAO_PAULO_2:
+            # "Código do Serviço a ” ;\n02498 - Inserção de textos..." — código
+            # de 5 dígitos do cadastro paulistano. O OCR insere ruído entre o
+            # rótulo e o valor, então buscamos, numa janela após o rótulo, o
+            # padrão "NNNNN - <letra>" (código seguido de descrição).
+            m_lab = re.search(r'C[oó]digo\s+do\s+Servi[çc]o', t, re.IGNORECASE)
+            if m_lab:
+                janela = t[m_lab.end(): m_lab.end() + 120]
+                m_cod = re.search(r'(\d{4,5})\s*-\s*[A-Za-zÀ-ú]', janela)
+                if m_cod:
+                    return m_cod.group(1)
+
         if self.layout == LAYOUT_CAMPINAS:
             # Seção "Serviço" traz o item da LC 116/03 no formato "13.02 - FONOGRAFIA...".
             # O CNAE ("5920-1/00-00") aparece antes, mas tem formato distinto (\d{4}-\d)
@@ -1117,6 +1181,17 @@ class SPPdfExtractor:
         t = self.raw_text
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO):
             return "FATURA"
+
+        if self.layout == LAYOUT_SAO_PAULO_2:
+            # "RPS Nº 320839 Série NF, emitido em 25/06/2026 PQHZ-BYVT" — o
+            # código de verificação (formato XXXX-XXXX) vem no FIM da linha do
+            # RPS. O padrão genérico casaria "RPS Nº" → "RPSN"; aqui ancoramos
+            # em "emitido em <data>" e pegamos o token XXXX-XXXX seguinte.
+            m = re.search(r'emitido\s+em\s+\d{2}/\d{2}/\d{4}\s+([A-Z0-9]{4}-[A-Z0-9]{4})', t, re.IGNORECASE)
+            if not m:
+                m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', t)
+            if m:
+                return m.group(1).upper()
 
         if self.layout == LAYOUT_OSASCO_REPASSE:
             # "Cód. de Autenticidade: VCWSRSCV" costuma vir na mesma linha/célula
@@ -3272,6 +3347,40 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout == LAYOUT_SAO_PAULO_2:
+            # NFS-e tributada de São Paulo (escaneada). A grade oficial
+            # "Valor Total das Deduções | Base de Cálculo | Alíquota (%) |
+            # Valor do ISS | crédito" traz os 5 valores numa linha só, na ordem.
+            # É a fonte confiável do ISS — o corpo do texto tem valores-isca
+            # (ex.: "PERC. ISS 2.90% Valor ISS: 137,06", que na verdade é o
+            # COFINS de 7,60%). O total vem de "VALOR TOTAL DO SERVIÇO = R$ ...".
+            m_val = re.search(r'VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O\s*=?\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            val_serv = self._parse_valor(m_val.group(1)) if m_val else 0.0
+
+            NUM = r'([\d\.]*,\d{2})'
+            m_grid = re.search(
+                r'Valor\s+Total\s+das\s+Dedu[çc][õo]es.*?Base\s+de\s+C[áa]lculo.*?'
+                r'Al[íi]quota.*?Valor\s+do\s+ISS.*?\n\s*'
+                + NUM + r'\s+' + NUM + r'\s+' + NUM + r'%?\s+' + NUM,
+                t, re.IGNORECASE | re.DOTALL)
+            if m_grid:
+                deducoes = self._parse_valor(m_grid.group(1))
+                base = self._parse_valor(m_grid.group(2))
+                aliquota = self._parse_valor(m_grid.group(3)) / 100
+                iss = self._parse_valor(m_grid.group(4))
+            else:
+                deducoes, base, aliquota, iss = 0.0, val_serv, 0.0, 0.0
+
+            return Valores(
+                valor_servicos=val_serv,
+                valor_deducoes=deducoes,
+                base_calculo=base,
+                aliquota=aliquota,
+                valor_iss=iss,
+                iss_retido=False,
+                valor_liquido_nfse=val_serv,
+            )
+
         if self.layout == LAYOUT_SALVADOR:
             m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
             val_serv = self._parse_valor(m_val.group(1)) if m_val else 0.0
@@ -3977,6 +4086,7 @@ class SPPdfExtractor:
                 # Requer que os dados do idioma português ('por') estejam instalados no Tesseract
                 best_text = pytesseract.image_to_string(img, lang='por')
                 best_score = self._score_ocr_text(best_text)
+                best_angle = 0
 
                 # Só vale a pena testar outras rotações se a leitura em 0°
                 # não pareceu um documento fiscal de verdade.
@@ -3988,8 +4098,13 @@ class SPPdfExtractor:
                         if score > best_score:
                             best_score = score
                             best_text = candidate
+                            best_angle = angle
                         if best_score > 0:
                             break
+
+                # Guarda o ângulo vencedor para recortes dedicados (ex.: caixa de
+                # cabeçalho do SP2) renderizarem a região na mesma orientação.
+                self._ocr_rotation = best_angle
 
                 # Layout Salvador/BA tem uma caixa de cabeçalho densa e pequena
                 # (Número da Nota / Data e Hora de Emissão / Código de Verificação)
@@ -4027,6 +4142,15 @@ class SPPdfExtractor:
                     header_iacu = self._ocr_header_box_iacu(page)
                     if header_iacu.strip():
                         best_text = f"{header_iacu}\n{best_text}"
+
+                # São Paulo/SP escaneado (JPG/foto -> OCR): a caixa "Número da
+                # Nota" do canto superior direito sai ilegível na página inteira
+                # (o número "00331020" chega a virar "5"). Recorte dedicado na
+                # mesma orientação já corrigida (best_angle) recupera o número.
+                if re.search(r'PREFEITURA\s+DO\s+MUNIC[IÍ]PIO\s+DE\s+S[AÃ]O\s+PAULO', best_text, re.IGNORECASE):
+                    header_sp = self._ocr_header_box_sao_paulo(page, best_angle)
+                    if header_sp.strip():
+                        best_text = f"{header_sp}\n{best_text}"
 
                 return best_text
             finally:
@@ -4100,6 +4224,38 @@ class SPPdfExtractor:
             w, h = img.size
             crop = img.crop((int(w * 0.65), int(h * 0.08), w, int(h * 0.26)))
             return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_header_box_sao_paulo(page, angle: int = 0) -> str:
+        """Recorta e reprocessa em zoom alto (6x) a caixa "Número da Nota" do
+        canto superior direito da NFS-e de São Paulo ESCANEADA (JPG/foto). O
+        número (ex.: "00331020", dígitos em negrito) sai ilegível na leitura de
+        página inteira — chega a virar "5". Aplica a MESMA rotação (`angle`) que
+        o _ocr_page usou para deixar a página na vertical e lê a célula do número
+        com PSM 6 + whitelist de dígitos. Retorna uma linha sintética limpa
+        ("Número da Nota\\n<n>") para a branch de número casar sem depender do
+        resto da caixa. Validado contra a nota real (BOM NEGOCIO nº 00331020,
+        JPG rotacionado 180°)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            if angle:
+                img = img.rotate(-angle, expand=True)
+            w, h = img.size
+            crop = img.crop((int(w * 0.67), int(h * 0.098), int(w * 0.98), int(h * 0.126))).convert('L')
+            num = pytesseract.image_to_string(
+                crop, lang='por',
+                config='--psm 6 -c tessedit_char_whitelist=0123456789'
+            )
+            num = re.sub(r'\D', '', num)
+            return f"Número da Nota\n{num}\n" if num else ""
         except Exception:
             return ""
 
@@ -4216,7 +4372,8 @@ class SPPdfExtractor:
         
         if len(full_text.strip()) < 200 or not has_keywords:
             full_text = self._extract_via_ocr()
-        
+            self.from_ocr = True
+
         print(f"[*] Texto extraído ({len(full_text)} caracteres). Iniciando reconhecimento de padrões...")
 
         pages = full_text.split('\x0c')
@@ -4245,6 +4402,7 @@ class SPPdfExtractor:
                 if len(ocr_text.strip()) >= OCR_MIN_CHARS:
                     print(f"[*] Página {idx + 1} sem texto extraível — usando OCR.")
                     pages[idx] = ocr_text
+                    self.from_ocr = True
 
         self.invalid_pages = []
         filtered_pages = []
@@ -4353,7 +4511,10 @@ class SPPdfExtractor:
             
             sub_ext = SPPdfExtractor(self.pdf_path)
             sub_ext.raw_text = text_block
-            
+            # Propaga a origem (OCR vs texto embutido) para a detecção de layout
+            # do bloco distinguir SP escaneado (LAYOUT_SAO_PAULO_2) do SP digital.
+            sub_ext.from_ocr = self.from_ocr
+
             try:
                 nfse = sub_ext.parse()
                 if not nfse: continue
