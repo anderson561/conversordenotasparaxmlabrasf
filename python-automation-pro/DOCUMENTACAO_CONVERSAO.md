@@ -6,7 +6,7 @@ Este documento detalha os layouts e formatos suportados pelo conversor.
 
 ## Layouts Suportados (PDF → XML)
 
-O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **34 layouts** ao todo (33 específicos + o genérico de fallback), agrupados abaixo por tipo. Obs.: o São Paulo (nº 7) e o Camaçari (nº 3) têm **duas variantes dedicadas** cada (digital e escaneada), e Mata de São João foi adicionado como nº 16b — por isso a numeração das entradas não bate 1-para-1 com as 34 constantes de layout. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
+O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **35 layouts** ao todo (34 específicos + o genérico de fallback), agrupados abaixo por tipo. Obs.: o São Paulo (nº 7) e o Camaçari (nº 3) têm **duas variantes dedicadas** cada (digital e escaneada), e Mata de São João (nº 16b) e Rosário da Limeira (nº 16c) foram adicionados fora da sequência — por isso a numeração das entradas não bate 1-para-1 com as 35 constantes de layout. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
 
 > **Nota sobre OCR:** o texto pós-OCR (e às vezes até o de PDF com texto embutido) diverge do que parece "óbvio" na imagem — troca de caracteres, glifos ilegíveis, colunas intercaladas. As regras por layout são propositalmente tolerantes a esses ruídos.
 
@@ -119,6 +119,18 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Entidades**: blocos "Prestador/Tomador do(s) Serviço(s)" com linhas contíguas (razão / [fantasia] / logradouro / `Bairro - MUNICÍPIO/UF CEP` / `CNPJ Insc. Municipal`). A coluna de rótulos (`Nome/Razão Social:`, `CPF/CNPJ:`...) é dumpada em bloco separado no fim e ignorada.
 - **⚠️ IBGE**: Mata de São João → **2921005**. Foi preciso registrá-lo em `IBGEResolver.KNOWN_CITIES` — sem isso o resolver caía no default **Salvador (2927408)**.
 - **Simples**: a nota diz "optante **do** simples nacional" (não "pelo"); a regex genérica foi ampliada para `(?:PELO|DO)`.
+
+### 16c. Rosário da Limeira/MG — `rosario_da_limeira_mg`
+- **Sistema**: Prefeitura Municipal de Rosário da Limeira/MG via plataforma **FUTURIZE** — NFS-e tributada, **PDF digital** (pdfminer limpo, **sem OCR**).
+- **Detecção**: "ROSÁRIO DA LIMEIRA" (específico do município). **Não** casa por "FUTURIZE" — plataforma usada por vários municípios; evita rotear prefeituras ainda não testadas (mesmo padrão de Iaçu/Mata, decidido com o usuário).
+- **Número**: "Nº da Nota\n72/2026" → a parte antes da "/" (`72`); o resto é o ano. Ancorado no rótulo para não pegar o "Nº Integral" (`202600000000072`).
+- **Item de serviço**: "Código de Trib. Nacional: 09.01.04" → 2 primeiros pares (`0901`); o 3º par é o desdobro. Ancorado no rótulo para não casar com o NBS (`1.0303.11.00`).
+- **Discriminação**: o texto real ("HOSPEDAGEM") é entregue pelo pdfminer **entre** o rótulo "ART:" e o cabeçalho "DISCRIMINAÇÃO DOS SERVIÇOS" (a grade de valores vem logo após o cabeçalho, sem a descrição).
+- **Valores**: grade FUTURIZE rótulo-em-cima/valor-na-linha-de-baixo; total de "VALOR TOTAL DE SERVIÇOS = R$ ..." (na mesma linha). ISS real (ex.: 2% sobre 158,40 = 3,17).
+- **Entidades**: rótulos por linha ("Razão Social:" no prestador / **"Nome:"** no tomador — cuidado para não confundir com "Nome Fantasia:"); endereço em **linha única** "logradouro, nº - [extras] - bairro - CEP - MUNICÍPIO - UF", parseado de trás pra frente (UF=último, município=penúltimo, CEP pelo padrão, bairro antes do CEP) — robusto ao nº variável de segmentos (o tomador tem um "SC" extra). Quirk: bairro com **letra-espaçada** ("F R A N C I S C O B E R T O N I", todas em espaço simples) → colapsado sem inventar o espaço de palavra (`FRANCISCOBERTONI`), e só quando o segmento é de caracteres isolados.
+- **⚠️ IBGE**: Rosário da Limeira → **3156452**. Registrado em `KNOWN_CITIES` — sem isso o resolver caía no default **MG Belo Horizonte (3106200)**.
+- **⚠️ Tributação fora do município**: a nota é "TRIBUTAÇÃO FORA DO MUNICÍPIO" (prestação em Luís Eduardo Magalhães/BA). Por decisão do usuário, a incidência **mantém o município do prestador** (Rosário da Limeira) — igual aos demais layouts, sem alterar o transformer compartilhado.
+- **Simples**: campo "Simples Nac/MEI/Outros: Simples Nacional" (não usa "optante") → tratado por regex própria; regime especial fica ausente (o campo "Reg. Especial Tributação:" vem vazio).
 
 ### Faturas de locação / serviços específicos
 
@@ -252,4 +264,4 @@ O sistema conta com um motor de fatiamento inteligente que suporta:
 
 ---
 
-*Documentação atualizada em: 2026-07-24 (34 layouts; adicionado Mata de São João/BA — `mata_sao_joao_ba`, layout dedicado do município via plataforma SAATRI, NFS-e escaneada de boa qualidade (OCR limpo), com item LC116 "01.01.01"→0101, grade de valores rótulo-em-cima/valor-embaixo, e fix do IBGEResolver 2921005 que colidia com Salvador).*
+*Documentação atualizada em: 2026-07-27 (35 layouts; adicionado Rosário da Limeira/MG — `rosario_da_limeira_mg`, layout dedicado do município via plataforma FUTURIZE, NFS-e tributada digital (sem OCR), com item LC116 "09.01.04"→0901, endereço em linha única parseado de trás pra frente, e fix do IBGEResolver 3156452 que colidia com Belo Horizonte; nota "fora do município" mantém a incidência no município do prestador por decisão do usuário).*
