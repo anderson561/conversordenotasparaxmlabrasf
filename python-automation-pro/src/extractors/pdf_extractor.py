@@ -70,6 +70,7 @@ LAYOUT_SAO_PAULO_2 = 'sao_paulo_sp_scan'  # São Paulo/SP ESCANEADO (JPG/foto ->
 LAYOUT_CAMACARI_2 = 'camacari_ba_scan'  # Camaçari/BA ESCANEADO (foto/JPG -> OCR) - mesmo cabeçalho do LAYOUT_CAMACARI, gated por from_ocr; SUPERSET (herda os branches do CAMACARI como fallback) + tratamento próprio: re-OCR zoom4/PSM6, recorte de cabeçalho, grade com alíquota↔ISS trocados e ISS calculado, correção do 1º dígito do CNPJ do tomador
 LAYOUT_MATA_SAO_JOAO = 'mata_sao_joao_ba'  # Mata de São João/BA (plataforma SAATRI - matadesaojoao.saatri.com.br) - NFS-e tributada, escaneada de boa qualidade (OCR zoom3 limpo, sem rotação); layout dedicado do município. Estrutura: blocos "Prestador/Tomador do(s) Serviço(s)" contíguos, grade de valores rótulo-em-cima/valor-embaixo, código de serviço "01.01.01" (item LC 116) -> 4 dígitos
 LAYOUT_ROSARIO_LIMEIRA = 'rosario_da_limeira_mg'  # Rosário da Limeira/MG (plataforma FUTURIZE) - NFS-e tributada DIGITAL (pdfminer limpo, sem OCR); layout dedicado do município. Blocos "PRESTADOR/TOMADOR DE SERVIÇOS" com rótulos por linha; endereço em linha única "logradouro - [extras] - bairro - CEP - município - UF"; código "Trib. Nacional 09.01.04" (item LC 116) -> 4 dígitos. Nota "fora do município" (prestação em outra cidade) mantém município do prestador na incidência (decisão do usuário)
+LAYOUT_CAMACARI_AVULSA = 'camacari_ba_avulsa'  # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA) Série "A", emitida pela própria Prefeitura, escaneada (OCR). Distinta das notas Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2): blocos "IDENTIFICAÇÃO DO PRESTADOR/TOMADOR" com rótulos "Nome / Razão", "CPF / CNPJ:", "CEP: ... Município: ... UF:", "Logradouro: ... Nº ...", "Bairro: ...". Valores CONFIÁVEIS vêm da camada DIGITAL (pdfminer): o OCR troca o 1º dígito do VALOR TRIBUTÁVEL (14.685->74.685) e deixa o VALOR LÍQUIDO em branco. Detecção casa AVULSA + CAMAÇARI (precede o bloco CPqD)
 
 
 # Etiquetas para Identificação de Entidades
@@ -185,6 +186,15 @@ class SPPdfExtractor:
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
+        # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA), emitida
+        # pela própria Prefeitura (Série "A"), escaneada. PRECEDE o bloco Camaçari
+        # CPqD porque compartilha "CAMAÇARI" no cabeçalho, mas a estrutura (blocos
+        # IDENTIFICAÇÃO DO PRESTADOR/TOMADOR, grade de valores própria) é distinta.
+        # O OCR quebra "PREFEITURA MUNICIPAL DE" e "CAMAÇARI" em linhas separadas,
+        # por isso casamos "AVULSA" + "CAMAÇARI" (a marca AVULSA não aparece nas
+        # notas CPqD digitais/escaneadas, então não há falso positivo com elas).
+        if re.search(r'\bAVULSA\b', t, re.IGNORECASE) and re.search(r'CAMA[CÇ]ARI', t, re.IGNORECASE):
+            return LAYOUT_CAMACARI_AVULSA
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE):
             # Mesmo cabeçalho para o Camaçari digital (texto embutido) e o
             # escaneado (foto/JPG -> OCR). Diferente do SP2, o LAYOUT_CAMACARI
@@ -286,6 +296,15 @@ class SPPdfExtractor:
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador|MUNICIPIO\s+DE\s+BARREIRAS', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
+        # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA), emitida
+        # pela própria Prefeitura (Série "A"), escaneada. PRECEDE o bloco Camaçari
+        # CPqD porque compartilha "CAMAÇARI" no cabeçalho, mas a estrutura (blocos
+        # IDENTIFICAÇÃO DO PRESTADOR/TOMADOR, grade de valores própria) é distinta.
+        # O OCR quebra "PREFEITURA MUNICIPAL DE" e "CAMAÇARI" em linhas separadas,
+        # por isso casamos "AVULSA" + "CAMAÇARI" (a marca AVULSA não aparece nas
+        # notas CPqD digitais/escaneadas, então não há falso positivo com elas).
+        if re.search(r'\bAVULSA\b', t, re.IGNORECASE) and re.search(r'CAMA[CÇ]ARI', t, re.IGNORECASE):
+            return LAYOUT_CAMACARI_AVULSA
         if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE):
             # Mesmo cabeçalho para o Camaçari digital (texto embutido) e o
             # escaneado (foto/JPG -> OCR). Diferente do SP2, o LAYOUT_CAMACARI
@@ -402,6 +421,10 @@ class SPPdfExtractor:
                     result = datetime(int(m.group(2)), int(m.group(1)), 1)
                 except ValueError:
                     result = None
+        elif layout == LAYOUT_CAMACARI_AVULSA:
+            # Não há campo de competência próprio; usamos o mês da data de
+            # prestação (data_emissao já resolvida a partir de "DATA DE PRESTAÇÃO").
+            result = datetime(data_emissao.year, data_emissao.month, 1)
         elif layout == LAYOUT_TELECOM_COMUNICACAO:
             # Campo "REFERÊNCIA (ANO/MÊS): 2026/06" ou "REFERÊNCIA: 2026/06"
             m = re.search(r'REFER[EÊ]NCIA\s*(?:\([^)]*\))?\s*[:\s]+(\d{4})/(\d{2})', t, re.IGNORECASE)
@@ -525,6 +548,14 @@ class SPPdfExtractor:
             m = re.search(r'Data\s+da\s+Nota\s+Fiscal\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_CAMACARI_AVULSA:
+            # "DATA DE PRESTAÇÃO: 12.06.2026" — datas com ponto neste layout. Não
+            # há rótulo "Data de Emissão"; a data da prestação é a referência.
+            m = re.search(r'DATA\s+DE\s+PRESTA[ÇC][ÃA]O\s*:?\s*(\d{2})[./](\d{2})[./](\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(f"{m.group(1)}/{m.group(2)}/{m.group(3)}")
                 if res: return res
 
         if self.layout == LAYOUT_CPE_LOCACAO:
@@ -734,6 +765,14 @@ class SPPdfExtractor:
             # (202600000000072) nem o "Nº da RPS".
             m = re.search(r'N[ºo°]\s*da\s*Nota\s*\n\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_CAMACARI_AVULSA:
+            # "...DE SERVIÇOS (AVULSA) 00000088462" — número zero-preenchido (11
+            # dígitos) na linha do cabeçalho. Removemos os zeros à esquerda
+            # (int() -> "88462"). Ancorado em "AVULSA" para não casar com o
+            # "Código Pessoa: 0000630812" do prestador.
+            m = re.search(r'AVULSA\s*\)?\s*(\d{5,})', t, re.IGNORECASE)
+            if m: return str(int(m.group(1)))
 
         if self.layout == LAYOUT_LOCALIZA:
             m = re.search(r'N[ºo]:\s*([A-Z0-9\s-]+)', t, re.IGNORECASE)
@@ -945,6 +984,20 @@ class SPPdfExtractor:
             # ENTRE o rótulo "ART:" e o cabeçalho "DISCRIMINAÇÃO DOS SERVIÇOS"
             # (a grade de valores vem logo após o cabeçalho, sem a descrição).
             m = re.search(r'\bART:\s*\n\s*(.+?)\s*\n\s*DISCRIMINA[ÇC][ÃA]O', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc:
+                    return disc
+
+        if self.layout == LAYOUT_CAMACARI_AVULSA:
+            # A descrição real do serviço é a linha do item, logo após o cabeçalho
+            # da tabela ("...Preço Unitário, Preço Total"), no formato
+            # "1 TRANSPORTE E DESTINAÇÃO FINAL DE RESIDUO CLASSE II B 16.500,00! 16.500,00".
+            # Removemos a quantidade inicial ("1 ") e os dois valores finais (o "!"
+            # é ruído de borda do OCR).
+            m = re.search(
+                r'Pre[çc]o\s+Tota[l]?[^\n]*\n\s*\d+\s+(.+?)\s+[\d.,]+[!|]*\s+[\d.,]+',
+                t, re.IGNORECASE)
             if m:
                 disc = re.sub(r'\s+', ' ', m.group(1)).strip()
                 if disc:
@@ -1261,6 +1314,15 @@ class SPPdfExtractor:
             if m:
                 return m.group(1) + m.group(2)
 
+        if self.layout == LAYOUT_CAMACARI_AVULSA:
+            # "PE 000709 - VARRIÇÃO, COLETA, REMOÇÃO..." — código da atividade em 6
+            # dígitos zero-preenchidos (000709 = item 7.09 da LC 116). Usamos os 4
+            # dígitos significativos -> "0709". Ancorado no traço que separa código
+            # e descrição (o número da nota "00000088462" não é seguido de traço).
+            m = re.search(r'\b0*(\d{4})\s*[-–]\s*[A-Za-zÀ-ú]', t)
+            if m:
+                return m.group(1)
+
         if self.layout == LAYOUT_SAO_PAULO_2:
             # "Código do Serviço a ” ;\n02498 - Inserção de textos..." — código
             # de 5 dígitos do cadastro paulistano. O OCR insere ruído entre o
@@ -1570,6 +1632,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_rosario_limeira(is_prestador)
+
+        if self.layout == LAYOUT_CAMACARI_AVULSA:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_camacari_avulsa(is_prestador)
 
         if self.layout == LAYOUT_CAMACARI_2:
             if is_intermediario:
@@ -3292,6 +3359,75 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_camacari_avulsa(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA)
+        da Prefeitura de Camaçari/BA (escaneada -> OCR). Blocos "IDENTIFICAÇÃO DO
+        PRESTADOR" / "IDENTIFICAÇÃO DO TOMADOR", com rótulos numa estrutura fixa:
+            Nome / Razão <razão>
+            CPF / CNPJ: <cnpj>  Código Pessoa / Inscrição Municipal: ...
+            CEP: <cep>  Município: <município>  UF: <uf>
+            Logradouro: <logradouro>  Nº <número>
+            [Complemento ...]  Bairro: <bairro>
+        """
+        t = self.raw_text
+        m_prest = re.search(r'IDENTIFICA[ÇC][ÃA]O\s+DO\s+PRESTADOR', t, re.IGNORECASE)
+        m_tom = re.search(r'IDENTIFICA[ÇC][ÃA]O\s+DO\s+TOMADOR', t, re.IGNORECASE)
+        m_nat = re.search(r'NATUREZA\s+DA\s+OPERA[ÇC][ÃA]O', t, re.IGNORECASE)
+
+        if is_prestador:
+            bloco = t[m_prest.end():m_tom.start()] if (m_prest and m_tom) else ''
+        else:
+            if m_tom:
+                fim = m_nat.start() if (m_nat and m_nat.start() > m_tom.end()) else len(t)
+                bloco = t[m_tom.end():fim]
+            else:
+                bloco = ''
+
+        # "Nome / Razão ECO COLETA TUDO ... LTDA" (sem ":" após "Razão").
+        m_razao = re.search(r'Nome\s*/\s*Raz[ãa]o\s*:?\s*(.+)', bloco, re.IGNORECASE)
+        razao = m_razao.group(1).strip() if m_razao else ''
+
+        # "CPF / CNPJ: 17.095.195/0001-01" (para o resto da linha há "Código Pessoa"
+        # ou "Inscrição Municipal", que o [\d./-]+ não captura).
+        m_cnpj = re.search(r'CPF\s*/\s*CNPJ\s*:?\s*([\d./-]+)', bloco, re.IGNORECASE)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        m_im = re.search(r'Inscri[çc][ãa]o\s+Municipal\s*:?\s*(\d+)', bloco, re.IGNORECASE)
+        inscricao = m_im.group(1) if m_im else ''
+
+        # "CEP: 42802580 Município: CAMACARI UF: BA" — CEP (8 díg.), município e UF.
+        m_cep = re.search(r'CEP\s*:?\s*(\d{5}-?\d{3}|\d{8})', bloco, re.IGNORECASE)
+        cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else '00000000'
+
+        m_mun = re.search(r'Munic[íi]pio\s*:?\s*(.+?)\s+UF\s*:?\s*([A-Z]{2})', bloco, re.IGNORECASE)
+        municipio = m_mun.group(1).strip() if m_mun else ''
+        uf = m_mun.group(2).strip().upper() if m_mun else 'BA'
+
+        # "Logradouro: RUA A3 Nº. SN" / "Logradouro: R CAMBORIU Nº: 39".
+        m_log = re.search(r'Logradouro\s*:?\s*(.+?)\s+N[ºo°]\.?\s*:?\s*([\w-]+)', bloco, re.IGNORECASE)
+        logradouro = m_log.group(1).strip() if m_log else ''
+        numero = m_log.group(2).strip() if m_log else 'S/N'
+
+        m_bairro = re.search(r'Bairro\s*:?\s*(.+)', bloco, re.IGNORECASE)
+        bairro = m_bairro.group(1).strip() if m_bairro else ''
+
+        cod_mun = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio) if municipio else ''
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao or ('Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'),
+            inscricao_municipal=inscricao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=numero or 'S/N',
+                bairro=bairro or 'Não informado',
+                codigo_municipio=cod_mun,
+                municipio=municipio or 'Não informado',
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+        )
+
     def _extrair_entidade_iacu(self, is_prestador: bool) -> Entidade:
         """Extrai prestador/tomador da NFS-e de Iaçu/BA (plataforma nfservico.com.br).
 
@@ -3907,6 +4043,41 @@ class SPPdfExtractor:
                 iss_retido=iss_retido_val > 0,
                 valor_iss_retido=iss_retido_val,
                 valor_liquido_nfse=liquido or serv,
+            )
+
+        if self.layout == LAYOUT_CAMACARI_AVULSA:
+            # Nota avulsa ISENTA (alíquota 0 / ISS 0 / sem retenção — a própria nota
+            # diz "NÃO CABE RETENÇÃO NA FONTE"). O rótulo "TOTAL SERVIÇOS 16.500,00"
+            # sai limpo no OCR (bruto). Já o "VALOR TRIBUTÁVEL" tem o 1º dígito
+            # trocado pelo OCR (14.685 -> 74.685) e o "VALOR LÍQUIDO" fica em branco,
+            # então tiramos base/líquido da CAMADA DIGITAL (pdfminer), que traz os
+            # valores exatos. Decisão do usuário: ValorServicos = total bruto,
+            # BaseCalculo = valor tributável.
+            m_serv = re.search(r'TOTAL\s+SERVI[ÇC]OS[^\d\n]*([\d.]+,\d{2})', t, re.IGNORECASE)
+            serv = self._parse_valor(m_serv.group(1)) if m_serv else 0.0
+
+            dig = ''
+            try:
+                dig = extract_text(self.pdf_path) or ''
+            except Exception:
+                dig = ''
+            dig_vals = sorted({self._parse_valor(x) for x in re.findall(r'\d[\d.]*,\d{2}', dig)})
+            # Sem retenção -> base == líquido == valor tributável. Ele é o valor
+            # digital diferente do total de serviços; se só houver um valor
+            # (nota totalmente tributável), base = serv.
+            if not serv and dig_vals:
+                serv = max(dig_vals)
+            base = next((v for v in dig_vals if abs(v - serv) > 0.001), serv) if dig_vals else serv
+
+            return Valores(
+                valor_servicos=serv,
+                valor_deducoes=0.0,
+                base_calculo=base or serv,
+                aliquota=0.0,
+                valor_iss=0.0,
+                iss_retido=False,
+                valor_iss_retido=0.0,
+                valor_liquido_nfse=base or serv,
             )
 
         if self.layout == LAYOUT_SAO_PAULO_2:

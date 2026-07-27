@@ -6,7 +6,7 @@ Este documento detalha os layouts e formatos suportados pelo conversor.
 
 ## Layouts Suportados (PDF → XML)
 
-O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **35 layouts** ao todo (34 específicos + o genérico de fallback), agrupados abaixo por tipo. Obs.: o São Paulo (nº 7) e o Camaçari (nº 3) têm **duas variantes dedicadas** cada (digital e escaneada), e Mata de São João (nº 16b) e Rosário da Limeira (nº 16c) foram adicionados fora da sequência — por isso a numeração das entradas não bate 1-para-1 com as 35 constantes de layout. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
+O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **36 layouts** ao todo (35 específicos + o genérico de fallback), agrupados abaixo por tipo. Obs.: o São Paulo (nº 7) tem **duas variantes dedicadas** (digital e escaneada) e o Camaçari (nº 3) tem **três** (digital, escaneada e Nota Avulsa da Prefeitura — nº 16d); Mata de São João (nº 16b) e Rosário da Limeira (nº 16c) foram adicionados fora da sequência — por isso a numeração das entradas não bate 1-para-1 com as 36 constantes de layout. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
 
 > **Nota sobre OCR:** o texto pós-OCR (e às vezes até o de PDF com texto embutido) diverge do que parece "óbvio" na imagem — troca de caracteres, glifos ilegíveis, colunas intercaladas. As regras por layout são propositalmente tolerantes a esses ruídos.
 
@@ -131,6 +131,18 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **⚠️ IBGE**: Rosário da Limeira → **3156452**. Registrado em `KNOWN_CITIES` — sem isso o resolver caía no default **MG Belo Horizonte (3106200)**.
 - **⚠️ Tributação fora do município**: a nota é "TRIBUTAÇÃO FORA DO MUNICÍPIO" (prestação em Luís Eduardo Magalhães/BA). Por decisão do usuário, a incidência **mantém o município do prestador** (Rosário da Limeira) — igual aos demais layouts, sem alterar o transformer compartilhado.
 - **Simples**: campo "Simples Nac/MEI/Outros: Simples Nacional" (não usa "optante") → tratado por regex própria; regime especial fica ausente (o campo "Reg. Especial Tributação:" vem vazio).
+
+### 16d. Camaçari/BA — Nota Avulsa — `camacari_ba_avulsa`
+- **Sistema**: **NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA)** Série "A", emitida diretamente pela **Prefeitura Municipal de Camaçari/BA** (Secretaria da Fazenda) — distinta das notas Camaçari via CPqD (`camacari`/`camacari_ba_scan`). Escaneada → OCR.
+- **Detecção**: casa **`AVULSA` + `CAMAÇARI`** e **precede** o bloco Camaçari CPqD. A marca "AVULSA" não aparece nas notas CPqD (digital/escaneada), então não há falso positivo; e o OCR quebra "PREFEITURA MUNICIPAL DE" e "CAMAÇARI" em linhas separadas, por isso **não** se casa a frase inteira. Guarda de regressão no teste: nota CPqD sem "AVULSA" continua indo para `camacari`/`camacari_ba_scan`.
+- **Número**: "...DE SERVIÇOS (AVULSA) 00000088462" → zeros à esquerda removidos (`88462`). Ancorado em "AVULSA" para não casar com o "Código Pessoa: 0000630812" do prestador.
+- **Data**: "DATA DE PRESTAÇÃO: 12.06.2026" (datas com **ponto**). Não há rótulo de emissão; a competência é o mês da prestação.
+- **Item de serviço**: "PE 000709" → item **7.09** da LC 116 (`0709`, 4 dígitos significativos). Ancorado no traço que separa código e descrição (o número da nota não é seguido de traço).
+- **Discriminação**: linha do item logo após o cabeçalho da tabela ("...Preço Total"), no formato "1 TRANSPORTE E DESTINAÇÃO FINAL DE RESIDUO CLASSE II B 16.500,00! 16.500,00" → removidos a quantidade inicial e os dois valores finais (o "!" é ruído de borda).
+- **⚠️ Valores (camada digital)**: nota **ISENTA** (alíquota 0 / ISS 0 / sem retenção — a própria nota diz "NÃO CABE RETENÇÃO NA FONTE"). O OCR troca o **1º dígito do VALOR TRIBUTÁVEL** (14.685 → **74.685**) e deixa o **VALOR LÍQUIDO em branco**, então `base`/`líquido` vêm da **camada digital** (`pdfminer`, relida no ramo de valores) — que traz os números exatos. O rótulo "TOTAL SERVIÇOS 16.500,00" sai limpo no OCR e identifica o bruto. **Decisão do usuário**: `ValorServicos` = total bruto (16.500), `BaseCalculo` = valor tributável (14.685); líquido = base.
+- **Entidades**: blocos "IDENTIFICAÇÃO DO PRESTADOR/TOMADOR"; rótulos "Nome / Razão", "CPF / CNPJ:", "CEP: ... Município: ... UF:", "Logradouro: ... Nº ...", "Bairro: ...". Quirk: bairro do tomador sai **"API"** (o OCR comeu o "I" de "IAPI") — mantido fiel, sem inventar a letra.
+- **IBGE**: Camaçari (**2905701**) e Salvador (**2927408**) já estavam em `KNOWN_CITIES`; nada a registrar, mas os códigos são **asseridos** no teste.
+- **Código de verificação**: nota avulsa física **não** tem hash de autenticidade → cai no placeholder `XXXX-XXXX` e gera o aviso honesto "Código de verificação/autenticidade não encontrado".
 
 ### Faturas de locação / serviços específicos
 
@@ -264,4 +276,4 @@ O sistema conta com um motor de fatiamento inteligente que suporta:
 
 ---
 
-*Documentação atualizada em: 2026-07-27 (35 layouts; adicionado Rosário da Limeira/MG — `rosario_da_limeira_mg`, layout dedicado do município via plataforma FUTURIZE, NFS-e tributada digital (sem OCR), com item LC116 "09.01.04"→0901, endereço em linha única parseado de trás pra frente, e fix do IBGEResolver 3156452 que colidia com Belo Horizonte; nota "fora do município" mantém a incidência no município do prestador por decisão do usuário).*
+*Documentação atualizada em: 2026-07-27 (36 layouts; adicionado Camaçari/BA Nota Avulsa — `camacari_ba_avulsa`, NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA) Série "A" emitida pela própria Prefeitura, escaneada → OCR, distinta das notas CPqD; detecção por AVULSA+CAMAÇARI precedendo o bloco CPqD, item LC116 "PE 000709"→0709, nota ISENTA com base/líquido lidos da camada digital porque o OCR corrompe o VALOR TRIBUTÁVEL — ValorServicos=16.500 bruto / BaseCalculo=14.685 tributável por decisão do usuário).*
