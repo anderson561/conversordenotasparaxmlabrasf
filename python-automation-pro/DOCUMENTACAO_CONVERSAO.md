@@ -6,7 +6,7 @@ Este documento detalha os layouts e formatos suportados pelo conversor.
 
 ## Layouts Suportados (PDF → XML)
 
-O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **32 layouts** ao todo (31 específicos + o genérico de fallback), agrupados abaixo por tipo. Obs.: o São Paulo tem **duas variantes dedicadas** (digital e escaneada) sob a entrada nº 7 — por isso há 31 entradas numeradas para 32 constantes de layout. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
+O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, capaz de ler as disposições textuais do PDF e classificar dinamicamente qual regra de negócio aplicar (`_detect_layout` / `_detect_layout_page`). São **34 layouts** ao todo (33 específicos + o genérico de fallback), agrupados abaixo por tipo. Obs.: o São Paulo (nº 7) e o Camaçari (nº 3) têm **duas variantes dedicadas** cada (digital e escaneada), e Mata de São João foi adicionado como nº 16b — por isso a numeração das entradas não bate 1-para-1 com as 34 constantes de layout. PDFs escaneados/imagem (sem texto extraível) passam automaticamente por **OCR** (Tesseract via `pytesseract` + PyMuPDF, `lang='por'`) antes da extração.
 
 > **Nota sobre OCR:** o texto pós-OCR (e às vezes até o de PDF com texto embutido) diverge do que parece "óbvio" na imagem — troca de caracteres, glifos ilegíveis, colunas intercaladas. As regras por layout são propositalmente tolerantes a esses ruídos.
 
@@ -109,6 +109,16 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Item de serviço**: item LC116 no formato `7.02` → `0702`.
 - **Valores**: NFS-e **tributada** (ISS real, ex.: 3% sobre a base) — grade "Valor total das deduções / Base de cálculo / Alíquota / Valor do ISS / Crédito"; base/alíquota/ISS espelhados da face (diferente da família de locação).
 - **Entidades**: endereço em linha única (`RUA X N, - BAIRRO - CEP: NNNNNNNN - CIDADE - UF`); parser ignora o ruído do carimbo de recebimento intercalado no bloco do tomador (o CNPJ correto é o primeiro de 14 dígitos).
+
+### 16b. Mata de São João/BA — `mata_sao_joao_ba`
+- **Sistema**: Prefeitura Municipal de Mata de São João/BA via plataforma **SAATRI** (`matadesaojoao.saatri.com.br`) — NFS-e tributada, escaneada → OCR, mas **scan de boa qualidade** (OCR limpo em zoom 3, sem rotação — bem mais simples que Camaçari/SP2).
+- **Detecção**: "Mata de São João" (tolerante ao "ã" corrompido) ou `matadesaojoao.saatri`. Específico do município — **não** casa só por `saatri.com.br`, para não rotear outras prefeituras SAATRI ainda não testadas (decidido com o usuário). **Não** é gated por `from_ocr`: não há layout digital concorrente a proteger.
+- **Número**: "Número da Nota ... 00000018" — zero-preenchido; removemos os zeros à esquerda (`00000018` → `18`).
+- **Item de serviço**: "Classificação do Serviço (LEI 116/2003) + Desdobro: 01.01.01" — o 3º par é o desdobro municipal; usamos os 2 primeiros (`01.01` → `0101`). Ancorado no rótulo próprio para não casar com o NBS (`115021000`) logo abaixo.
+- **Valores**: duas grades "rótulo-em-cima / valores-embaixo" (Serviços/Dedução/Desc.Incond./Base de Cálculo e Alíquota/ISS/ISS Retido/Desc.Cond.) + total em "Total do(s) Serviço(s) / Total Líquido". Já traz colunas de **IBS/CBS** (reforma tributária) — presentes mas zeradas; **não mapeadas** por ora.
+- **Entidades**: blocos "Prestador/Tomador do(s) Serviço(s)" com linhas contíguas (razão / [fantasia] / logradouro / `Bairro - MUNICÍPIO/UF CEP` / `CNPJ Insc. Municipal`). A coluna de rótulos (`Nome/Razão Social:`, `CPF/CNPJ:`...) é dumpada em bloco separado no fim e ignorada.
+- **⚠️ IBGE**: Mata de São João → **2921005**. Foi preciso registrá-lo em `IBGEResolver.KNOWN_CITIES` — sem isso o resolver caía no default **Salvador (2927408)**.
+- **Simples**: a nota diz "optante **do** simples nacional" (não "pelo"); a regex genérica foi ampliada para `(?:PELO|DO)`.
 
 ### Faturas de locação / serviços específicos
 
@@ -242,4 +252,4 @@ O sistema conta com um motor de fatiamento inteligente que suporta:
 
 ---
 
-*Documentação atualizada em: 2026-07-24 (33 layouts; adicionado Camaçari/BA escaneado — `camacari_ba_scan`, layout dedicado/SUPERSET para NFS-e de Camaçari em foto/JPG de baixa qualidade via OCR, com re-OCR zoom4/PSM6, recorte de cabeçalho, grade com alíquota↔ISS trocados e correção do 1º dígito do CNPJ do tomador).*
+*Documentação atualizada em: 2026-07-24 (34 layouts; adicionado Mata de São João/BA — `mata_sao_joao_ba`, layout dedicado do município via plataforma SAATRI, NFS-e escaneada de boa qualidade (OCR limpo), com item LC116 "01.01.01"→0101, grade de valores rótulo-em-cima/valor-embaixo, e fix do IBGEResolver 2921005 que colidia com Salvador).*
