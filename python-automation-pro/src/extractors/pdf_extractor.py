@@ -899,6 +899,20 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).strip()
 
+        if self.layout == LAYOUT_NACIONAL:
+            # DANFSe Nacional: o número da NFS-e vem codificado na Chave de Acesso
+            # de 50 dígitos (posições 24-36, zero-preenchidas) — fonte de verdade
+            # imune ao OCR, que costuma comer dígitos do valor impresso ao lado do
+            # rótulo "Número da NFS-e" (ex.: "21" sai "2"). Por isso priorizamos o
+            # decode da chave sobre a proximidade do rótulo (usada mais abaixo).
+            m_chave = re.search(r'\b(?:\d\s*){44,60}\b', t)
+            if m_chave:
+                chave = re.sub(r'\D', '', m_chave.group(0))
+                if len(chave) >= 50:
+                    n_nf = chave[23:36].lstrip('0')
+                    if n_nf:
+                        return n_nf
+
         # 1. Busca por proximidade do label (Alta prioridade para DANFSe v1.0)
         # Procura o rótulo e pega o primeiro número que aparece depois dele (até 100 caracteres de distância)
         label_patterns = [
@@ -1393,6 +1407,18 @@ class SPPdfExtractor:
                 if m_cod:
                     return m_cod.group(1)[:4]
 
+        if self.layout == LAYOUT_NACIONAL:
+            # DANFSe: "Código de Tributação Nacional ... 16.02.01 - Outros serviços
+            # de transporte..." — item da LC 116 no formato "XX.XX.XX" (o 3º par é o
+            # desdobro). Usamos os 2 primeiros pares (16.02 -> 1602). Ancorado no
+            # rótulo próprio; entre ele e o código há os rótulos vizinhos da grade
+            # ("Código de Tributação Municipal Local da Prestação..."), então
+            # pulamos até o primeiro "XX.XX.XX". Sem este ramo, cai no default
+            # genérico "03115".
+            m = re.search(r'C[óo]digo\s+de\s+Tributa[çc][ãa]o\s+Nacional[\s\S]{0,100}?(\d{2})\.(\d{2})\.\d{2}', t, re.IGNORECASE)
+            if m:
+                return m.group(1) + m.group(2)
+
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
         patterns = [
@@ -1503,6 +1529,18 @@ class SPPdfExtractor:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
                 if len(candidato) >= 6 and re.search(r'\d', candidato) and re.search(r'[A-Z]', candidato):
                     return candidato
+
+        if self.layout == LAYOUT_NACIONAL:
+            # DANFSe Nacional não tem "Código de Verificação" — sua identidade e
+            # autenticidade são a Chave de Acesso de 50 dígitos ("Chave de Acesso
+            # da NFS-e"), que também é a chave de consulta no portal nacional.
+            # Preenche o <CodigoVerificacao> do XML (decisão do usuário). É a única
+            # sequência contígua de 50 dígitos do documento (CNPJ tem 14).
+            m = re.search(r'\b(?:\d\s*){50,60}\b', t)
+            if m:
+                chave = re.sub(r'\D', '', m.group(0))
+                if len(chave) >= 50:
+                    return chave[:50]
 
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
@@ -3959,6 +3997,48 @@ class SPPdfExtractor:
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
+
+        if self.layout == LAYOUT_NACIONAL:
+            # DANFSe Nacional: grade "rótulo(s) em cima / valores embaixo", com
+            # campos vazios marcados por "-" e linhas em branco entre rótulo e
+            # valor. Os padrões genéricos não casam essa estrutura (chegam a pescar
+            # o número da nota como ISS), então extraímos por proximidade de cada
+            # rótulo próprio, pegando o primeiro "R$ n,nn" após ele.
+            def _rs_apos(label, janela=200):
+                m = re.search(label, t, re.IGNORECASE)
+                if not m:
+                    return 0.0
+                trecho = t[m.end(): m.end() + janela]
+                m_v = re.search(r'R\$\s*([\d.]+,\d{2})', trecho)
+                return self._parse_valor(m_v.group(1)) if m_v else 0.0
+
+            serv = _rs_apos(r'Valor\s+do\s+Servi[çc]o')
+            liquido = _rs_apos(r'Valor\s+L[íi]quido\s+da\s+NFS')
+            if not serv:
+                serv = liquido
+            if not liquido:
+                liquido = serv
+
+            # BC/ISS/alíquota só têm valor em notas com tributação efetiva; em MEI
+            # ("Optante - Microempreendedor Individual") saem em branco ("-").
+            def _num_rotulo(label, janela=40):
+                m = re.search(label + r'[\s\S]{0,' + str(janela) + r'}?R\$\s*([\d.]+,\d{2})', t, re.IGNORECASE)
+                return self._parse_valor(m.group(1)) if m else 0.0
+
+            base = _num_rotulo(r'BC\s+ISSQN')
+            iss = _num_rotulo(r'ISSQN\s+Apurado')
+            iss_retido = bool(re.search(r'ISSQN\s+Retido[\s\S]{0,40}?\bSim\b', t, re.IGNORECASE))
+
+            return Valores(
+                valor_servicos=serv,
+                valor_deducoes=0.0,
+                base_calculo=base or serv,
+                aliquota=0.0,
+                valor_iss=iss,
+                iss_retido=iss_retido,
+                valor_iss_retido=iss if iss_retido else 0.0,
+                valor_liquido_nfse=liquido or serv,
+            )
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             # Duas grades "rótulo-em-cima / valores-embaixo" (padrão SAATRI):

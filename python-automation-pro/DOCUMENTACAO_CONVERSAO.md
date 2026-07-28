@@ -93,9 +93,12 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
   - **PDF digital → pdfminer**: tabela de 2 colunas extraída campo a campo, com CNPJ/Nome/Endereço contíguos por entidade e os demais campos (IM, e-mail, município, telefone, CEP) num bloco posterior **com as colunas intercaladas**. Regra estável: a *N-ésima ocorrência* de cada rótulo pertence à N-ésima entidade (1ª = prestador, 2ª = tomador). Tratado por `_extrair_entidade_campinas_digital`, escolhido por detecção automática da estrutura.
 
 ### 14. Portal Nacional DANFSe — `danfse_nacional`
-- **Cabeçalho**: "DANFSe v1.0", "Documento Auxiliar da NFS-e"
+- **Cabeçalho**: "DANFSe v1.0", "Documento Auxiliar da NFS-e" (a detecção também casa pela âncora "Chave de Acesso", pois em DANFSe **escaneada** o OCR corrompe o cabeçalho — ex.: "DANFSo vi", "NFS-g").
 - **Competência**: Rótulos `Competência da NFS-e` (aceita `MM/YYYY` e `DD/MM/YYYY`) com regra de prioridade sobre a *Data/Hora da Emissão* em caso de conflitos.
 - **Entidades**: Suporte avançado a extração segmentada para **Prestador**, **Tomador** e **Intermediário do Serviço**, isolando perfeitamente seus respectivos CNPJs e controlando contaminações cruzadas quando campos vêm indicados como "NÃO IDENTIFICADO".
+- **⚠️ Chave de Acesso como fonte de verdade (DANFSe escaneada)**: a Chave de Acesso de **50 dígitos** codifica IBGE do município + CNPJ do emitente + **número da NFS-e** (posições 24-36, zero-preenchidas). Em notas escaneadas o OCR come dígitos do número impresso ao lado do rótulo (ex.: `21` vira `2`), então o **número é decodificado da chave** (`chave[23:36].lstrip('0')`), não do rótulo. A própria chave (50 díg.) preenche o `<CodigoVerificacao>` do XML — o DANFSe **não tem** um "Código de Verificação" separado.
+- **Item de serviço**: "Código de Tributação Nacional 16.02.01" → 2 primeiros pares (`1602`); o 3º par é o desdobro municipal. Sem este ramo, caía no default genérico `03115`.
+- **Valores (grade "rótulo em cima / valor embaixo")**: campos vazios marcados por `-`; o `R$ n,nn` é capturado por **proximidade de cada rótulo próprio** ("Valor do Serviço", "Valor Líquido da NFS-e"). Os padrões genéricos falhavam nessa estrutura (pescavam o número da nota como ISS e deixavam o valor zerado). **MEI** ("Optante - Microempreendedor Individual"): BC/alíquota/ISS em branco → tributação zero, não retido.
 
 ### 15. Lauro de Freitas/BA — `lauro_de_freitas_ba`
 - **Detecção**: "MUNICÍPIO DE LAURO DE FREITAS" ou domínio `laurodefreitas.ba.gov.br`.
