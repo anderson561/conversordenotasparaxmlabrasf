@@ -2197,6 +2197,31 @@ class SPPdfExtractor:
 
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
+        # Salvador escaneado (OCR): esta variante NÃO traz cabeçalho "TOMADOR".
+        # Prestador e tomador são dois blocos consecutivos delimitados apenas
+        # pelos rótulos "Nome/Razão Social" — o prestador sob "PRESTADOR DE
+        # SERVIÇOS" (ordem CPF/CNPJ → Nome → Endereço) e o tomador logo abaixo,
+        # SEM rótulo próprio (ordem invertida: Nome → CPF/CNPJ → Endereço). Sem
+        # este recorte, a busca genérica pelo rótulo "TOMADOR" falha, o bloco
+        # vira o texto inteiro e o tomador acaba herdando o 1º CNPJ/nome/endereço
+        # (os do prestador). Só ativa quando NÃO há rótulo de tomador — a variante
+        # digital rotulada ("TOMADOR DE SERVIÇOS" + "Município:/UF:") segue no
+        # caminho genérico já testado, sem risco de regressão.
+        bloco_sv = None
+        if self.layout == LAYOUT_SALVADOR and not is_intermediario:
+            tem_label_tomador = re.search(
+                "|".join(relax(l) for l in _LABELS_TOMADOR), t, re.IGNORECASE)
+            nomes = list(re.finditer(r'Nome\s*/?\s*Raz[ãa]o\s+Social', t, re.IGNORECASE))
+            if not tem_label_tomador and len(nomes) >= 2:
+                m_disc = re.search(r'DISCRIMINA[ÇC][ÃA]O', t, re.IGNORECASE)
+                disc_pos = m_disc.start() if m_disc else len(t)
+                if is_prestador:
+                    m_prest = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]O', t, re.IGNORECASE)
+                    ini = m_prest.start() if m_prest else 0
+                    bloco_sv = t[ini: nomes[1].start()]
+                else:
+                    bloco_sv = t[nomes[1].start(): disc_pos]
+
         # 1. Bloco
         if is_intermediario:
             labels = sorted(_LABELS_INTERMEDIARIO, key=len, reverse=True)
@@ -2218,7 +2243,7 @@ class SPPdfExtractor:
         if is_intermediario and not m_bloco:
             return None
 
-        bloco = m_bloco.group(0) if m_bloco else t
+        bloco = bloco_sv if bloco_sv is not None else (m_bloco.group(0) if m_bloco else t)
 
         bloco_clean = bloco.replace('|', ' ').replace('!', ' ').replace('\n', ' ').strip()
         bloco_clean = re.sub(r'\s{2,}', ' ', bloco_clean)
