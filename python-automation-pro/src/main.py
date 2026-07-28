@@ -5,6 +5,44 @@ from .transformers.contrato_transformer import ContratoLocacaoTransformer
 from .models.contrato_locacao_model import ContratoLocacao
 import os
 
+
+def parse_page_spec(spec: str) -> list:
+    """Converte uma especificação de páginas do usuário numa lista ordenada de
+    páginas (1-based, únicas). Aceita páginas soltas e intervalos, separados por
+    vírgula — ex.: "1,3,6" -> [1, 3, 6]; "1-3,6" -> [1, 2, 3, 6]. Tokens vazios
+    são ignorados; um intervalo com limites invertidos ("6-1") é normalizado.
+
+    Levanta ValueError (com mensagem clara) em token não-numérico ou página < 1.
+    """
+    if not spec or not spec.strip():
+        return []
+    paginas = set()
+    for token in spec.split(','):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            if '-' in token:
+                ini_str, fim_str = token.split('-', 1)
+                ini, fim = int(ini_str), int(fim_str)
+                if ini > fim:
+                    ini, fim = fim, ini
+                if ini < 1:
+                    raise ValueError
+                paginas.update(range(ini, fim + 1))
+            else:
+                p = int(token)
+                if p < 1:
+                    raise ValueError
+                paginas.add(p)
+        except ValueError:
+            raise ValueError(
+                f"Especificação de páginas inválida: '{token}'. "
+                "Use páginas ≥ 1 separadas por vírgula, ex.: \"1,3,6\" ou \"1-3,6\"."
+            )
+    return sorted(paginas)
+
+
 def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "abrasf", selected_pages: list = None, progress_callback=None):
     print(f"[*] Carregando PDF: {pdf_path}")
     extractor = SPPdfExtractor(pdf_path)

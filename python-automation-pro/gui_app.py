@@ -388,35 +388,61 @@ def main(page: ft.Page):
                         page.update()
                         do_run(selected_pages=sel_pages)
 
-                    options = []
+                    # Uma checkbox por nota válida, rotulada com a PÁGINA REAL do
+                    # PDF (n.pagina_origem) + o número da nota. Multisseleção
+                    # permite escolher páginas alternadas (ex.: 1, 3 e 6) e
+                    # converter só elas — o filtro run_conversion(selected_pages=)
+                    # já suporta lista arbitrária.
+                    page_checkboxes = []
                     for n in nfse_list:
-                        options.append(
+                        cb = ft.Checkbox(label=f"Página {n.pagina_origem} — Nota {n.numero}", value=False)
+                        cb.data = n.pagina_origem
+                        page_checkboxes.append(cb)
+
+                    def converter_selecionadas(e):
+                        sel = sorted({cb.data for cb in page_checkboxes if cb.value})
+                        if not sel:
+                            page.snack_bar = ft.SnackBar(ft.Text("Selecione ao menos uma página."))
+                            page.snack_bar.open = True
+                            page.update()
+                            return
+                        on_dialog_close(e, sel)
+
+                    def alternar_todas(e):
+                        marcar = not all(cb.value for cb in page_checkboxes)
+                        for cb in page_checkboxes:
+                            cb.value = marcar
+                        page.update()
+
+                    acoes = ft.Row(
+                        [
                             ft.ElevatedButton(
-                                f"Página {n.pagina_origem}",
-                                on_click=lambda e, p=n.pagina_origem: on_dialog_close(e, [p])
-                            )
-                        )
-                    
-                    options.append(
-                        ft.ElevatedButton(
-                            "Todas as Válidas",
-                            on_click=lambda e: on_dialog_close(e, None),
-                            bgcolor=ft.colors.BLUE_700
-                        )
+                                "Converter selecionadas", icon=ft.icons.CHECK,
+                                on_click=converter_selecionadas, bgcolor=ft.colors.GREEN_700,
+                            ),
+                            ft.TextButton("Marcar/limpar todas", on_click=alternar_todas),
+                            ft.TextButton(
+                                "Converter todas as válidas",
+                                on_click=lambda e: on_dialog_close(e, None),
+                            ),
+                        ],
+                        wrap=True,
                     )
-                    
+
                     col_content = ft.Column(
-                        [ft.Text("O PDF possui mais de uma nota válida. Qual deseja converter?")] + options,
+                        [ft.Text("O PDF possui mais de uma nota válida. Marque as páginas que deseja converter:")]
+                        + page_checkboxes
+                        + [ft.Divider(), acoes],
                         tight=True,
-                        scroll=ft.ScrollMode.AUTO if len(nfse_list) > 10 else ft.ScrollMode.NONE,
+                        scroll=ft.ScrollMode.AUTO if len(nfse_list) > 8 else ft.ScrollMode.NONE,
                     )
                     dialog = ft.AlertDialog(
-                        title=ft.Text("Múltiplas Páginas Encontradas"),
+                        title=ft.Text("Selecionar páginas para conversão"),
                         content=ft.Container(
                             content=col_content,
-                            height=400 if len(nfse_list) > 10 else None,
-                            width=320,
-                        )
+                            height=420 if len(nfse_list) > 8 else None,
+                            width=380,
+                        ),
                     )
                     page.overlay.append(dialog)
                     dialog.open = True

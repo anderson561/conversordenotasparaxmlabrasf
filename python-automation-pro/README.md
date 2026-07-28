@@ -39,12 +39,18 @@ pip install "flet[desktop]"   # para a GUI
 # Conversão de um PDF único
 python app.py --input path/to/file.pdf --output path/to/output.xml
 
+# PDF com várias notas: converter só páginas específicas (alternadas ou intervalo)
+python app.py --input path/to/file.pdf --output path/to/output.xml --pages "1,3,6"
+python app.py --input path/to/file.pdf --output path/to/output.xml --pages "1-3,6"
+
 # Conversão em lote (diretório)
 python app.py --batch path/to/pdfs --output path/to/output_dir
 
 # Conversão de contrato de locação (JSON)
 python app.py --contrato path/to/contrato.json --output path/to/output_dir
 ```
+
+> `--pages` vale só com `--input` (um único PDF). Aceita páginas soltas (`1,3,6`) e intervalos (`1-3,6`); a numeração é a **página real do PDF** (1-based) e só páginas com nota reconhecida são geradas. Na GUI, o mesmo é feito pela janela de seleção com caixas por página (ver [COMO_USAR_GUI.md](COMO_USAR_GUI.md)).
 
 ## Uso via GUI
 
