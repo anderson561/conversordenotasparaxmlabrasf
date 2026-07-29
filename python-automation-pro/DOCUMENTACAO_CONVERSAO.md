@@ -19,6 +19,12 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Data de Competência**: Rótulo `Data de Competência`
 - **Entidades**: Blocos "Dados do Prestador de Serviço" e "Dados do Tomador de Serviços"
 - **Cidade/UF**: Rótulo `Cidade/UF` (Ex: `Lauro de Freitas/ BA`)
+- **⚠️ Dois formatos de OCR (rótulo limpo vs grade escaneada)**: notas de boa qualidade têm rótulos limpos (`Número da Nota Fiscal: 205`, `Vl. Total dos Serviços: R$ ...`) e caem nos extratores genéricos. Já em **scans degradados** (ex.: consolidado "NFS PRESTADORES MTI", nota nº 134) o cabeçalho e a grade de valores saem garbleados, exigindo ramos dedicados:
+  - **Número**: a caixa do número sai ilegível; o número vem **imediatamente antes de "Dados do Prestador de Serviço"** (confirmável pelo rodapé "substitui a nota nº N-1"). Sem isto o genérico pescava o `Número: 554` do **endereço do tomador** ("Avenida Praia de Pajussara Número: 554").
+  - **Município do prestador**: extraído de `- Cuiabá! MT` (ou `Cidade/UF`); sem isto o resolver escolhia um IBGE errado (pegava os dígitos da Inscrição Municipal, ex.: `295033` → `2950330`, em vez de **Cuiabá 5103403**).
+  - **Código de serviço**: item da LC116 na grade de atividade (`... Serviços de engenharia - 5,00 | 701 <NBS 9díg>`) → `0701`.
+  - **Valores (grade)**: linha de valores lida por **posição** (`[0]`=serviços, `[3]`=base, `[4]`=Total do ISSQN); alíquota da coluna de atividade; ISS confere com base×alíquota (560×5% = 28,00); "Não/Sim" na linha define ISSQN retido. O OCR troca "Vl."→"Vi.".
+  - **Cód. autenticidade**: primeiro token alfanumérico **misto** de 7-10 caracteres (ex.: `3B3DC3576`) — CNPJ/CEP/telefone são só dígitos e não casam.
 
 ### 2. Barreiras/BA — `barreiras`
 - **Cabeçalho**: "MUNICIPIO DE BARREIRAS"

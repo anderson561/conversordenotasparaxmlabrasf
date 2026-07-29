@@ -899,6 +899,20 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).strip()
 
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá em dois formatos de OCR:
+            # (1) rótulo limpo (digital/scan bom): "Número da Nota Fiscal: 205".
+            m = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*(\d+)', t, re.IGNORECASE)
+            if m:
+                return m.group(1)
+            # (2) scan degradado (consolidado MTI): a caixa do número sai garbleada,
+            # mas o número vem IMEDIATAMENTE antes de "Dados do Prestador de Serviço".
+            # Evita o genérico pescar o "Número: 554" do ENDEREÇO do tomador
+            # ("Avenida Praia de Pajussara Número: 554").
+            m = re.search(r'\b(\d{2,6})\s*\n\s*Dados\s+do\s+Prestador', t, re.IGNORECASE)
+            if m:
+                return m.group(1)
+
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional: o número da NFS-e vem codificado na Chave de Acesso
             # de 50 dígitos (posições 24-36, zero-preenchidas) — fonte de verdade
@@ -1407,6 +1421,16 @@ class SPPdfExtractor:
                 if m_cod:
                     return m_cod.group(1)[:4]
 
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá: na grade de detalhamento a linha da atividade traz
+            # "...Serviços de engenharia - 5,00 | 701 114031000 | 7112000" —
+            # colunas Atividade / Alíquota / item LC116 / NBS / CNAE. O item da LC
+            # 116 (701 = 7.01) são os 3-4 dígitos após a alíquota e antes do NBS de
+            # 9 dígitos. Normalizamos para 4 dígitos (0701).
+            m = re.search(r'\d{1,2},\d{2}\s*\|?\s*(\d{3,4})\s+\d{9}', t)
+            if m:
+                return m.group(1).zfill(4)
+
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe: "Código de Tributação Nacional ... 16.02.01 - Outros serviços
             # de transporte..." — item da LC 116 no formato "XX.XX.XX" (o 3º par é o
@@ -1529,6 +1553,16 @@ class SPPdfExtractor:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
                 if len(candidato) >= 6 and re.search(r'\d', candidato) and re.search(r'[A-Z]', candidato):
                     return candidato
+
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá: o código de autenticidade (ex.: "3B3DC3576") aparece
+            # no cabeçalho, sem rótulo estável no OCR. É o primeiro token de 7-10
+            # caracteres que MISTURA letra maiúscula e dígito — CNPJ/CEP/telefone/
+            # NBS são só dígitos (não casam) e o restante do texto é palavra pura.
+            for m in re.finditer(r'\b([0-9A-Z]{7,10})\b', t):
+                cand = m.group(1)
+                if re.search(r'[A-Z]', cand) and re.search(r'\d', cand):
+                    return cand
 
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional não tem "Código de Verificação" — sua identidade e
@@ -2584,6 +2618,22 @@ class SPPdfExtractor:
                     end_data['municipio'] = segs[-1]
                     if len(segs) >= 3:
                         end_data['bairro'] = segs[-2]
+
+        if self.layout == LAYOUT_CUIABA and (not end_data.get('municipio') or end_data.get('municipio') in ('Não informado', '')):
+            # ISSNet Cuiabá: o município do prestador vem como "- Cuiabá! MT" (o
+            # "!"/"|" é ruído de OCR); o do tomador vem explícito em
+            # "Cidade/UF: <cidade>/ <UF>". Sem extrair o município, o resolver caía
+            # num IBGE errado (pescava os dígitos da Inscrição Municipal, ex.:
+            # "295033" → 2950330, em vez de Cuiabá 5103403).
+            m_cid = re.search(r'Cidade\s*/\s*UF\s*:?\s*([A-Za-zÀ-ú ]+?)\s*/\s*([A-Z]{2})', bloco, re.IGNORECASE)
+            if m_cid:
+                end_data['municipio'] = m_cid.group(1).strip()
+                end_data['uf'] = m_cid.group(2).strip().upper()
+            else:
+                m_mun = re.search(r'[-–]\s*([A-Za-zÀ-ú]+(?:\s+[A-Za-zÀ-ú]+){0,2}?)\s*[!|/]?\s*\bMT\b', bloco)
+                if m_mun:
+                    end_data['municipio'] = m_mun.group(1).strip()
+                    end_data['uf'] = 'MT'
 
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'],
@@ -4022,6 +4072,47 @@ class SPPdfExtractor:
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
+
+        if self.layout == LAYOUT_CUIABA:
+            # Só intercepta o FORMATO EM GRADE (scan degradado, consolidado MTI):
+            # cabeçalho "Vl./Vi. Total dos Serviços ... | ... | Total do ISSQN |
+            # ISSQN Retido | ..." seguido, na PRÓXIMA linha, de uma linha de VALORES
+            # com vários "R$" (o OCR troca "Vl."→"Vi."). Pegamos os R$ por POSIÇÃO:
+            # [0]=serviços, [3]=base de cálculo, [4]=Total do ISSQN. O formato com
+            # rótulo limpo ("Vl. Total dos Serviços: R$ ...") NÃO casa (o ":" corta
+            # antes da quebra) e cai no extrator genérico abaixo, que já o tratava.
+            m_row = re.search(r'V[il]\.?\s*Total\s+dos\s+Servi[çc]os[^\n:]*\n\s*(R\$[^\n]*R\$[^\n]*)', t, re.IGNORECASE)
+            if m_row:
+                row = m_row.group(1)
+                vals = [self._parse_valor(x) for x in re.findall(r'R\$\s*([\d.,]+)', row)]
+                serv = base = iss = 0.0
+                if len(vals) >= 5:
+                    serv, base, iss = vals[0], vals[3], vals[4]
+                elif vals:
+                    serv = vals[0]; base = serv
+                iss_retido = bool(re.search(r'\bSim\b', row))
+                # Alíquota: coluna da grade de atividade ("... - 5,00 | 701 <NBS 9díg>").
+                aliq = 0.0
+                m_al = re.search(r'(\d{1,2},\d{2})\s*\|?\s*\d{3,4}\s+\d{9}', t)
+                if m_al:
+                    aliq = self._parse_valor(m_al.group(1)) / 100
+                # Cross-check fiel à face: ISS impresso = base×alíquota (560×5%=28,00);
+                # se a grade não devolveu o ISS, computa.
+                if not iss and base and aliq:
+                    iss = round(base * aliq, 2)
+                # Líquido: 2ª grade ("... VI. Líquido da Nota Fiscal" → último R$ da linha).
+                liquido = serv or base
+                m_liq = re.search(r'L[íi]quido\s+da\s+Nota\s+Fiscal\s*\n\s*(R\$[^\n]*)', t, re.IGNORECASE)
+                if m_liq:
+                    rs = re.findall(r'R\$\s*([\d.,]+)', m_liq.group(1))
+                    if rs:
+                        liquido = self._parse_valor(rs[-1])
+                return Valores(
+                    valor_servicos=serv, valor_deducoes=0.0, base_calculo=base or serv,
+                    aliquota=aliq, valor_iss=iss, iss_retido=iss_retido,
+                    valor_iss_retido=iss if iss_retido else 0.0,
+                    valor_liquido_nfse=liquido or serv,
+                )
 
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional: grade "rótulo(s) em cima / valores embaixo", com
