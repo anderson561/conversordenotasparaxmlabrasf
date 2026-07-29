@@ -43,6 +43,16 @@ Siga estes passos para converter PDFs:
 2. **Selecionar Pasta de Saída**: Clique no ícone ao lado do campo "Pasta de Saída". Selecione onde os XMLs serão salvos.
 3. **Iniciar Conversão**: Clique no botão **"Iniciar Conversão"**.
 
+### Selecionar páginas de um PDF com várias notas
+
+Quando você converte **um único PDF** que contém **mais de uma nota válida** (uma por página), aparece a janela **"Selecionar páginas para conversão"** com uma **caixa de seleção por página** (rotulada com o número da página e o número da nota). Assim você pode:
+
+- **Marcar páginas alternadas** (ex.: página 1, 3 e 6) e clicar em **"Converter selecionadas"** — só essas páginas viram XML.
+- **"Marcar/limpar todas"** — alterna a seleção de todas as caixas de uma vez.
+- **"Converter todas as válidas"** — converte todas as notas reconhecidas (equivale a não filtrar).
+
+> Só as páginas com nota reconhecida aparecem na lista; páginas de lixo/comprovante são ignoradas automaticamente. O PDF inteiro é lido para reconhecer as notas — a seleção decide quais viram XML.
+
 ---
 
 ## 4. Geração de XML para Contratos de Locação
