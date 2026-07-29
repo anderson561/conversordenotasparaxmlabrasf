@@ -4993,6 +4993,18 @@ class SPPdfExtractor:
                     header_text = self._ocr_header_box_salvador(page)
                     if header_text.strip():
                         best_text = f"{header_text}\n{best_text}"
+                    # Recut do bloco do TOMADOR em zoom alto SÓ quando ele sai sem
+                    # um CNPJ bem-formado no zoom 3 (scans de baixa qualidade
+                    # corrompem CNPJ/razão do tomador — ex.: nota nº 46). Notas
+                    # cujo tomador já sai limpo pulam o custo extra e não correm
+                    # risco de regressão. O recorte limpo é prependado, então a
+                    # extração genérica do tomador acha o CNPJ/razão corretos primeiro.
+                    m_tom = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS(.*?)(?=DISCRIMINA|PRESTADOR|$)',
+                                      best_text, re.IGNORECASE | re.DOTALL)
+                    if m_tom and not re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', m_tom.group(1)):
+                        tomador_text = self._ocr_tomador_salvador(page, best_angle)
+                        if tomador_text.strip():
+                            best_text = f"{tomador_text}\n{best_text}"
 
                 # ARMAC (Fatura de Locação escaneada): a leitura padrão (3x, PSM
                 # automático) embaralha a grade multi-item e perde a linha
@@ -5093,6 +5105,34 @@ class SPPdfExtractor:
             w, h = img.size
             crop = img.crop((int(w * 0.60), 0, w, int(h * 0.11)))
             return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_tomador_salvador(page, angle: int = 0) -> str:
+        """Re-OCR da página inteira do Salvador/BA em zoom ALTO (5x), devolvendo
+        SÓ o recorte do bloco do TOMADOR ("TOMADOR DE SERVIÇOS" até
+        "DISCRIMINAÇÃO"). Em scans de baixa qualidade o zoom 3 padrão corrompe o
+        CNPJ e a razão do tomador (ex.: "03.051.741/0001-90" vira
+        "05051.74110001.00"; "SÃO PEDRO" vira "es EO"), fazendo o CNPJ cair no
+        sentinela de "não identificado". O zoom 5 recupera ambos limpos —
+        validado contra a nota real nº 46 (BALUARTE -> SÃO PEDRO CONSTRUTORA).
+        Devolve só o recorte para PREPENDER ao texto base (não troca a página
+        inteira: em zoom 5 a discriminação do serviço se fragmenta). Aplica a
+        mesma rotação (`angle`) já detectada pelo _ocr_page."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            if angle:
+                img = img.rotate(-angle, expand=True)
+            txt = pytesseract.image_to_string(img, lang='por')
+            m = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS.*?(?=DISCRIMINA|$)', txt, re.IGNORECASE | re.DOTALL)
+            return m.group(0) if m else ""
         except Exception:
             return ""
 
