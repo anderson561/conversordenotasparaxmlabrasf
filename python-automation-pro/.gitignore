@@ -67,3 +67,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+
+# Git worktrees criadas por agentes/ferramentas
+.claude/worktrees/

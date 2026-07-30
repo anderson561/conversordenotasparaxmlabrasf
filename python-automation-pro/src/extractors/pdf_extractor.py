@@ -903,9 +903,23 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_CUIABA:
             # ISSNet Cuiabá em dois formatos de OCR:
             # (1) rótulo limpo (digital/scan bom): "Número da Nota Fiscal: 205".
-            m = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*(\d+)', t, re.IGNORECASE)
+            # Às vezes o OCR intercala um dígito espúrio ISOLADO numa linha
+            # própria ENTRE o rótulo e o valor real (ex.: nota real pág.10 do
+            # MTI 03-2026, "RC CONSTRUÇÕES ELÉTRICAS": "Número da Nota
+            # Fiscal\n5\n205\n" — o "5" é ruído, "205" é o número de
+            # verdade). Por isso capturamos TODOS os grupos de dígitos logo
+            # após o rótulo (até 3, cada um em sua própria linha) e ficamos
+            # com o MAIS LONGO — um ruído de 1 dígito nunca vence o número
+            # real ao lado, e quando só há um candidato (formato limpo
+            # normal) o comportamento não muda.
+            m = re.search(
+                r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*((?:\d+\s*\n?\s*){1,3})',
+                t, re.IGNORECASE
+            )
             if m:
-                return m.group(1)
+                candidatos = re.findall(r'\d+', m.group(1))
+                if candidatos:
+                    return max(candidatos, key=len)
             # (2) scan degradado (consolidado MTI): a caixa do número sai garbleada,
             # mas o número vem IMEDIATAMENTE antes de "Dados do Prestador de Serviço".
             # Evita o genérico pescar o "Número: 554" do ENDEREÇO do tomador
@@ -2294,11 +2308,46 @@ class SPPdfExtractor:
                 # com pontuação corrompida por vírgula).
                 m_tom_anchor = re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*\n\s*Raz[ãa]o\s+Social', t, re.IGNORECASE)
             if m_prest_lab and m_tom_anchor and m_tom_anchor.start() > m_prest_lab.start():
+                m_interm_lab = re.search(r'Dados\s+do\s+Intermedi[áa]rio', t, re.IGNORECASE)
                 if is_prestador:
-                    bloco_cuiaba = t[m_prest_lab.start(): m_tom_anchor.start()]
+                    bloco_normal = t[m_prest_lab.start(): m_tom_anchor.start()]
+                    if re.search(r'CPF\s*[/I]\s*CNPJ', bloco_normal, re.IGNORECASE):
+                        bloco_cuiaba = bloco_normal
+                    elif m_interm_lab:
+                        # Prestador REAL deslocado (nota real DR3 TERCEIRIZAÇÃO,
+                        # pág.3 do PDF "NFS PRESTADORES ANALISE..."): o cabeçalho
+                        # "Dados do Prestador" aparece sem os dados reais logo
+                        # em seguida (ali só vem, sem rótulo próprio, o CNPJ do
+                        # TOMADOR) — os dados REAIS do prestador (nome/CNPJ)
+                        # aparecem mais adiante, sob o cabeçalho "Dados do
+                        # Intermediário de Serviços" (a ordem física do OCR
+                        # embaralhou os blocos). Só assume esse deslocamento
+                        # quando o trecho ali REALMENTE tem a assinatura do
+                        # prestador (CPF/CNPJ, CPF antes) — senão mantém o
+                        # bloco normal (vazio nas notas sem esse problema),
+                        # preservando o comportamento já validado.
+                        m_fim = re.search(r'Descri[çc][ãa]o\s+dos?\s+Servi[çc]os?', t[m_interm_lab.start():], re.IGNORECASE)
+                        fim_abs = m_interm_lab.start() + m_fim.start() if m_fim else len(t)
+                        candidato = t[m_interm_lab.start(): fim_abs]
+                        if re.search(r'CPF\s*[/I]\s*CNPJ', candidato, re.IGNORECASE):
+                            # Remove o cabeçalho da seção + a linha (vazia) de
+                            # colunas da grade do intermediário ("CNPJ/CPF
+                            # Inscrição Municipal Razão Social", sem dado real
+                            # nenhum) — sem isso, a extração genérica de razão
+                            # social bate nesse "Razão Social" de cabeçalho e
+                            # engole as linhas seguintes (nome fantasia +
+                            # endereço) até o próximo stop-word.
+                            candidato_sem_header = re.sub(
+                                r'^.*?Raz[ãa]o\s+Social\s*\n*', '', candidato,
+                                count=1, flags=re.IGNORECASE | re.DOTALL
+                            )
+                            bloco_cuiaba = candidato_sem_header if candidato_sem_header.strip() else candidato
+                        else:
+                            bloco_cuiaba = bloco_normal
+                    else:
+                        bloco_cuiaba = bloco_normal
                 else:
-                    m_interm = re.search(r'Dados\s+do\s+Intermedi[áa]rio', t, re.IGNORECASE)
-                    fim = m_interm.start() if (m_interm and m_interm.start() > m_tom_anchor.start()) else len(t)
+                    fim = m_interm_lab.start() if (m_interm_lab and m_interm_lab.start() > m_tom_anchor.start()) else len(t)
                     bloco_cuiaba = t[m_tom_anchor.start(): fim]
 
         # 1. Bloco
@@ -2320,6 +2369,17 @@ class SPPdfExtractor:
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
         
         if is_intermediario and not m_bloco:
+            return None
+
+        # Cuiabá/ISSNet: quando o bloco do "Intermediário" carrega a assinatura
+        # do PRESTADOR (rótulo "CPF/CNPJ", CPF antes do CNPJ), não é um
+        # intermediário de verdade — são os dados REAIS do prestador que a
+        # ordem física do OCR deslocou para depois desse cabeçalho (nota real
+        # DR3 TERCEIRIZAÇÃO, pág.3 do PDF "NFS PRESTADORES ANALISE..."). Sem
+        # este guard, o intermediário "roubaria" o CNPJ/razão do prestador em
+        # vez de ficar vazio (None).
+        if self.layout == LAYOUT_CUIABA and is_intermediario and m_bloco and \
+                re.search(r'CPF\s*[/I]\s*CNPJ', m_bloco.group(0), re.IGNORECASE):
             return None
 
         if bloco_sv is not None:
@@ -5192,46 +5252,67 @@ class SPPdfExtractor:
                 # Cuiabá/MT (ISSNet) escaneado: a grade "Detalhamento dos
                 # Tributos" (Vl. Total dos Serviços | ... | Total do ISSQN |
                 # ISSQN Retido | ...) às vezes sai truncada no zoom 3 padrão —
-                # a linha de valores quebra no meio (ex.: "R$443,80 | R$000"
-                # seguido de "R$ 0,00" isolado numa linha à parte), perdendo o
-                # Total do ISSQN e a Base de Cálculo real (serviços saía
-                # 443,80 quando o correto, confirmado por recut em zoom 6 +
-                # PSM 6 — consistente nos zooms 4/5/6/8 —, era 4.113,50, com
-                # ISS 82,27 = base×2%). Só reprocessa quando a linha de
-                # valores sai com menos de 4 tokens "R$" (grade truncada) —
-                # notas já limpas no zoom 3 (ex.: nº 134) pulam o custo extra
-                # e não correm risco de regressão. Validado contra a nota real
-                # pág. 14 (ANDERSON FAUSTINO -> SÃO PEDRO CONSTRUTORA, PDF
-                # consolidado MTI 03-2026).
+                # seja quebrando a linha de valores no meio (ex.: "R$443,80 |
+                # R$000" numa linha, "R$ 0,00" isolado bem abaixo — pág. 14 do
+                # MTI 03-2026), seja perdendo uma coluna inteira sem quebrar a
+                # linha (ex.: "R$ 22.709,56 R$ 0,00 R$ 0,00 R$ 454,19 | Não R$
+                # 0,00" — só 5 tokens numa linha só, pág. 3 do PDF "ANALISE" —
+                # a Base de Cálculo duplicada simplesmente não sai). Uma linha
+                # completa desta grade sempre tem 6 tokens "R$" (serviços,
+                # desconto incond., deduções, base, ISS, desconto cond.) —
+                # confirmado nas notas já corretas (nº 134, pág. 14 após
+                # recut). Um recut em zoom 5 + PSM 6 (página inteira) recompõe
+                # a linha inteira de forma consistente (validado nos zooms
+                # 4/5/6/8). Só reprocessa quando a linha sai com MENOS de 6
+                # tokens "R$" — notas já limpas no zoom 3 pulam o custo extra
+                # e não correm risco de regressão.
                 if re.search(r'Prefeitura\s+Municipal\s+de\s+Cuiab[áa]', best_text, re.IGNORECASE):
                     m_row_chk = re.search(
                         r'V[il]\.?\s*Total\s+dos\s+Servi[çc]os[^\n:]*\n\s*(R\$[^\n]*)',
                         best_text, re.IGNORECASE)
                     row_chk = m_row_chk.group(1) if m_row_chk else ''
-                    if len(re.findall(r'R\$', row_chk)) < 4:
+                    if len(re.findall(r'R\$', row_chk)) < 6:
                         valores_cuiaba = self._ocr_valores_cuiaba(page)
                         if valores_cuiaba.strip():
+                            # Remove a própria leitura de "Número da Nota Fiscal"
+                            # deste recut antes de prependar: é um re-OCR de
+                            # página inteira em outro zoom, feito para consertar
+                            # a GRADE DE VALORES — sua leitura do número (que
+                            # ninguém validou) pode ser DIFERENTE e pior que a do
+                            # zoom 3 (ex.: nota real GMS FLATS pág. 17: zoom 3 lê
+                            # "9699", este recut lê outra coisa; nenhum dos dois
+                            # bate com o real "5639"). O número tem seu próprio
+                            # recorte dedicado e validado (`_ocr_numero_box_cuiaba`,
+                            # logo abaixo) — não deixamos este recut "vazar" um
+                            # 2º palpite não confirmado para a extração de número.
+                            valores_cuiaba = re.sub(
+                                r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*\d+\s*',
+                                '', valores_cuiaba, flags=re.IGNORECASE
+                            )
                             best_text = f"{valores_cuiaba}\n{best_text}"
 
-                    # Número: quando as duas âncoras do `_extrair_numero` (rótulo
-                    # limpo "Número da Nota Fiscal: N" e o dígito imediatamente
-                    # antes de "Dados do Prestador") falham — scan gravemente
-                    # degradado (ex.: pág. 14 do MTI 03-2026, número real 16
-                    # confirmado pelo usuário contra o documento) — tenta um
-                    # recorte dedicado da caixa "Número da Nota Fiscal" (canto
-                    # superior direito, ao lado do logo/QR) em 3 zooms (6/8/10)
-                    # com PSM 7 (linha única) + whitelist de dígitos. A caixa
-                    # inteira (com o logo ao lado) confunde o OCR e faz o dígito
-                    # variar entre zooms (ex.: "16"->"18"); o recorte estreito só
-                    # do número é estável. Só aceita quando ao menos 2 dos 3
-                    # zooms concordam — sem consenso, não arrisca um dígito
-                    # errado e segue para o fallback honesto de sempre.
-                    tem_rotulo_limpo = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*\d+', best_text, re.IGNORECASE)
-                    tem_ancora_prestador = re.search(r'\b\d{2,6}\s*\n\s*Dados\s+do\s+Prestador', best_text, re.IGNORECASE)
-                    if not tem_rotulo_limpo and not tem_ancora_prestador:
-                        numero_box = self._ocr_numero_box_cuiaba(page)
-                        if numero_box.strip():
-                            best_text = f"{numero_box}\n{best_text}"
+                    # Número: SEMPRE faz o recorte dedicado da caixa "Número da
+                    # Nota Fiscal" (canto superior direito, ao lado do logo/QR)
+                    # em 3 zooms (6/8/10) x 2 PSM, com whitelist de dígitos, e
+                    # PREPENDA quando há consenso (≥2 dos 6 concordam) — mesmo
+                    # quando o rótulo limpo já "casou" na leitura padrão (zoom
+                    # 3). Isso não é redundante: a leitura de página inteira do
+                    # zoom 3 pode ler o dígito ERRADO com total confiança, sem
+                    # nenhum sinal de ambiguidade (ex.: nota real GMS FLATS
+                    # pág. 17 — zoom 3 lê "9699" de forma limpa, mas o número
+                    # real, confirmado pela imagem, é "5639"). Como o recorte
+                    # dedicado já exige consenso entre zooms/PSM antes de
+                    # aceitar um valor, ele é MAIS confiável que a leitura de
+                    # página inteira para este campo especificamente — por
+                    # isso tem prioridade (é prependado, e a extração usa a 1ª
+                    # ocorrência). Sem consenso no recorte (ex.: mesma nota GMS
+                    # FLATS, que não tem número recuperável em nenhuma
+                    # combinação testada), `_ocr_numero_box_cuiaba` devolve
+                    # vazio e a leitura padrão (ou o fallback honesto) segue
+                    # valendo — nunca piora o que já funcionava.
+                    numero_box = self._ocr_numero_box_cuiaba(page)
+                    if numero_box.strip():
+                        best_text = f"{numero_box}\n{best_text}"
 
                 # Camaçari/BA escaneado (foto/JPG -> OCR): a leitura padrão
                 # (zoom 3) desta família de fotos de baixa qualidade descarta a
@@ -5392,11 +5473,21 @@ class SPPdfExtractor:
         """Recorta e reprocessa em zoom alto a caixa "Número da Nota Fiscal" do
         canto superior direito da NFS-e de Cuiabá/MT (ISSNet) escaneada — só o
         dígito (exclui o logo/QR "NOTA CUIABANA" ao lado, que confunde o OCR e
-        faz o dígito variar entre zooms, ex.: "16" virando "18"). PSM 7 (linha
-        única) + whitelist de dígitos. Vota entre 3 zooms (6/8/10) e só aceita
-        quando ao menos 2 concordam — validado contra a nota real pág. 14: 8
-        dos 11 zooms testados (4-12) concordam em "16"; sem maioria, devolve
-        vazio em vez de arriscar um dígito errado."""
+        faz o dígito variar entre zooms, ex.: "16" virando "18"). Whitelist de
+        dígitos, mas nem PSM 6 (bloco) nem PSM 7 (linha única) é confiável
+        sozinho — o recorte tem DUAS linhas (rótulo + número), e qual PSM lida
+        melhor com isso varia por nota: na nota pág. 14 (MTI) só o PSM 7 lê
+        "16" (PSM 6 vem vazio); na nota nº 10 (DR3 Terceirização, PDF
+        "ANALISE") só o PSM 6 lê "10" de forma estável (PSM 7 varia entre
+        "10"/"1"/vazio conforme o zoom). Por isso vota com AMBOS os PSM em 3
+        zooms (6/8/10 — 6 tentativas) e só aceita quando ao menos 2 concordam
+        no mesmo valor — sem consenso, devolve vazio em vez de arriscar um
+        dígito errado (ex.: nota GMS FLATS pág. 17, sem número recuperável em
+        nenhuma combinação testada). Faixa vertical do recorte calibrada
+        (0.065-0.098 da altura da página) contra 3 notas reais com números de
+        tamanhos diferentes (205, 16, 10) — uma faixa mais estreita (usada
+        antes) cortava a linha do dígito ao meio em notas cujo número de 3
+        dígitos (ex.: "205") ocupa mais espaço vertical, devolvendo vazio."""
         try:
             import pymupdf
             import pytesseract
@@ -5409,12 +5500,13 @@ class SPPdfExtractor:
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 w, h = img.size
-                crop = img.crop((int(w * 0.80), int(h * 0.070), int(w * 0.98), int(h * 0.090)))
-                texto = pytesseract.image_to_string(
-                    crop, lang='por', config='--psm 7 -c tessedit_char_whitelist=0123456789'
-                ).strip()
-                if texto:
-                    votos.append(texto)
+                crop = img.crop((int(w * 0.80), int(h * 0.065), int(w * 0.98), int(h * 0.098)))
+                for psm in (6, 7):
+                    texto = pytesseract.image_to_string(
+                        crop, lang='por', config=f'--psm {psm} -c tessedit_char_whitelist=0123456789'
+                    ).strip()
+                    if texto:
+                        votos.append(texto)
             if not votos:
                 return ""
             numero, contagem = Counter(votos).most_common(1)[0]
@@ -5606,6 +5698,40 @@ class SPPdfExtractor:
     def parse_multiple(self) -> List[Nfse]:
         """Extrai múltiplas notas do mesmo PDF, fatiando blocos de texto por heurística de início de nota."""
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
+
+        def _numero_heuristico_bloco(text: str) -> Optional[str]:
+            """Extrai um "número da nota" aproximado de um BLOCO de texto, usado
+            só para decidir se um trecho é uma nota nova ou continuação da
+            anterior (não é o número final do XML — esse vem de `_extrair_numero`
+            por layout). O padrão genérico antigo (Número/Nº seguido do 1º dígito) pegava
+            o PRIMEIRO "Número" do texto, que muitas vezes é o número do
+            ENDEREÇO do tomador ("Endereço : Avenida Praia de Pajussara Número:
+            554"), não o da nota. Como o mesmo tomador (endereço fixo) se repete
+            em várias notas de um PDF consolidado, isso fazia páginas de notas
+            DIFERENTES compartilharem o mesmo "número" aparente e serem tratadas
+            como continuação uma da outra — a nota seguinte nunca vira um XML
+            próprio, fica silenciosamente engolida na anterior (achado real:
+            PDF "NFS PRESTADORES ANALISE...", pág. 3, nota nº 10 sumia assim).
+            Tenta primeiro rótulos específicos de "número da nota"; só cai no
+            genérico como último recurso, e mesmo assim pula ocorrências cuja
+            linha contém "Endereço" (a armadilha conhecida)."""
+            especificos = [
+                r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*(\d+)',
+                r'N[ºo]\.?\s*da\s+Nota\s+Fiscal\s*:?\s*(\d+)',
+                r'N[uú]mero\s+da\s+Nota\s*:?\s*(\d+)',
+                r'N[ºo]\.?\s*da\s+Nota\s*:?\s*(\d+)',
+            ]
+            for p in especificos:
+                m = re.search(p, text, re.IGNORECASE)
+                if m:
+                    return m.group(1)
+            for m in re.finditer(r'(?:N[uú]mero|N[ºo])\.?\s*:?.*?(\d+)', text, re.IGNORECASE):
+                inicio_linha = text.rfind('\n', 0, m.start()) + 1
+                linha_ate_match = text[inicio_linha: m.start()]
+                if re.search(r'Endere[çc]o', linha_ate_match, re.IGNORECASE):
+                    continue
+                return m.group(1)
+            return None
         
         full_text = extract_text(self.pdf_path)
         
@@ -5699,8 +5825,8 @@ class SPPdfExtractor:
             # Prioridade: Se temos o número da nota atual e conseguimos extrair o número desta página, comparamos.
             # Se for o mesmo número, é continuação (mesmo tendo cabeçalho repetido).
             if current_group_num:
-                m_prox = re.search(r'(?:N[uú]mero|N[ºo]).*?(\d+)', text, re.I)
-                if m_prox and m_prox.group(1) == current_group_num:
+                num_prox = _numero_heuristico_bloco(text)
+                if num_prox and num_prox == current_group_num:
                     return False
 
             return has_start_pattern or has_num_cnpj
@@ -5727,8 +5853,7 @@ class SPPdfExtractor:
 
         for block_text, page_idx in granular_blocks:
             # Tenta identificar o número da nota no bloco atual (suporta Número e Nº)
-            num_match = re.search(r'(?:N[uú]mero|N[ºo]).*?(\d+)', block_text, re.I)
-            block_num = num_match.group(1) if num_match else None
+            block_num = _numero_heuristico_bloco(block_text)
 
             if is_new_invoice(block_text, current_num):
                 if current_invoice:
