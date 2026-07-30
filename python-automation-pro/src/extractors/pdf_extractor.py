@@ -2395,7 +2395,13 @@ class SPPdfExtractor:
         # 2. CNPJ
         cnpj = None
         # Tenta capturar CNPJ validando o checksum para evitar pegar datas ou números
-        matches = re.findall(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', bloco)
+        # Os separadores aceitam espaço em volta: o OCR intercala espaço espúrio
+        # antes do dígito verificador ("48.310.477/0001 -08") e o número era descartado.
+        matches = re.findall(
+            r'(\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}'
+            r'|\d{3}\.\d{3}\.\d{3}[ \t]*-[ \t]*\d{2})',
+            bloco
+        )
         for m in matches:
             pure = re.sub(r'\D', '', m)
             if self._validate_cnpj_cpf(pure):
@@ -2428,7 +2434,9 @@ class SPPdfExtractor:
             # Busca dígitos que não sejam o CNPJ já identificado
             digitos_contexto = re.findall(r'\d{5,15}', re.sub(r'[^\d\s]', '', contexto))
             for d in digitos_contexto:
-                if d != cnpj:
+                # `d in cnpj` descarta pedaços do próprio CNPJ: quando a pontuação
+                # cai, "48.310.477/0001" vira um blob de 12 dígitos que passaria por IM.
+                if d != cnpj and d not in cnpj:
                     insc = d
                     break
 
@@ -2477,6 +2485,10 @@ class SPPdfExtractor:
         razao = re.sub(r'^\d{2}\.\d{3}\.\d{3}\s+', '', razao).strip()
         razao = re.sub(r'^\d{8,}\s+', '', razao).strip()
         razao = re.sub(r'^[\s/!|:.-]+', '', razao).strip()
+        # Letra minúscula solta antes do nome: é o ":" do rótulo lido como letra
+        # ("Nome/Razão Social:" -> "...Social e"). Só minúscula, para não comer
+        # um "E"/"A" legítimo de razão social em caixa alta.
+        razao = re.sub(r'^[a-zà-ÿ]\s+(?=[A-ZÀ-Ý])', '', razao).strip()
 
         _NOISE_RAZAO = re.compile(
             r'\b(DA NFS-e|Prestador do Servi|Nota Fiscal|Documento Auxiliar|'
