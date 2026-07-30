@@ -903,9 +903,23 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_CUIABA:
             # ISSNet Cuiabá em dois formatos de OCR:
             # (1) rótulo limpo (digital/scan bom): "Número da Nota Fiscal: 205".
-            m = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*(\d+)', t, re.IGNORECASE)
+            # Às vezes o OCR intercala um dígito espúrio ISOLADO numa linha
+            # própria ENTRE o rótulo e o valor real (ex.: nota real pág.10 do
+            # MTI 03-2026, "RC CONSTRUÇÕES ELÉTRICAS": "Número da Nota
+            # Fiscal\n5\n205\n" — o "5" é ruído, "205" é o número de
+            # verdade). Por isso capturamos TODOS os grupos de dígitos logo
+            # após o rótulo (até 3, cada um em sua própria linha) e ficamos
+            # com o MAIS LONGO — um ruído de 1 dígito nunca vence o número
+            # real ao lado, e quando só há um candidato (formato limpo
+            # normal) o comportamento não muda.
+            m = re.search(
+                r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*((?:\d+\s*\n?\s*){1,3})',
+                t, re.IGNORECASE
+            )
             if m:
-                return m.group(1)
+                candidatos = re.findall(r'\d+', m.group(1))
+                if candidatos:
+                    return max(candidatos, key=len)
             # (2) scan degradado (consolidado MTI): a caixa do número sai garbleada,
             # mas o número vem IMEDIATAMENTE antes de "Dados do Prestador de Serviço".
             # Evita o genérico pescar o "Número: 554" do ENDEREÇO do tomador
@@ -5260,27 +5274,45 @@ class SPPdfExtractor:
                     if len(re.findall(r'R\$', row_chk)) < 6:
                         valores_cuiaba = self._ocr_valores_cuiaba(page)
                         if valores_cuiaba.strip():
+                            # Remove a própria leitura de "Número da Nota Fiscal"
+                            # deste recut antes de prependar: é um re-OCR de
+                            # página inteira em outro zoom, feito para consertar
+                            # a GRADE DE VALORES — sua leitura do número (que
+                            # ninguém validou) pode ser DIFERENTE e pior que a do
+                            # zoom 3 (ex.: nota real GMS FLATS pág. 17: zoom 3 lê
+                            # "9699", este recut lê outra coisa; nenhum dos dois
+                            # bate com o real "5639"). O número tem seu próprio
+                            # recorte dedicado e validado (`_ocr_numero_box_cuiaba`,
+                            # logo abaixo) — não deixamos este recut "vazar" um
+                            # 2º palpite não confirmado para a extração de número.
+                            valores_cuiaba = re.sub(
+                                r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*\d+\s*',
+                                '', valores_cuiaba, flags=re.IGNORECASE
+                            )
                             best_text = f"{valores_cuiaba}\n{best_text}"
 
-                    # Número: quando as duas âncoras do `_extrair_numero` (rótulo
-                    # limpo "Número da Nota Fiscal: N" e o dígito imediatamente
-                    # antes de "Dados do Prestador") falham — scan gravemente
-                    # degradado (ex.: pág. 14 do MTI 03-2026, número real 16
-                    # confirmado pelo usuário contra o documento) — tenta um
-                    # recorte dedicado da caixa "Número da Nota Fiscal" (canto
-                    # superior direito, ao lado do logo/QR) em 3 zooms (6/8/10)
-                    # com PSM 7 (linha única) + whitelist de dígitos. A caixa
-                    # inteira (com o logo ao lado) confunde o OCR e faz o dígito
-                    # variar entre zooms (ex.: "16"->"18"); o recorte estreito só
-                    # do número é estável. Só aceita quando ao menos 2 dos 3
-                    # zooms concordam — sem consenso, não arrisca um dígito
-                    # errado e segue para o fallback honesto de sempre.
-                    tem_rotulo_limpo = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*\d+', best_text, re.IGNORECASE)
-                    tem_ancora_prestador = re.search(r'\b\d{2,6}\s*\n\s*Dados\s+do\s+Prestador', best_text, re.IGNORECASE)
-                    if not tem_rotulo_limpo and not tem_ancora_prestador:
-                        numero_box = self._ocr_numero_box_cuiaba(page)
-                        if numero_box.strip():
-                            best_text = f"{numero_box}\n{best_text}"
+                    # Número: SEMPRE faz o recorte dedicado da caixa "Número da
+                    # Nota Fiscal" (canto superior direito, ao lado do logo/QR)
+                    # em 3 zooms (6/8/10) x 2 PSM, com whitelist de dígitos, e
+                    # PREPENDA quando há consenso (≥2 dos 6 concordam) — mesmo
+                    # quando o rótulo limpo já "casou" na leitura padrão (zoom
+                    # 3). Isso não é redundante: a leitura de página inteira do
+                    # zoom 3 pode ler o dígito ERRADO com total confiança, sem
+                    # nenhum sinal de ambiguidade (ex.: nota real GMS FLATS
+                    # pág. 17 — zoom 3 lê "9699" de forma limpa, mas o número
+                    # real, confirmado pela imagem, é "5639"). Como o recorte
+                    # dedicado já exige consenso entre zooms/PSM antes de
+                    # aceitar um valor, ele é MAIS confiável que a leitura de
+                    # página inteira para este campo especificamente — por
+                    # isso tem prioridade (é prependado, e a extração usa a 1ª
+                    # ocorrência). Sem consenso no recorte (ex.: mesma nota GMS
+                    # FLATS, que não tem número recuperável em nenhuma
+                    # combinação testada), `_ocr_numero_box_cuiaba` devolve
+                    # vazio e a leitura padrão (ou o fallback honesto) segue
+                    # valendo — nunca piora o que já funcionava.
+                    numero_box = self._ocr_numero_box_cuiaba(page)
+                    if numero_box.strip():
+                        best_text = f"{numero_box}\n{best_text}"
 
                 # Camaçari/BA escaneado (foto/JPG -> OCR): a leitura padrão
                 # (zoom 3) desta família de fotos de baixa qualidade descarta a
@@ -5441,11 +5473,21 @@ class SPPdfExtractor:
         """Recorta e reprocessa em zoom alto a caixa "Número da Nota Fiscal" do
         canto superior direito da NFS-e de Cuiabá/MT (ISSNet) escaneada — só o
         dígito (exclui o logo/QR "NOTA CUIABANA" ao lado, que confunde o OCR e
-        faz o dígito variar entre zooms, ex.: "16" virando "18"). PSM 7 (linha
-        única) + whitelist de dígitos. Vota entre 3 zooms (6/8/10) e só aceita
-        quando ao menos 2 concordam — validado contra a nota real pág. 14: 8
-        dos 11 zooms testados (4-12) concordam em "16"; sem maioria, devolve
-        vazio em vez de arriscar um dígito errado."""
+        faz o dígito variar entre zooms, ex.: "16" virando "18"). Whitelist de
+        dígitos, mas nem PSM 6 (bloco) nem PSM 7 (linha única) é confiável
+        sozinho — o recorte tem DUAS linhas (rótulo + número), e qual PSM lida
+        melhor com isso varia por nota: na nota pág. 14 (MTI) só o PSM 7 lê
+        "16" (PSM 6 vem vazio); na nota nº 10 (DR3 Terceirização, PDF
+        "ANALISE") só o PSM 6 lê "10" de forma estável (PSM 7 varia entre
+        "10"/"1"/vazio conforme o zoom). Por isso vota com AMBOS os PSM em 3
+        zooms (6/8/10 — 6 tentativas) e só aceita quando ao menos 2 concordam
+        no mesmo valor — sem consenso, devolve vazio em vez de arriscar um
+        dígito errado (ex.: nota GMS FLATS pág. 17, sem número recuperável em
+        nenhuma combinação testada). Faixa vertical do recorte calibrada
+        (0.065-0.098 da altura da página) contra 3 notas reais com números de
+        tamanhos diferentes (205, 16, 10) — uma faixa mais estreita (usada
+        antes) cortava a linha do dígito ao meio em notas cujo número de 3
+        dígitos (ex.: "205") ocupa mais espaço vertical, devolvendo vazio."""
         try:
             import pymupdf
             import pytesseract
@@ -5458,12 +5500,13 @@ class SPPdfExtractor:
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 w, h = img.size
-                crop = img.crop((int(w * 0.80), int(h * 0.070), int(w * 0.98), int(h * 0.090)))
-                texto = pytesseract.image_to_string(
-                    crop, lang='por', config='--psm 7 -c tessedit_char_whitelist=0123456789'
-                ).strip()
-                if texto:
-                    votos.append(texto)
+                crop = img.crop((int(w * 0.80), int(h * 0.065), int(w * 0.98), int(h * 0.098)))
+                for psm in (6, 7):
+                    texto = pytesseract.image_to_string(
+                        crop, lang='por', config=f'--psm {psm} -c tessedit_char_whitelist=0123456789'
+                    ).strip()
+                    if texto:
+                        votos.append(texto)
             if not votos:
                 return ""
             numero, contagem = Counter(votos).most_common(1)[0]
