@@ -5213,6 +5213,26 @@ class SPPdfExtractor:
                         if valores_cuiaba.strip():
                             best_text = f"{valores_cuiaba}\n{best_text}"
 
+                    # Número: quando as duas âncoras do `_extrair_numero` (rótulo
+                    # limpo "Número da Nota Fiscal: N" e o dígito imediatamente
+                    # antes de "Dados do Prestador") falham — scan gravemente
+                    # degradado (ex.: pág. 14 do MTI 03-2026, número real 16
+                    # confirmado pelo usuário contra o documento) — tenta um
+                    # recorte dedicado da caixa "Número da Nota Fiscal" (canto
+                    # superior direito, ao lado do logo/QR) em 3 zooms (6/8/10)
+                    # com PSM 7 (linha única) + whitelist de dígitos. A caixa
+                    # inteira (com o logo ao lado) confunde o OCR e faz o dígito
+                    # variar entre zooms (ex.: "16"->"18"); o recorte estreito só
+                    # do número é estável. Só aceita quando ao menos 2 dos 3
+                    # zooms concordam — sem consenso, não arrisca um dígito
+                    # errado e segue para o fallback honesto de sempre.
+                    tem_rotulo_limpo = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*\d+', best_text, re.IGNORECASE)
+                    tem_ancora_prestador = re.search(r'\b\d{2,6}\s*\n\s*Dados\s+do\s+Prestador', best_text, re.IGNORECASE)
+                    if not tem_rotulo_limpo and not tem_ancora_prestador:
+                        numero_box = self._ocr_numero_box_cuiaba(page)
+                        if numero_box.strip():
+                            best_text = f"{numero_box}\n{best_text}"
+
                 # Camaçari/BA escaneado (foto/JPG -> OCR): a leitura padrão
                 # (zoom 3) desta família de fotos de baixa qualidade descarta a
                 # metade inferior inteira da nota (grade "Retenções x Totais",
@@ -5364,6 +5384,43 @@ class SPPdfExtractor:
             )
             num = re.sub(r'\D', '', num)
             return f"Número da Nota\n{num}\n" if num else ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_numero_box_cuiaba(page) -> str:
+        """Recorta e reprocessa em zoom alto a caixa "Número da Nota Fiscal" do
+        canto superior direito da NFS-e de Cuiabá/MT (ISSNet) escaneada — só o
+        dígito (exclui o logo/QR "NOTA CUIABANA" ao lado, que confunde o OCR e
+        faz o dígito variar entre zooms, ex.: "16" virando "18"). PSM 7 (linha
+        única) + whitelist de dígitos. Vota entre 3 zooms (6/8/10) e só aceita
+        quando ao menos 2 concordam — validado contra a nota real pág. 14: 8
+        dos 11 zooms testados (4-12) concordam em "16"; sem maioria, devolve
+        vazio em vez de arriscar um dígito errado."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            votos = []
+            for zoom in (6.0, 8.0, 10.0):
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                w, h = img.size
+                crop = img.crop((int(w * 0.80), int(h * 0.070), int(w * 0.98), int(h * 0.090)))
+                texto = pytesseract.image_to_string(
+                    crop, lang='por', config='--psm 7 -c tessedit_char_whitelist=0123456789'
+                ).strip()
+                if texto:
+                    votos.append(texto)
+            if not votos:
+                return ""
+            numero, contagem = Counter(votos).most_common(1)[0]
+            if contagem < 2:
+                return ""
+            return f"Número da Nota Fiscal\n{numero}\n"
         except Exception:
             return ""
 
