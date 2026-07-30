@@ -90,7 +90,8 @@ _LABELS_TOMADOR = [
     'Cliente',                 # Portal Nacional / DANFSe usa 'Cliente'
 ]
 _LABELS_INTERMEDIARIO = [
-    'Intermediário do Serviço', 'INTERMEDIÁRIO DO SERVIÇO', 'Intermediário',
+    'Dados do Intermediário de Serviços', 'Intermediário do Serviço',
+    'INTERMEDIÁRIO DO SERVIÇO', 'Intermediário',
     'Intermediario', 'Dados do Intermediário', 'INTERMEDIARIO'
 ]
 _LABELS_CNPJ_CPF = [
@@ -899,6 +900,33 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).strip()
 
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá em dois formatos de OCR:
+            # (1) rótulo limpo (digital/scan bom): "Número da Nota Fiscal: 205".
+            m = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*(\d+)', t, re.IGNORECASE)
+            if m:
+                return m.group(1)
+            # (2) scan degradado (consolidado MTI): a caixa do número sai garbleada,
+            # mas o número vem IMEDIATAMENTE antes de "Dados do Prestador de Serviço".
+            # Evita o genérico pescar o "Número: 554" do ENDEREÇO do tomador
+            # ("Avenida Praia de Pajussara Número: 554").
+            m = re.search(r'\b(\d{2,6})\s*\n\s*Dados\s+do\s+Prestador', t, re.IGNORECASE)
+            if m:
+                return m.group(1)
+            # Nenhuma das duas âncoras casou (scan gravemente degradado, ex.: nota
+            # ANDERSON FAUSTINO/FA TELAS — testado com re-OCR em zoom até 10x sem
+            # recuperar o número no cabeçalho). NÃO cai nos padrões genéricos
+            # abaixo: o padrão bare "Número[:\s]+(\d+)" pescaria o mesmo
+            # "Número: 554" do endereço do tomador (mesma armadilha). Vai direto
+            # para o fallback honesto (nome do arquivo / placeholder + aviso) —
+            # não fabricar um número plausível-porém-errado.
+            if getattr(self, 'pdf_path', None):
+                import os
+                m_fn = re.search(r'(?:NFS?|NOTA|NF)\s*[-_]*\s*(\d+)', os.path.basename(self.pdf_path), re.IGNORECASE)
+                if m_fn:
+                    return m_fn.group(1).strip()
+            return '00000000'
+
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional: o número da NFS-e vem codificado na Chave de Acesso
             # de 50 dígitos (posições 24-36, zero-preenchidas) — fonte de verdade
@@ -1407,6 +1435,16 @@ class SPPdfExtractor:
                 if m_cod:
                     return m_cod.group(1)[:4]
 
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá: na grade de detalhamento a linha da atividade traz
+            # "...Serviços de engenharia - 5,00 | 701 114031000 | 7112000" —
+            # colunas Atividade / Alíquota / item LC116 / NBS / CNAE. O item da LC
+            # 116 (701 = 7.01) são os 3-4 dígitos após a alíquota e antes do NBS de
+            # 9 dígitos. Normalizamos para 4 dígitos (0701).
+            m = re.search(r'\d{1,2},\d{2}\s*\|?\s*(\d{3,4})\s+\d{9}', t)
+            if m:
+                return m.group(1).zfill(4)
+
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe: "Código de Tributação Nacional ... 16.02.01 - Outros serviços
             # de transporte..." — item da LC 116 no formato "XX.XX.XX" (o 3º par é o
@@ -1529,6 +1567,16 @@ class SPPdfExtractor:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
                 if len(candidato) >= 6 and re.search(r'\d', candidato) and re.search(r'[A-Z]', candidato):
                     return candidato
+
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá: o código de autenticidade (ex.: "3B3DC3576") aparece
+            # no cabeçalho, sem rótulo estável no OCR. É o primeiro token de 7-10
+            # caracteres que MISTURA letra maiúscula e dígito — CNPJ/CEP/telefone/
+            # NBS são só dígitos (não casam) e o restante do texto é palavra pura.
+            for m in re.finditer(r'\b([0-9A-Z]{7,10})\b', t):
+                cand = m.group(1)
+                if re.search(r'[A-Z]', cand) and re.search(r'\d', cand):
+                    return cand
 
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional não tem "Código de Verificação" — sua identidade e
@@ -2222,6 +2270,37 @@ class SPPdfExtractor:
                 else:
                     bloco_sv = t[nomes[1].start(): disc_pos]
 
+        # Cuiabá/ISSNet escaneado: em scans degradados o cabeçalho "Dados do
+        # Tomador de Serviços" às vezes some por completo do OCR (nota real
+        # ANDERSON FAUSTINO/FA TELAS -> São Pedro), fazendo o bloco do PRESTADOR
+        # (delimitado genericamente até o próximo rótulo reconhecido) engolir
+        # também o CNPJ/Razão/Endereço do TOMADOR até "Dados do Intermediário" —
+        # CNPJ sai certo (1º a validar), mas razão/endereço/município saem do
+        # TOMADOR. Assinatura estável do layout, presente em ambos os formatos
+        # (limpo e degradado): o prestador usa "CPF/CNPJ" (CPF antes do CNPJ),
+        # o tomador usa "CNPJ/CPF" ou "CNPJICPF" (CNPJ antes do CPF, a barra
+        # vira "I" no OCR) — usamos essa INVERSÃO de ordem como âncora do início
+        # do bloco do tomador, independente do rótulo de cabeçalho estar legível.
+        bloco_cuiaba = None
+        if self.layout == LAYOUT_CUIABA and not is_intermediario:
+            m_prest_lab = re.search(r'Dados\s+do\s+Prestador', t, re.IGNORECASE)
+            m_tom_anchor = re.search(r'CNPJ\s*[/I]\s*CPF', t, re.IGNORECASE)
+            if not m_tom_anchor:
+                # Degradação ainda maior (nota real GMS FLATS HOTEL -> São Pedro):
+                # nem o rótulo "CNPJ/CPF" sobrevive — o CNPJ do tomador vem NU,
+                # seguido na linha seguinte por "Razão Social:". Validado que essa
+                # combinação só ocorre no bloco do tomador (nunca no do prestador,
+                # que usa CPF/CNPJ com rótulo, mesmo quando o próprio CNPJ sai
+                # com pontuação corrompida por vírgula).
+                m_tom_anchor = re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*\n\s*Raz[ãa]o\s+Social', t, re.IGNORECASE)
+            if m_prest_lab and m_tom_anchor and m_tom_anchor.start() > m_prest_lab.start():
+                if is_prestador:
+                    bloco_cuiaba = t[m_prest_lab.start(): m_tom_anchor.start()]
+                else:
+                    m_interm = re.search(r'Dados\s+do\s+Intermedi[áa]rio', t, re.IGNORECASE)
+                    fim = m_interm.start() if (m_interm and m_interm.start() > m_tom_anchor.start()) else len(t)
+                    bloco_cuiaba = t[m_tom_anchor.start(): fim]
+
         # 1. Bloco
         if is_intermediario:
             labels = sorted(_LABELS_INTERMEDIARIO, key=len, reverse=True)
@@ -2235,7 +2314,7 @@ class SPPdfExtractor:
         delimiters = rf'{pattern_other_labels}|{relax("Discrimina")}|' + \
                      rf'{relax("VALOR TOTAL")}|{relax("DADOS COMPLEMENTARES")}|' + \
                      rf'{relax("OUTRAS INFORMAÇÕES")}|{relax("SERVIÇO PRESTADO")}|' + \
-                     rf'{relax("Descrição do Serviço")}|$'
+                     rf'{relax("Descrição do Serviço")}|{relax("Descrição dos Serviços")}|$'
         
         pattern_bloco = rf'(?:{pattern_labels}).*?(?={delimiters})'
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
@@ -2243,7 +2322,12 @@ class SPPdfExtractor:
         if is_intermediario and not m_bloco:
             return None
 
-        bloco = bloco_sv if bloco_sv is not None else (m_bloco.group(0) if m_bloco else t)
+        if bloco_sv is not None:
+            bloco = bloco_sv
+        elif bloco_cuiaba is not None:
+            bloco = bloco_cuiaba
+        else:
+            bloco = m_bloco.group(0) if m_bloco else t
 
         bloco_clean = bloco.replace('|', ' ').replace('!', ' ').replace('\n', ' ').strip()
         bloco_clean = re.sub(r'\s{2,}', ' ', bloco_clean)
@@ -2585,15 +2669,43 @@ class SPPdfExtractor:
                     if len(segs) >= 3:
                         end_data['bairro'] = segs[-2]
 
+        if self.layout == LAYOUT_CUIABA and (not end_data.get('municipio') or end_data.get('municipio') in ('Não informado', '')):
+            # ISSNet Cuiabá: o município do prestador vem como "- Cuiabá! MT" (o
+            # "!"/"|" é ruído de OCR); o do tomador vem explícito em
+            # "Cidade/UF: <cidade>/ <UF>". Sem extrair o município, o resolver caía
+            # num IBGE errado (pescava os dígitos da Inscrição Municipal, ex.:
+            # "295033" → 2950330, em vez de Cuiabá 5103403).
+            m_cid = re.search(r'Cidade\s*/\s*UF\s*:?\s*([A-Za-zÀ-ú ]+?)\s*/\s*([A-Z]{2})', bloco, re.IGNORECASE)
+            if m_cid:
+                end_data['municipio'] = m_cid.group(1).strip()
+                end_data['uf'] = m_cid.group(2).strip().upper()
+            else:
+                m_mun = re.search(r'[-–]\s*([A-Za-zÀ-ú]+(?:\s+[A-Za-zÀ-ú]+){0,2}?)\s*[!|/]?\s*\bMT\b', bloco)
+                if m_mun:
+                    end_data['municipio'] = m_mun.group(1).strip()
+                    end_data['uf'] = 'MT'
+
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'],
             city_hint=end_data.get('municipio'), raw_doc_text=t
         )
 
+        # Intermediário é uma entidade OPCIONAL (ao contrário de prestador/
+        # tomador, que sempre aparecem, ainda que "Não Identificado"). Quando
+        # nada de fato foi encontrado (CNPJ caiu no sentinela E a razão ficou
+        # no default genérico) devolvemos None em vez de fabricar um
+        # intermediário fantasma — visto em Cuiabá/ISSNet (pág. 14): a tabela
+        # "Dados do Intermediário de Serviços" vem vazia (só o cabeçalho da
+        # grade), mas o bloco genérico, sem o delimitador correto, engolia o
+        # texto de "Descrição dos Serviços" seguinte e pescava o CNPJ do
+        # PRESTADOR (linha do pix) como se fosse do intermediário.
+        if is_intermediario and cnpj == '00000000000100' and razao == f'{tipo} Não Identificado':
+            return None
+
         return Entidade(
-            cnpj_cpf=cnpj, 
-            inscricao_municipal=insc, 
-            razao_social=razao, 
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
             endereco=Endereco(**end_data),
             email=email,
             telefone=telefone
@@ -4023,6 +4135,47 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout == LAYOUT_CUIABA:
+            # Só intercepta o FORMATO EM GRADE (scan degradado, consolidado MTI):
+            # cabeçalho "Vl./Vi. Total dos Serviços ... | ... | Total do ISSQN |
+            # ISSQN Retido | ..." seguido, na PRÓXIMA linha, de uma linha de VALORES
+            # com vários "R$" (o OCR troca "Vl."→"Vi."). Pegamos os R$ por POSIÇÃO:
+            # [0]=serviços, [3]=base de cálculo, [4]=Total do ISSQN. O formato com
+            # rótulo limpo ("Vl. Total dos Serviços: R$ ...") NÃO casa (o ":" corta
+            # antes da quebra) e cai no extrator genérico abaixo, que já o tratava.
+            m_row = re.search(r'V[il]\.?\s*Total\s+dos\s+Servi[çc]os[^\n:]*\n\s*(R\$[^\n]*R\$[^\n]*)', t, re.IGNORECASE)
+            if m_row:
+                row = m_row.group(1)
+                vals = [self._parse_valor(x) for x in re.findall(r'R\$\s*([\d.,]+)', row)]
+                serv = base = iss = 0.0
+                if len(vals) >= 5:
+                    serv, base, iss = vals[0], vals[3], vals[4]
+                elif vals:
+                    serv = vals[0]; base = serv
+                iss_retido = bool(re.search(r'\bSim\b', row))
+                # Alíquota: coluna da grade de atividade ("... - 5,00 | 701 <NBS 9díg>").
+                aliq = 0.0
+                m_al = re.search(r'(\d{1,2},\d{2})\s*\|?\s*\d{3,4}\s+\d{9}', t)
+                if m_al:
+                    aliq = self._parse_valor(m_al.group(1)) / 100
+                # Cross-check fiel à face: ISS impresso = base×alíquota (560×5%=28,00);
+                # se a grade não devolveu o ISS, computa.
+                if not iss and base and aliq:
+                    iss = round(base * aliq, 2)
+                # Líquido: 2ª grade ("... VI. Líquido da Nota Fiscal" → último R$ da linha).
+                liquido = serv or base
+                m_liq = re.search(r'L[íi]quido\s+da\s+Nota\s+Fiscal\s*\n\s*(R\$[^\n]*)', t, re.IGNORECASE)
+                if m_liq:
+                    rs = re.findall(r'R\$\s*([\d.,]+)', m_liq.group(1))
+                    if rs:
+                        liquido = self._parse_valor(rs[-1])
+                return Valores(
+                    valor_servicos=serv, valor_deducoes=0.0, base_calculo=base or serv,
+                    aliquota=aliq, valor_iss=iss, iss_retido=iss_retido,
+                    valor_iss_retido=iss if iss_retido else 0.0,
+                    valor_liquido_nfse=liquido or serv,
+                )
+
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional: grade "rótulo(s) em cima / valores embaixo", com
             # campos vazios marcados por "-" e linhas em branco entre rótulo e
@@ -5036,6 +5189,50 @@ class SPPdfExtractor:
                     if header_sp.strip():
                         best_text = f"{header_sp}\n{best_text}"
 
+                # Cuiabá/MT (ISSNet) escaneado: a grade "Detalhamento dos
+                # Tributos" (Vl. Total dos Serviços | ... | Total do ISSQN |
+                # ISSQN Retido | ...) às vezes sai truncada no zoom 3 padrão —
+                # a linha de valores quebra no meio (ex.: "R$443,80 | R$000"
+                # seguido de "R$ 0,00" isolado numa linha à parte), perdendo o
+                # Total do ISSQN e a Base de Cálculo real (serviços saía
+                # 443,80 quando o correto, confirmado por recut em zoom 6 +
+                # PSM 6 — consistente nos zooms 4/5/6/8 —, era 4.113,50, com
+                # ISS 82,27 = base×2%). Só reprocessa quando a linha de
+                # valores sai com menos de 4 tokens "R$" (grade truncada) —
+                # notas já limpas no zoom 3 (ex.: nº 134) pulam o custo extra
+                # e não correm risco de regressão. Validado contra a nota real
+                # pág. 14 (ANDERSON FAUSTINO -> SÃO PEDRO CONSTRUTORA, PDF
+                # consolidado MTI 03-2026).
+                if re.search(r'Prefeitura\s+Municipal\s+de\s+Cuiab[áa]', best_text, re.IGNORECASE):
+                    m_row_chk = re.search(
+                        r'V[il]\.?\s*Total\s+dos\s+Servi[çc]os[^\n:]*\n\s*(R\$[^\n]*)',
+                        best_text, re.IGNORECASE)
+                    row_chk = m_row_chk.group(1) if m_row_chk else ''
+                    if len(re.findall(r'R\$', row_chk)) < 4:
+                        valores_cuiaba = self._ocr_valores_cuiaba(page)
+                        if valores_cuiaba.strip():
+                            best_text = f"{valores_cuiaba}\n{best_text}"
+
+                    # Número: quando as duas âncoras do `_extrair_numero` (rótulo
+                    # limpo "Número da Nota Fiscal: N" e o dígito imediatamente
+                    # antes de "Dados do Prestador") falham — scan gravemente
+                    # degradado (ex.: pág. 14 do MTI 03-2026, número real 16
+                    # confirmado pelo usuário contra o documento) — tenta um
+                    # recorte dedicado da caixa "Número da Nota Fiscal" (canto
+                    # superior direito, ao lado do logo/QR) em 3 zooms (6/8/10)
+                    # com PSM 7 (linha única) + whitelist de dígitos. A caixa
+                    # inteira (com o logo ao lado) confunde o OCR e faz o dígito
+                    # variar entre zooms (ex.: "16"->"18"); o recorte estreito só
+                    # do número é estável. Só aceita quando ao menos 2 dos 3
+                    # zooms concordam — sem consenso, não arrisca um dígito
+                    # errado e segue para o fallback honesto de sempre.
+                    tem_rotulo_limpo = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*\d+', best_text, re.IGNORECASE)
+                    tem_ancora_prestador = re.search(r'\b\d{2,6}\s*\n\s*Dados\s+do\s+Prestador', best_text, re.IGNORECASE)
+                    if not tem_rotulo_limpo and not tem_ancora_prestador:
+                        numero_box = self._ocr_numero_box_cuiaba(page)
+                        if numero_box.strip():
+                            best_text = f"{numero_box}\n{best_text}"
+
                 # Camaçari/BA escaneado (foto/JPG -> OCR): a leitura padrão
                 # (zoom 3) desta família de fotos de baixa qualidade descarta a
                 # metade inferior inteira da nota (grade "Retenções x Totais",
@@ -5187,6 +5384,66 @@ class SPPdfExtractor:
             )
             num = re.sub(r'\D', '', num)
             return f"Número da Nota\n{num}\n" if num else ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_numero_box_cuiaba(page) -> str:
+        """Recorta e reprocessa em zoom alto a caixa "Número da Nota Fiscal" do
+        canto superior direito da NFS-e de Cuiabá/MT (ISSNet) escaneada — só o
+        dígito (exclui o logo/QR "NOTA CUIABANA" ao lado, que confunde o OCR e
+        faz o dígito variar entre zooms, ex.: "16" virando "18"). PSM 7 (linha
+        única) + whitelist de dígitos. Vota entre 3 zooms (6/8/10) e só aceita
+        quando ao menos 2 concordam — validado contra a nota real pág. 14: 8
+        dos 11 zooms testados (4-12) concordam em "16"; sem maioria, devolve
+        vazio em vez de arriscar um dígito errado."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            votos = []
+            for zoom in (6.0, 8.0, 10.0):
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                w, h = img.size
+                crop = img.crop((int(w * 0.80), int(h * 0.070), int(w * 0.98), int(h * 0.090)))
+                texto = pytesseract.image_to_string(
+                    crop, lang='por', config='--psm 7 -c tessedit_char_whitelist=0123456789'
+                ).strip()
+                if texto:
+                    votos.append(texto)
+            if not votos:
+                return ""
+            numero, contagem = Counter(votos).most_common(1)[0]
+            if contagem < 2:
+                return ""
+            return f"Número da Nota Fiscal\n{numero}\n"
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_valores_cuiaba(page) -> str:
+        """Reprocessa a página inteira da NFS-e de Cuiabá/MT (ISSNet) escaneada
+        em zoom alto (5x) com PSM 6 (bloco único). No zoom 3 padrão a grade
+        "Detalhamento dos Tributos" às vezes quebra a linha de valores no meio
+        (o "Total do ISSQN" e parte da "Base de Cálculo" somem para uma linha
+        separada, fora do alcance do regex de captura por linha). Zoom 5 + PSM
+        6 recompõe a linha inteira num único bloco, junto com a alíquota
+        (item da LC116) — validado contra a nota real pág. 14: zoom 6 também
+        recompõe a grade de valores, mas nesse zoom específico a alíquota
+        "2,00" cai do texto; zoom 5 preserva ambos."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 6')
         except Exception:
             return ""
 
