@@ -2928,24 +2928,49 @@ class SPPdfExtractor:
     def _extrair_entidade_lauro_freitas(self, is_prestador: bool) -> Entidade:
         """Extrai prestador/tomador do layout Lauro de Freitas/BA.
 
-        O pdfminer extrai os campos Município/UF/Email do PRESTADOR fora de
-        ordem: eles saem DEPOIS do cabeçalho "TOMADOR DE SERVIÇOS", mas ANTES
-        do "Nome/Razão" do tomador (a linha correspondente do prestador, no
-        PDF de origem, "vaza" para a caixa seguinte). O texto se divide em
-        3 blocos, delimitados pelos dois cabeçalhos de seção e pelo 2º
-        "Nome/Razão" (do tomador):
+        Duas variantes de documento usam a mesma marca de layout:
+
+        1) NFS-e regular (ex. nota Macedo/Sul&Seg): cabeçalho "PRESTADOR DE
+           SERVIÇOS" vem ANTES de "TOMADOR DE SERVIÇOS". O pdfminer extrai
+           os campos Município/UF/Email do PRESTADOR fora de ordem: eles
+           saem DEPOIS do cabeçalho do tomador, mas ANTES do "Nome/Razão" do
+           tomador (a linha correspondente do prestador "vaza" para a caixa
+           seguinte).
+        2) NFTS (Nota Fiscal Eletrônica do TOMADOR de Serviços, ex. nota
+           2026302 BDP LOGISTICA→BONI TRANSPORTES): cabeçalho "TOMADOR DE
+           SERVIÇOS" vem ANTES de "PRESTADOR DE SERVIÇOS", e cada bloco sai
+           completo/autocontido, sem vazamento nenhum. Assumir a ordem fixa
+           da variante 1 aqui faz `bloco_prestador` virar um slice com
+           início depois do fim (string vazia) — todo o prestador some.
+
+        O texto se divide em até 3 blocos, delimitados pelos cabeçalhos de
+        seção (na ordem em que realmente aparecem) e pelo 1º "Nome/Razão"
+        que sobra depois do cabeçalho do tomador:
           - bloco_prestador: CNPJ/Inscrição/Nome/Endereço/Bairro/CEP do
-            PRESTADOR (corretos, na ordem esperada).
-          - bloco_vazado: CNPJ do TOMADOR + Município/UF/Email VAZADOS do
-            PRESTADOR.
+            PRESTADOR, e (só na variante 2) também Município/UF/Email.
+          - bloco_vazado: CNPJ do TOMADOR + (só na variante 1) Município/UF/
+            Email VAZADOS do PRESTADOR.
           - bloco_tomador: Nome/Endereço/Bairro/Município/UF/CEP/Email do
-            TOMADOR (corretos, na ordem esperada).
+            TOMADOR (corretos, na ordem esperada, nas duas variantes).
         """
         t = self.raw_text
 
         m_prest_header = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
         m_tom_header = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
-        bloco_prestador = t[m_prest_header.end():m_tom_header.start()] if (m_prest_header and m_tom_header) else t
+
+        if m_prest_header and (not m_tom_header or m_tom_header.start() > m_prest_header.start()):
+            # Variante 1 (NFS-e regular): PRESTADOR antes de TOMADOR.
+            bloco_prestador = t[m_prest_header.end():m_tom_header.start()] if m_tom_header else t[m_prest_header.end():]
+        elif m_prest_header:
+            # Variante 2 (NFTS): TOMADOR antes de PRESTADOR — bloco do
+            # prestador vai do seu próprio cabeçalho até a próxima seção
+            # conhecida (discriminação dos serviços) ou o fim do texto.
+            resto_prest = t[m_prest_header.end():]
+            m_fim_prest = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS', resto_prest, re.IGNORECASE)
+            bloco_prestador = resto_prest[:m_fim_prest.start()] if m_fim_prest else resto_prest
+        else:
+            bloco_prestador = t
+
         resto = t[m_tom_header.end():] if m_tom_header else t
 
         m_nome_tomador = re.search(r'Nome\s*/\s*Raz[ãa]o', resto, re.IGNORECASE)
@@ -2967,9 +2992,14 @@ class SPPdfExtractor:
             endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n+\s*(.+)', bloco_prestador) or 'Não informado'
             bairro = _campo(r'Bairro\s*:?\s*\n*\s*([^\n]+)', bloco_prestador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_prestador)
-            municipio = _campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_vazado) or 'LAURO DE FREITAS'
-            uf = _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_vazado) or 'BA'
-            email = _campo(r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_vazado)
+            municipio = (_campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_prestador)
+                         or _campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_vazado)
+                         or 'LAURO DE FREITAS')
+            uf = (_campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_prestador)
+                  or _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_vazado)
+                  or 'BA')
+            email_pat = r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
+            email = _campo(email_pat, bloco_prestador) or _campo(email_pat, bloco_vazado)
         else:
             cnpj = _cnpj_cpf(bloco_vazado)
             insc = None
@@ -4494,11 +4524,13 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_LAURO_FREITAS:
             # Grade "Valor Total Deduções / Base de Cálculo / Alíquota (%) /
             # Valor do ISS / ISSQN Retido": rótulos numa linha, os 5 valores
-            # na sequência seguinte, na mesma ordem.
+            # na sequência seguinte, na mesma ordem. O prefixo "R$" antes dos
+            # 2 primeiros valores nem sempre sai no texto (ex. nota NFTS
+            # 2026302, BDP LOGISTICA) — tolerado como opcional.
             m_row = re.search(
                 r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\)\s*'
                 r'Al[íi]quota\s*\(%\)\s*Valor\s+do\s+ISS\s*\(R\$\)\s*ISSQN\s+Retido\s*\(R\$\)\s*'
-                r'R\$\s*([\d\.,]+)\s*R\$\s*([\d\.,]+)\s*([\d\.,]+)\s*([\d\.,]+)\s*(Sim|N[ãa]o)',
+                r'(?:R\$\s*)?([\d\.,]+)\s*(?:R\$\s*)?([\d\.,]+)\s*([\d\.,]+)\s*([\d\.,]+)\s*(Sim|N[ãa]o)',
                 t, re.IGNORECASE
             )
             if m_row:
