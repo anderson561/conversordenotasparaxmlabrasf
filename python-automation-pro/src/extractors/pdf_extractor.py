@@ -2294,11 +2294,46 @@ class SPPdfExtractor:
                 # com pontuação corrompida por vírgula).
                 m_tom_anchor = re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*\n\s*Raz[ãa]o\s+Social', t, re.IGNORECASE)
             if m_prest_lab and m_tom_anchor and m_tom_anchor.start() > m_prest_lab.start():
+                m_interm_lab = re.search(r'Dados\s+do\s+Intermedi[áa]rio', t, re.IGNORECASE)
                 if is_prestador:
-                    bloco_cuiaba = t[m_prest_lab.start(): m_tom_anchor.start()]
+                    bloco_normal = t[m_prest_lab.start(): m_tom_anchor.start()]
+                    if re.search(r'CPF\s*[/I]\s*CNPJ', bloco_normal, re.IGNORECASE):
+                        bloco_cuiaba = bloco_normal
+                    elif m_interm_lab:
+                        # Prestador REAL deslocado (nota real DR3 TERCEIRIZAÇÃO,
+                        # pág.3 do PDF "NFS PRESTADORES ANALISE..."): o cabeçalho
+                        # "Dados do Prestador" aparece sem os dados reais logo
+                        # em seguida (ali só vem, sem rótulo próprio, o CNPJ do
+                        # TOMADOR) — os dados REAIS do prestador (nome/CNPJ)
+                        # aparecem mais adiante, sob o cabeçalho "Dados do
+                        # Intermediário de Serviços" (a ordem física do OCR
+                        # embaralhou os blocos). Só assume esse deslocamento
+                        # quando o trecho ali REALMENTE tem a assinatura do
+                        # prestador (CPF/CNPJ, CPF antes) — senão mantém o
+                        # bloco normal (vazio nas notas sem esse problema),
+                        # preservando o comportamento já validado.
+                        m_fim = re.search(r'Descri[çc][ãa]o\s+dos?\s+Servi[çc]os?', t[m_interm_lab.start():], re.IGNORECASE)
+                        fim_abs = m_interm_lab.start() + m_fim.start() if m_fim else len(t)
+                        candidato = t[m_interm_lab.start(): fim_abs]
+                        if re.search(r'CPF\s*[/I]\s*CNPJ', candidato, re.IGNORECASE):
+                            # Remove o cabeçalho da seção + a linha (vazia) de
+                            # colunas da grade do intermediário ("CNPJ/CPF
+                            # Inscrição Municipal Razão Social", sem dado real
+                            # nenhum) — sem isso, a extração genérica de razão
+                            # social bate nesse "Razão Social" de cabeçalho e
+                            # engole as linhas seguintes (nome fantasia +
+                            # endereço) até o próximo stop-word.
+                            candidato_sem_header = re.sub(
+                                r'^.*?Raz[ãa]o\s+Social\s*\n*', '', candidato,
+                                count=1, flags=re.IGNORECASE | re.DOTALL
+                            )
+                            bloco_cuiaba = candidato_sem_header if candidato_sem_header.strip() else candidato
+                        else:
+                            bloco_cuiaba = bloco_normal
+                    else:
+                        bloco_cuiaba = bloco_normal
                 else:
-                    m_interm = re.search(r'Dados\s+do\s+Intermedi[áa]rio', t, re.IGNORECASE)
-                    fim = m_interm.start() if (m_interm and m_interm.start() > m_tom_anchor.start()) else len(t)
+                    fim = m_interm_lab.start() if (m_interm_lab and m_interm_lab.start() > m_tom_anchor.start()) else len(t)
                     bloco_cuiaba = t[m_tom_anchor.start(): fim]
 
         # 1. Bloco
@@ -2320,6 +2355,17 @@ class SPPdfExtractor:
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
         
         if is_intermediario and not m_bloco:
+            return None
+
+        # Cuiabá/ISSNet: quando o bloco do "Intermediário" carrega a assinatura
+        # do PRESTADOR (rótulo "CPF/CNPJ", CPF antes do CNPJ), não é um
+        # intermediário de verdade — são os dados REAIS do prestador que a
+        # ordem física do OCR deslocou para depois desse cabeçalho (nota real
+        # DR3 TERCEIRIZAÇÃO, pág.3 do PDF "NFS PRESTADORES ANALISE..."). Sem
+        # este guard, o intermediário "roubaria" o CNPJ/razão do prestador em
+        # vez de ficar vazio (None).
+        if self.layout == LAYOUT_CUIABA and is_intermediario and m_bloco and \
+                re.search(r'CPF\s*[/I]\s*CNPJ', m_bloco.group(0), re.IGNORECASE):
             return None
 
         if bloco_sv is not None:
@@ -5192,23 +5238,26 @@ class SPPdfExtractor:
                 # Cuiabá/MT (ISSNet) escaneado: a grade "Detalhamento dos
                 # Tributos" (Vl. Total dos Serviços | ... | Total do ISSQN |
                 # ISSQN Retido | ...) às vezes sai truncada no zoom 3 padrão —
-                # a linha de valores quebra no meio (ex.: "R$443,80 | R$000"
-                # seguido de "R$ 0,00" isolado numa linha à parte), perdendo o
-                # Total do ISSQN e a Base de Cálculo real (serviços saía
-                # 443,80 quando o correto, confirmado por recut em zoom 6 +
-                # PSM 6 — consistente nos zooms 4/5/6/8 —, era 4.113,50, com
-                # ISS 82,27 = base×2%). Só reprocessa quando a linha de
-                # valores sai com menos de 4 tokens "R$" (grade truncada) —
-                # notas já limpas no zoom 3 (ex.: nº 134) pulam o custo extra
-                # e não correm risco de regressão. Validado contra a nota real
-                # pág. 14 (ANDERSON FAUSTINO -> SÃO PEDRO CONSTRUTORA, PDF
-                # consolidado MTI 03-2026).
+                # seja quebrando a linha de valores no meio (ex.: "R$443,80 |
+                # R$000" numa linha, "R$ 0,00" isolado bem abaixo — pág. 14 do
+                # MTI 03-2026), seja perdendo uma coluna inteira sem quebrar a
+                # linha (ex.: "R$ 22.709,56 R$ 0,00 R$ 0,00 R$ 454,19 | Não R$
+                # 0,00" — só 5 tokens numa linha só, pág. 3 do PDF "ANALISE" —
+                # a Base de Cálculo duplicada simplesmente não sai). Uma linha
+                # completa desta grade sempre tem 6 tokens "R$" (serviços,
+                # desconto incond., deduções, base, ISS, desconto cond.) —
+                # confirmado nas notas já corretas (nº 134, pág. 14 após
+                # recut). Um recut em zoom 5 + PSM 6 (página inteira) recompõe
+                # a linha inteira de forma consistente (validado nos zooms
+                # 4/5/6/8). Só reprocessa quando a linha sai com MENOS de 6
+                # tokens "R$" — notas já limpas no zoom 3 pulam o custo extra
+                # e não correm risco de regressão.
                 if re.search(r'Prefeitura\s+Municipal\s+de\s+Cuiab[áa]', best_text, re.IGNORECASE):
                     m_row_chk = re.search(
                         r'V[il]\.?\s*Total\s+dos\s+Servi[çc]os[^\n:]*\n\s*(R\$[^\n]*)',
                         best_text, re.IGNORECASE)
                     row_chk = m_row_chk.group(1) if m_row_chk else ''
-                    if len(re.findall(r'R\$', row_chk)) < 4:
+                    if len(re.findall(r'R\$', row_chk)) < 6:
                         valores_cuiaba = self._ocr_valores_cuiaba(page)
                         if valores_cuiaba.strip():
                             best_text = f"{valores_cuiaba}\n{best_text}"
@@ -5606,6 +5655,40 @@ class SPPdfExtractor:
     def parse_multiple(self) -> List[Nfse]:
         """Extrai múltiplas notas do mesmo PDF, fatiando blocos de texto por heurística de início de nota."""
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
+
+        def _numero_heuristico_bloco(text: str) -> Optional[str]:
+            """Extrai um "número da nota" aproximado de um BLOCO de texto, usado
+            só para decidir se um trecho é uma nota nova ou continuação da
+            anterior (não é o número final do XML — esse vem de `_extrair_numero`
+            por layout). O padrão genérico antigo (Número/Nº seguido do 1º dígito) pegava
+            o PRIMEIRO "Número" do texto, que muitas vezes é o número do
+            ENDEREÇO do tomador ("Endereço : Avenida Praia de Pajussara Número:
+            554"), não o da nota. Como o mesmo tomador (endereço fixo) se repete
+            em várias notas de um PDF consolidado, isso fazia páginas de notas
+            DIFERENTES compartilharem o mesmo "número" aparente e serem tratadas
+            como continuação uma da outra — a nota seguinte nunca vira um XML
+            próprio, fica silenciosamente engolida na anterior (achado real:
+            PDF "NFS PRESTADORES ANALISE...", pág. 3, nota nº 10 sumia assim).
+            Tenta primeiro rótulos específicos de "número da nota"; só cai no
+            genérico como último recurso, e mesmo assim pula ocorrências cuja
+            linha contém "Endereço" (a armadilha conhecida)."""
+            especificos = [
+                r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*:?\s*(\d+)',
+                r'N[ºo]\.?\s*da\s+Nota\s+Fiscal\s*:?\s*(\d+)',
+                r'N[uú]mero\s+da\s+Nota\s*:?\s*(\d+)',
+                r'N[ºo]\.?\s*da\s+Nota\s*:?\s*(\d+)',
+            ]
+            for p in especificos:
+                m = re.search(p, text, re.IGNORECASE)
+                if m:
+                    return m.group(1)
+            for m in re.finditer(r'(?:N[uú]mero|N[ºo])\.?\s*:?.*?(\d+)', text, re.IGNORECASE):
+                inicio_linha = text.rfind('\n', 0, m.start()) + 1
+                linha_ate_match = text[inicio_linha: m.start()]
+                if re.search(r'Endere[çc]o', linha_ate_match, re.IGNORECASE):
+                    continue
+                return m.group(1)
+            return None
         
         full_text = extract_text(self.pdf_path)
         
@@ -5699,8 +5782,8 @@ class SPPdfExtractor:
             # Prioridade: Se temos o número da nota atual e conseguimos extrair o número desta página, comparamos.
             # Se for o mesmo número, é continuação (mesmo tendo cabeçalho repetido).
             if current_group_num:
-                m_prox = re.search(r'(?:N[uú]mero|N[ºo]).*?(\d+)', text, re.I)
-                if m_prox and m_prox.group(1) == current_group_num:
+                num_prox = _numero_heuristico_bloco(text)
+                if num_prox and num_prox == current_group_num:
                     return False
 
             return has_start_pattern or has_num_cnpj
@@ -5727,8 +5810,7 @@ class SPPdfExtractor:
 
         for block_text, page_idx in granular_blocks:
             # Tenta identificar o número da nota no bloco atual (suporta Número e Nº)
-            num_match = re.search(r'(?:N[uú]mero|N[ºo]).*?(\d+)', block_text, re.I)
-            block_num = num_match.group(1) if num_match else None
+            block_num = _numero_heuristico_bloco(block_text)
 
             if is_new_invoice(block_text, current_num):
                 if current_invoice:
