@@ -125,6 +125,7 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 - **Detecção**: "MUNICÍPIO DE LAURO DE FREITAS" ou domínio `laurodefreitas.ba.gov.br`.
 - **Item de serviço**: código municipal de 6 dígitos (item.subitem LC116 + subitem municipal, ex.: `110201`) → usamos os 4 primeiros (`1102`).
 - **⚠️ Campos deslocados pelo pdfminer**: Município/UF/E-mail do **prestador** saem *depois* do cabeçalho "TOMADOR DE SERVIÇOS" (mas antes do nome do tomador). Extração dedicada particiona o texto em 3 blocos pelos cabeçalhos de seção para o tomador não herdar o município/e-mail do prestador.
+- **⚠️ Variante NFTS (Nota Fiscal Eletrônica do TOMADOR de Serviços)**: neste tipo de documento (ex.: nota 2026302, BDP LOGISTICA → BONI TRANSPORTES) o cabeçalho "TOMADOR DE SERVIÇOS" vem **antes** de "PRESTADOR DE SERVIÇOS" (ordem invertida frente à NFS-e regular), e cada bloco sai completo/autocontido, sem vazamento. Assumir a ordem fixa da NFS-e regular fazia o bloco do prestador virar vazio (slice com início depois do fim) — o prestador saía inteiro como "Não Identificado". Corrigido detectando qual cabeçalho aparece fisicamente primeiro. Também nesta variante, a grade de valores (Deduções/Base/Alíquota/ISS/ISSQN Retido) pode vir **sem o prefixo "R$"** antes dos 2 primeiros números — tolerado como opcional no regex.
 
 ### 16. Iaçu/BA — `iacu_nfse`
 - **Sistema**: Prefeitura Municipal de Iaçu/BA via plataforma **nfservico.com.br** (NFS-e tributada, escaneada → OCR).
