@@ -90,7 +90,8 @@ _LABELS_TOMADOR = [
     'Cliente',                 # Portal Nacional / DANFSe usa 'Cliente'
 ]
 _LABELS_INTERMEDIARIO = [
-    'Intermediário do Serviço', 'INTERMEDIÁRIO DO SERVIÇO', 'Intermediário',
+    'Dados do Intermediário de Serviços', 'Intermediário do Serviço',
+    'INTERMEDIÁRIO DO SERVIÇO', 'Intermediário',
     'Intermediario', 'Dados do Intermediário', 'INTERMEDIARIO'
 ]
 _LABELS_CNPJ_CPF = [
@@ -2313,7 +2314,7 @@ class SPPdfExtractor:
         delimiters = rf'{pattern_other_labels}|{relax("Discrimina")}|' + \
                      rf'{relax("VALOR TOTAL")}|{relax("DADOS COMPLEMENTARES")}|' + \
                      rf'{relax("OUTRAS INFORMAÇÕES")}|{relax("SERVIÇO PRESTADO")}|' + \
-                     rf'{relax("Descrição do Serviço")}|$'
+                     rf'{relax("Descrição do Serviço")}|{relax("Descrição dos Serviços")}|$'
         
         pattern_bloco = rf'(?:{pattern_labels}).*?(?={delimiters})'
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
@@ -2689,10 +2690,22 @@ class SPPdfExtractor:
             city_hint=end_data.get('municipio'), raw_doc_text=t
         )
 
+        # Intermediário é uma entidade OPCIONAL (ao contrário de prestador/
+        # tomador, que sempre aparecem, ainda que "Não Identificado"). Quando
+        # nada de fato foi encontrado (CNPJ caiu no sentinela E a razão ficou
+        # no default genérico) devolvemos None em vez de fabricar um
+        # intermediário fantasma — visto em Cuiabá/ISSNet (pág. 14): a tabela
+        # "Dados do Intermediário de Serviços" vem vazia (só o cabeçalho da
+        # grade), mas o bloco genérico, sem o delimitador correto, engolia o
+        # texto de "Descrição dos Serviços" seguinte e pescava o CNPJ do
+        # PRESTADOR (linha do pix) como se fosse do intermediário.
+        if is_intermediario and cnpj == '00000000000100' and razao == f'{tipo} Não Identificado':
+            return None
+
         return Entidade(
-            cnpj_cpf=cnpj, 
-            inscricao_municipal=insc, 
-            razao_social=razao, 
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
             endereco=Endereco(**end_data),
             email=email,
             telefone=telefone
@@ -5176,6 +5189,30 @@ class SPPdfExtractor:
                     if header_sp.strip():
                         best_text = f"{header_sp}\n{best_text}"
 
+                # Cuiabá/MT (ISSNet) escaneado: a grade "Detalhamento dos
+                # Tributos" (Vl. Total dos Serviços | ... | Total do ISSQN |
+                # ISSQN Retido | ...) às vezes sai truncada no zoom 3 padrão —
+                # a linha de valores quebra no meio (ex.: "R$443,80 | R$000"
+                # seguido de "R$ 0,00" isolado numa linha à parte), perdendo o
+                # Total do ISSQN e a Base de Cálculo real (serviços saía
+                # 443,80 quando o correto, confirmado por recut em zoom 6 +
+                # PSM 6 — consistente nos zooms 4/5/6/8 —, era 4.113,50, com
+                # ISS 82,27 = base×2%). Só reprocessa quando a linha de
+                # valores sai com menos de 4 tokens "R$" (grade truncada) —
+                # notas já limpas no zoom 3 (ex.: nº 134) pulam o custo extra
+                # e não correm risco de regressão. Validado contra a nota real
+                # pág. 14 (ANDERSON FAUSTINO -> SÃO PEDRO CONSTRUTORA, PDF
+                # consolidado MTI 03-2026).
+                if re.search(r'Prefeitura\s+Municipal\s+de\s+Cuiab[áa]', best_text, re.IGNORECASE):
+                    m_row_chk = re.search(
+                        r'V[il]\.?\s*Total\s+dos\s+Servi[çc]os[^\n:]*\n\s*(R\$[^\n]*)',
+                        best_text, re.IGNORECASE)
+                    row_chk = m_row_chk.group(1) if m_row_chk else ''
+                    if len(re.findall(r'R\$', row_chk)) < 4:
+                        valores_cuiaba = self._ocr_valores_cuiaba(page)
+                        if valores_cuiaba.strip():
+                            best_text = f"{valores_cuiaba}\n{best_text}"
+
                 # Camaçari/BA escaneado (foto/JPG -> OCR): a leitura padrão
                 # (zoom 3) desta família de fotos de baixa qualidade descarta a
                 # metade inferior inteira da nota (grade "Retenções x Totais",
@@ -5327,6 +5364,29 @@ class SPPdfExtractor:
             )
             num = re.sub(r'\D', '', num)
             return f"Número da Nota\n{num}\n" if num else ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_valores_cuiaba(page) -> str:
+        """Reprocessa a página inteira da NFS-e de Cuiabá/MT (ISSNet) escaneada
+        em zoom alto (5x) com PSM 6 (bloco único). No zoom 3 padrão a grade
+        "Detalhamento dos Tributos" às vezes quebra a linha de valores no meio
+        (o "Total do ISSQN" e parte da "Base de Cálculo" somem para uma linha
+        separada, fora do alcance do regex de captura por linha). Zoom 5 + PSM
+        6 recompõe a linha inteira num único bloco, junto com a alíquota
+        (item da LC116) — validado contra a nota real pág. 14: zoom 6 também
+        recompõe a grade de valores, mas nesse zoom específico a alíquota
+        "2,00" cai do texto; zoom 5 preserva ambos."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 6')
         except Exception:
             return ""
 
