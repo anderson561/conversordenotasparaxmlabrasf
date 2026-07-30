@@ -912,6 +912,19 @@ class SPPdfExtractor:
             m = re.search(r'\b(\d{2,6})\s*\n\s*Dados\s+do\s+Prestador', t, re.IGNORECASE)
             if m:
                 return m.group(1)
+            # Nenhuma das duas âncoras casou (scan gravemente degradado, ex.: nota
+            # ANDERSON FAUSTINO/FA TELAS — testado com re-OCR em zoom até 10x sem
+            # recuperar o número no cabeçalho). NÃO cai nos padrões genéricos
+            # abaixo: o padrão bare "Número[:\s]+(\d+)" pescaria o mesmo
+            # "Número: 554" do endereço do tomador (mesma armadilha). Vai direto
+            # para o fallback honesto (nome do arquivo / placeholder + aviso) —
+            # não fabricar um número plausível-porém-errado.
+            if getattr(self, 'pdf_path', None):
+                import os
+                m_fn = re.search(r'(?:NFS?|NOTA|NF)\s*[-_]*\s*(\d+)', os.path.basename(self.pdf_path), re.IGNORECASE)
+                if m_fn:
+                    return m_fn.group(1).strip()
+            return '00000000'
 
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional: o número da NFS-e vem codificado na Chave de Acesso
@@ -2256,6 +2269,37 @@ class SPPdfExtractor:
                 else:
                     bloco_sv = t[nomes[1].start(): disc_pos]
 
+        # Cuiabá/ISSNet escaneado: em scans degradados o cabeçalho "Dados do
+        # Tomador de Serviços" às vezes some por completo do OCR (nota real
+        # ANDERSON FAUSTINO/FA TELAS -> São Pedro), fazendo o bloco do PRESTADOR
+        # (delimitado genericamente até o próximo rótulo reconhecido) engolir
+        # também o CNPJ/Razão/Endereço do TOMADOR até "Dados do Intermediário" —
+        # CNPJ sai certo (1º a validar), mas razão/endereço/município saem do
+        # TOMADOR. Assinatura estável do layout, presente em ambos os formatos
+        # (limpo e degradado): o prestador usa "CPF/CNPJ" (CPF antes do CNPJ),
+        # o tomador usa "CNPJ/CPF" ou "CNPJICPF" (CNPJ antes do CPF, a barra
+        # vira "I" no OCR) — usamos essa INVERSÃO de ordem como âncora do início
+        # do bloco do tomador, independente do rótulo de cabeçalho estar legível.
+        bloco_cuiaba = None
+        if self.layout == LAYOUT_CUIABA and not is_intermediario:
+            m_prest_lab = re.search(r'Dados\s+do\s+Prestador', t, re.IGNORECASE)
+            m_tom_anchor = re.search(r'CNPJ\s*[/I]\s*CPF', t, re.IGNORECASE)
+            if not m_tom_anchor:
+                # Degradação ainda maior (nota real GMS FLATS HOTEL -> São Pedro):
+                # nem o rótulo "CNPJ/CPF" sobrevive — o CNPJ do tomador vem NU,
+                # seguido na linha seguinte por "Razão Social:". Validado que essa
+                # combinação só ocorre no bloco do tomador (nunca no do prestador,
+                # que usa CPF/CNPJ com rótulo, mesmo quando o próprio CNPJ sai
+                # com pontuação corrompida por vírgula).
+                m_tom_anchor = re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*\n\s*Raz[ãa]o\s+Social', t, re.IGNORECASE)
+            if m_prest_lab and m_tom_anchor and m_tom_anchor.start() > m_prest_lab.start():
+                if is_prestador:
+                    bloco_cuiaba = t[m_prest_lab.start(): m_tom_anchor.start()]
+                else:
+                    m_interm = re.search(r'Dados\s+do\s+Intermedi[áa]rio', t, re.IGNORECASE)
+                    fim = m_interm.start() if (m_interm and m_interm.start() > m_tom_anchor.start()) else len(t)
+                    bloco_cuiaba = t[m_tom_anchor.start(): fim]
+
         # 1. Bloco
         if is_intermediario:
             labels = sorted(_LABELS_INTERMEDIARIO, key=len, reverse=True)
@@ -2277,7 +2321,12 @@ class SPPdfExtractor:
         if is_intermediario and not m_bloco:
             return None
 
-        bloco = bloco_sv if bloco_sv is not None else (m_bloco.group(0) if m_bloco else t)
+        if bloco_sv is not None:
+            bloco = bloco_sv
+        elif bloco_cuiaba is not None:
+            bloco = bloco_cuiaba
+        else:
+            bloco = m_bloco.group(0) if m_bloco else t
 
         bloco_clean = bloco.replace('|', ' ').replace('!', ' ').replace('\n', ' ').strip()
         bloco_clean = re.sub(r'\s{2,}', ' ', bloco_clean)
