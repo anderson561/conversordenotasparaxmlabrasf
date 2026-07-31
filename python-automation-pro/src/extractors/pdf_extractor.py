@@ -1699,6 +1699,19 @@ class SPPdfExtractor:
             else:
                 return self._extrair_tomador_telecom(t)
 
+        # São Paulo/SP digital: em algumas notas reais (ex. AMIL/TEMIS,
+        # 2026-07-31) o pdfminer extrai o texto numa ordem física diferente da
+        # visual — os cabeçalhos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS"
+        # ficam DESLOCADOS no meio dos próprios dados da entidade (o CNPJ do
+        # prestador chega a vazar sozinho, antes de qualquer cabeçalho). O
+        # extrator genérico delimita bloco por cabeçalho de seção e erra o
+        # alvo nesse caso (CNPJ do prestador vira o do tomador; razão social
+        # do tomador vira o bairro dele). Gateado pelo rótulo "Bairro:" —
+        # marca específica deste template de campos, ausente no mock sintético
+        # mais simples que já cobre o caminho genérico (test_sao_paulo_layout).
+        if self.layout == LAYOUT_SAO_PAULO and not is_intermediario and re.search(r'Bairro\s*:', t, re.IGNORECASE):
+            return self._extrair_entidade_sao_paulo(is_prestador)
+
         if self.layout == LAYOUT_OSASCO_REPASSE:
             if is_intermediario:
                 return None
@@ -3045,6 +3058,147 @@ class SPPdfExtractor:
                 uf=uf,
                 cep=cep,
             ),
+        )
+
+    _LABEL_TOKEN_SAO_PAULO = re.compile(
+        r'^(CPF\s*/\s*CNPJ|Nome\s*/\s*Raz[ãa]o(?:\s+Social)?|Endere[çc]o|'
+        r'CNPJ|CPF|TOMADOR\s+DE\s+SERVI[ÇC]OS|PRESTADOR\s+DE\s+SERVI[ÇC]OS)\s*:?$',
+        re.IGNORECASE
+    )
+
+    @classmethod
+    def _primeiro_conteudo_sao_paulo(cls, bloco_texto: str, n: int = 1) -> List[str]:
+        """Devolve as N primeiras linhas não-vazias de `bloco_texto` que NÃO são
+        um rótulo solto (sem valor colado) — usado para pular os cabeçalhos/
+        rótulos decorativos que o pdfminer intercala entre os campos reais."""
+        linhas = [l.strip() for l in bloco_texto.split('\n') if l.strip()]
+        conteudo = [l for l in linhas if not cls._LABEL_TOKEN_SAO_PAULO.match(l)]
+        return conteudo[:n]
+
+    def _extrair_entidade_sao_paulo(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador do layout São Paulo/SP quando o pdfminer
+        desloca os cabeçalhos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS"
+        para o MEIO dos próprios dados da entidade (nota real AMIL/TEMIS,
+        2026-07-31): o CNPJ do prestador chega a vazar sozinho antes de
+        qualquer cabeçalho, e o rótulo "TOMADOR DE SERVIÇOS" só aparece DEPOIS
+        de Nome/Razão + CPF/CNPJ + Endereço do tomador já terem passado. Um
+        bloco delimitado por cabeçalho de seção erra o alvo nesse caso — em
+        vez disso, ancoramos cada campo pelo PRÓPRIO rótulo mais próximo (ou,
+        para o CNPJ, pela ordem de aparição no documento inteiro), pulando
+        rótulos "soltos" (decorativos, sem valor colado) via
+        `_primeiro_conteudo_sao_paulo`."""
+        t = self.raw_text
+
+        # CNPJ: 1ª ocorrência de checksum válido no documento = prestador, 2ª =
+        # tomador. Mais robusto aqui que delimitar por cabeçalho, já que o CNPJ
+        # do prestador pode vazar para ANTES de "PRESTADOR DE SERVIÇOS".
+        all_cnpjs = self._scavenge_all_cnpjs()
+        if is_prestador:
+            cnpj = all_cnpjs[0] if len(all_cnpjs) >= 1 else "00000000000000"
+        else:
+            cnpj = all_cnpjs[1] if len(all_cnpjs) >= 2 else "00000000000000"
+
+        nomes_razao = list(re.finditer(r'Nome\s*/\s*Raz[ãa]o(?:\s+Social)?\s*:?', t, re.IGNORECASE))
+        m_prest_header = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+
+        razao, logradouro_raw, insc, bloco_campos = "", "", None, t
+
+        if is_prestador:
+            # A razão social/endereço REAIS do prestador vêm logo após
+            # "Inscrição municipal:" + seu valor — o rótulo "Nome/Razão" que
+            # existiria normalmente aqui vazou/virou um trio decorativo sem
+            # valor ("CPF/CNPJ / Nome/Razão / Endereço" em sequência, sem
+            # conteúdo colado). Delimita até o 1º "Nome/Razão" (início dos
+            # dados do tomador) para nunca vazar pro bloco do tomador.
+            # A busca já consome o PRÓPRIO valor da inscrição municipal (não só
+            # o rótulo) — senão o dígito vira a "1ª linha de conteúdo" e desloca
+            # razão/endereço uma posição (razão vira o nº da IM, endereço vira
+            # a razão real).
+            m_im = re.search(r'Inscri[çc][ãa]o\s+municipal\s*:?\s*\n*\s*(\d+)', t, re.IGNORECASE)
+            insc = m_im.group(1) if m_im else None
+            inicio = m_im.end() if m_im else (m_prest_header.end() if m_prest_header else 0)
+            fim = nomes_razao[0].start() if nomes_razao else len(t)
+            bloco_nome_end = t[inicio:fim]
+            conteudo = self._primeiro_conteudo_sao_paulo(bloco_nome_end, n=2)
+            razao = conteudo[0] if len(conteudo) >= 1 else ""
+            logradouro_raw = conteudo[1] if len(conteudo) >= 2 else ""
+
+            # Bairro/Município/UF/CEP do prestador ficam ENTRE a 1ª ocorrência
+            # de "Nome/Razão" (o trio decorativo, sem valor) e a 2ª (a real,
+            # já do tomador) — cortar em nomes_razao[0] os deixaria de fora.
+            fim_campos = nomes_razao[1].start() if len(nomes_razao) >= 2 \
+                else (nomes_razao[0].start() if nomes_razao else len(t))
+            bloco_campos = t[m_prest_header.end(): fim_campos] if m_prest_header else t
+        else:
+            # A razão social real do tomador é a 2ª ocorrência do rótulo
+            # "Nome/Razão" (a 1ª, junto ao prestador, é o trio decorativo sem
+            # valor). O cabeçalho "TOMADOR DE SERVIÇOS" some DEPOIS desses
+            # campos, então não serve como início de bloco.
+            if len(nomes_razao) >= 2:
+                bloco_tomador = t[nomes_razao[1].end():]
+                conteudo = self._primeiro_conteudo_sao_paulo(bloco_tomador, n=1)
+                razao = conteudo[0] if conteudo else ""
+
+                m_end_lbl = re.search(r'Endere[çc]o\s*:?', bloco_tomador, re.IGNORECASE)
+                if m_end_lbl:
+                    conteudo_end = self._primeiro_conteudo_sao_paulo(bloco_tomador[m_end_lbl.end():], n=1)
+                    logradouro_raw = conteudo_end[0] if conteudo_end else ""
+
+                bloco_campos = bloco_tomador
+
+        if not razao:
+            razao = f"{'Prestador' if is_prestador else 'Tomador'} Não Identificado"
+
+        # Bairro/Município/UF/CEP: já vêm corretamente ordenados dentro do
+        # `bloco_campos` de cada entidade (o deslocamento afeta só a posição
+        # do CABEÇALHO de seção, não a ordem relativa desses 4 campos entre
+        # si) — mesma técnica de "rótulo -> 1ª linha de conteúdo real".
+        bairro = "Não informado"
+        m_bairro = re.search(r'Bairro\s*:?\s*', bloco_campos, re.IGNORECASE)
+        if m_bairro:
+            cont = self._primeiro_conteudo_sao_paulo(bloco_campos[m_bairro.end():], n=1)
+            if cont: bairro = cont[0]
+
+        municipio = "SAO PAULO"
+        m_mun = re.search(r'Munic[íi]pio\s*:?\s*', bloco_campos, re.IGNORECASE)
+        if m_mun:
+            cont = self._primeiro_conteudo_sao_paulo(bloco_campos[m_mun.end():], n=1)
+            if cont: municipio = cont[0]
+
+        uf = "SP"
+        m_uf = re.search(r'\bUF\s*:?\s*', bloco_campos, re.IGNORECASE)
+        if m_uf:
+            cont = self._primeiro_conteudo_sao_paulo(bloco_campos[m_uf.end():], n=1)
+            if cont and len(cont[0]) <= 3:
+                uf = cont[0][:2].upper()
+
+        cep = ""
+        m_cep = re.search(r'\bCEP\s*:?\s*', bloco_campos, re.IGNORECASE)
+        if m_cep:
+            cont = self._primeiro_conteudo_sao_paulo(bloco_campos[m_cep.end():], n=1)
+            if cont: cep = re.sub(r'\D', '', cont[0])
+
+        email = None
+        m_email = re.search(r'E-?mail\s*:?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_campos, re.IGNORECASE)
+        if m_email:
+            email = m_email.group(1).strip()
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro_raw or "Não informado",
+                numero="S/N",
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep or "00000000",
+            ),
+            email=email,
         )
 
     def _extrair_entidade_lauro_freitas(self, is_prestador: bool) -> Entidade:
@@ -5244,6 +5398,47 @@ class SPPdfExtractor:
         # Se o ISS for retido mas não tiver sido subtraído do val_liq calculado manualmente
         if iss_retido and not m_liq and val_liq == (val_serv - (pis + cofins + inss + ir + csll + outras)):
             val_liq -= iss
+
+        # São Paulo/SP digital: em algumas notas reais (AMIL/TEMIS, 2026-07-31)
+        # a grade "Valor Total das Deduções / Desconto Incond. / Base de
+        # Cálculo / Alíquota (%) / Valor ISS / Crédito p/ Abatimento do IPTU"
+        # vem em DOIS blocos separados no pdfminer — todos os rótulos primeiro,
+        # todos os valores depois, na mesma ordem relativa (mesmo efeito já
+        # tratado em LAYOUT_CAMACARI_2). Os regexes acima (que exigem o valor
+        # logo após o rótulo) não casam com nada útil, ou casam com o valor
+        # ERRADO (ex.: "Valor ISS" casando com o "0,00" do rótulo seguinte,
+        # "Crédito p/ Abatimento do IPTU"). Gateado pela presença de "Valor
+        # Total das Deduções" — marca específica desta grade, ausente do mock
+        # sintético mais simples que já cobre o caminho genérico.
+        if self.layout == LAYOUT_SAO_PAULO and re.search(r'Valor\s+Total\s+das\s+Dedu[çc][õo]es', t, re.IGNORECASE):
+            label_defs_sp = [
+                ('deducoes', r'Valor\s+Total\s+das\s+Dedu[çc][õo]es'),
+                ('desconto_incond', r'Desconto\s+Incond\.?'),
+                ('base', r'Base\s+de\s+C[áa]lculo'),
+                ('aliq', r'Al[íi]quota\s*\(%\)'),
+                ('iss', r'Valor\s+ISS\b'),
+            ]
+            matches_sp = [(nome, re.search(pat, t, re.IGNORECASE)) for nome, pat in label_defs_sp]
+            encontrados_sp = sorted(
+                ((m.start(), nome) for nome, m in matches_sp if m), key=lambda x: x[0]
+            )
+            fim_labels_sp = max((m.end() for _, m in matches_sp if m), default=0)
+            if encontrados_sp and fim_labels_sp:
+                trecho_sp = t[fim_labels_sp:]
+                m_corte_sp = re.search(r'Esta\s+NFS-e\s+foi\s+emitida', trecho_sp, re.IGNORECASE)
+                if m_corte_sp:
+                    trecho_sp = trecho_sp[:m_corte_sp.start()]
+                numeros_sp = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', trecho_sp)
+                if len(numeros_sp) >= len(encontrados_sp):
+                    por_nome_sp = dict(zip([nome for _, nome in encontrados_sp], numeros_sp))
+                    if 'base' in por_nome_sp:
+                        base = self._parse_valor(por_nome_sp['base'])
+                    if 'aliq' in por_nome_sp:
+                        aliq = self._parse_valor(por_nome_sp['aliq']) / 100
+                    if 'iss' in por_nome_sp:
+                        iss = self._parse_valor(por_nome_sp['iss'])
+                    if 'deducoes' in por_nome_sp:
+                        val_deducoes = self._parse_valor(por_nome_sp['deducoes'])
 
         return Valores(
             valor_servicos=val_serv,
