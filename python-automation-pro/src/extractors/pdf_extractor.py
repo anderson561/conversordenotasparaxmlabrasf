@@ -6122,10 +6122,19 @@ class SPPdfExtractor:
         direito da NFS-e de Camaçari/BA ESCANEADA ("Número da Nota" / "Data de
         Emissão" / "Código de autenticidade"), na mesma orientação já corrigida
         (`angle`), com PSM 6. Na leitura de página inteira essa caixa some. O
-        recorte recupera o número (ex.: "1050") e a data/hora de emissão; o
-        valor do código de autenticidade é impresso em fonte muito fraca e
-        costuma sair ilegível mesmo aqui (fica então sinalizado em `avisos`).
-        Validado contra a nota real nº 1050."""
+        recorte recupera o número (ex.: "1050", "4494") e a data/hora de
+        emissão; o valor do código de autenticidade é impresso em fonte muito
+        fraca e costuma sair ilegível mesmo aqui (fica então sinalizado em
+        `avisos`).
+        Validado contra a nota real nº 1050.
+        **Achado real 2026-07-31 (nota nº 4494, LAVANDERIA ÁGUA DE CHEIRO):** o
+        limite superior do recorte (`h * 0.045`) cortava a linha "Número da
+        Nota" inteira (rótulo + valor), que fica ACIMA de "Data de Emissão" -
+        o recorte antigo começava exatamente no início de "Data de Emissão",
+        perdendo o número por completo (não saía nem garbled, simplesmente
+        ausente do texto). Subido para `h * 0.01` para incluir a linha
+        inteira - testado de 0.005 a 0.025 sem diferença no resultado, então
+        a margem extra não arrisca cortar as duas linhas de baixo."""
         try:
             import pymupdf
             import pytesseract
@@ -6137,7 +6146,7 @@ class SPPdfExtractor:
             if angle:
                 img = img.rotate(-angle, expand=True)
             w, h = img.size
-            crop = img.crop((int(w * 0.72), int(h * 0.045), w, int(h * 0.16)))
+            crop = img.crop((int(w * 0.72), int(h * 0.01), w, int(h * 0.16)))
             return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
         except Exception:
             return ""
