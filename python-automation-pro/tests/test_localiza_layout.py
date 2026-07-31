@@ -195,5 +195,76 @@ def test_extract_localiza_layout(monkeypatch):
             os.remove(dummy_path)
 
 
+# Texto REAL do pdfminer (nota YUI/ACBUL-212176, filial Agência Centro Cabula)
+# — DIGITAL, não OCR (fonte legível: pdfminer extraiu certo, sem passar pelo
+# Tesseract). Variante estruturalmente diferente da OCR acima: tudo numa
+# ÚNICA linha corrida, sem quebras — e a ORDEM dos campos também é distinta
+# ("CLIENTE:" vem ANTES de "CÓDIGO:", com o nome completo já junto, só faltando
+# espaço antes do sufixo societário colado: "SUSTENTABILIDADELTDA"; "CNPJ -"
+# vem DEPOIS do CEP/UF da filial, não antes de "Localiza"; "TOTAL" cola direto
+# na data seguinte: "VALOR TOTAL04/05/2026"). Travas de regressão desta nota:
+#  - sem quebra de linha nenhuma: qualquer regex ancorado em "\n" quebra aqui;
+#  - "TOTAL" colado à data faz um "\b" após "TOTAL" falhar (letra->dígito não
+#    é fronteira de palavra) — por isso o regex de valor não usa mais "\b" ali;
+#  - a razão social do tomador já vem completa após "CLIENTE:" (variante
+#    "flat"), não deve concatenar com o fragmento de antes de "CÓDIGO:" (que
+#    aqui pertenceria a uma nota diferente se usado, já que a ordem inverteu).
+MOCK_DIGITAL_YUI = (
+    "LOCALIZA RENT A CAR S/A AGENCIA CENTRO CABULA ROD BR 324, 1084 - CABULA"
+    "41150-170 - SALVADOR - BA CNPJ - 16.670.085/0914-44 ASSISTÊNCIA A CLIENTES "
+    "TEL 0800 979 2020 assistenciaaclientes@localiza.com   FATURA / DUPLICATAN"
+    "º: ACBUL - 212176CLIENTE: TEMIS PROJETOS DE MEIO AMBIENTE E SUSTENTABILIDADE"
+    "LTDA ENDEREÇO: RUA TERRITORIO DO AMAPA, 146 CS 2 - PITUBA CEP/CID/UF: "
+    "41830-540 - SALVADOR - BA CNPJ:  07.345.543/0001-90 CÓDIGO: 02640209 "
+    "INSC. ESTADUAL:  069725483  DATA DE EMISSÃO: 19/04/2026  DESCRIÇÃO VALOR "
+    "ALUGUEL CONFORME CONTRATO     BULF036105008  R$ 2.905,31 VALOR DO SEGURO "
+    "R$ 178,50           VENCIMENTOCONDIÇÕES DE PAGAMENTOVALOR TOTAL04/05/2026 "
+    "A PRAZO R$ 3.083,81 Não contribuinte de ISS s/locação cfe. LC n. 116/03 "
+    "       Sacador: Aceite:  "
+)
+
+
+def test_extract_localiza_variante_digital_sem_quebras(monkeypatch):
+    dummy_path = "tests/dummy_localiza_digital.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+
+    # Aqui é o pdfminer (extract_text) que já devolve o texto certo — não passa
+    # por OCR (tem "CNPJ" e > 200 chars).
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text", lambda path: MOCK_DIGITAL_YUI)
+
+    try:
+        extractor = SPPdfExtractor(dummy_path)
+        nfse_list = extractor.parse_multiple()
+        assert len(nfse_list) == 1
+        nfse = nfse_list[0]
+
+        assert nfse.numero == "212176"
+
+        # Prestador: filial "Agência Centro Cabula" — CNPJ/endereço diferentes
+        # de qualquer outra amostra (raiz 16.670.085, sufixo 0914-44).
+        assert nfse.prestador.cnpj_cpf == "16670085091444"
+        assert nfse.prestador.endereco.logradouro == "ROD BR 324"
+        assert nfse.prestador.endereco.numero == "1084"
+        assert nfse.prestador.endereco.bairro == "CABULA"
+        assert nfse.prestador.endereco.cep == "41150170"
+
+        # Tomador: razão social já completa após "CLIENTE:" (variante "flat"),
+        # com o sufixo colado separado corretamente.
+        assert nfse.tomador.cnpj_cpf == "07345543000190"
+        assert nfse.tomador.razao_social == "TEMIS PROJETOS DE MEIO AMBIENTE E SUSTENTABILIDADE LTDA"
+        assert nfse.tomador.endereco.logradouro == "RUA TERRITORIO DO AMAPA"
+        assert nfse.tomador.endereco.numero == "146"
+
+        # Valor: rótulo colado direto na data seguinte, sem "R$" logo depois.
+        assert nfse.valores.valor_servicos == pytest.approx(3083.81)
+
+        assert nfse.avisos == []
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

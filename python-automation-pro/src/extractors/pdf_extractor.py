@@ -2239,6 +2239,18 @@ class SPPdfExtractor:
             return self._extrair_entidade_lauro_freitas(is_prestador)
 
         if self.layout == LAYOUT_LOCALIZA:
+            # Notas Localiza reais chegam em pelo menos 2 formatos de texto BEM
+            # diferentes, dependendo da nota (mesmo formato de PDF): (a) via OCR
+            # (fonte do PDF ilegível para o pdfminer) — texto quebrado em linhas,
+            # mas com a ORDEM de "CNPJ -"/"Localiza"/"FATURA / DUPLICATA" e dos
+            # campos do tomador variando de nota pra nota; (b) via texto digital
+            # do pdfminer (quando a fonte do PDF é legível) — tudo n uma ÚNICA
+            # linha corrida, sem quebras, e com a ordem dos campos do tomador
+            # diferente da variante OCR. Os regex abaixo evitam depender de "\n"
+            # ou de uma ordem fixa entre rótulos — usam âncoras estáveis em
+            # QUALQUER um dos formatos (validado contra 4 notas reais de
+            # filiais/formatos distintos: Trade Center Pituba, AG Aeroporto
+            # Recife, Agência Aeroporto Salvador, Agência Centro Cabula).
             def _split_endereco_localiza(raw_addr: str):
                 """"AV TANCREDO NEVES, 1632 - CAMINHO ARVORES" -> logradouro/
                 número/bairro/complemento. O bairro é sempre o ÚLTIMO segmento
@@ -2260,35 +2272,44 @@ class SPPdfExtractor:
                             complemento = " - ".join(partes[:-1]) or None
                 return logradouro or "Não informado", numero, bairro, complemento
 
+            def _strip_texto_colado(raw: str) -> str:
+                """Corta um trecho maiúsculo de endereço no 1º pedaço colado sem
+                espaço (e-mail do OCR sem "@" legível, parênteses, etc.), sem
+                depender de reconhecer o que veio grudado."""
+                m = re.match(r'([A-ZÀ-Ú0-9][A-ZÀ-Ú0-9.,\-\s]*?)(?:\s+[a-z(][^\n]*)?\s*$', raw)
+                return m.group(1).strip() if m else raw.strip()
+
             if is_prestador:
-                # A filial emissora (endereço/CNPJ) muda por nota — a Localiza usa
-                # um CNPJ por filial (raiz 16.670.085, sufixo do estabelecimento).
-                # Hardcodar CNPJ/endereço de uma única filial amostrada quebrava
-                # (com dado ERRADO, não sinalizado) qualquer nota de outra filial.
-                # Âncoras: o CNPJ do prestador vem "CNPJ - NN.NNN.NNN/NNNN-NN" logo
-                # antes de "FATURA / DUPLICATA"; o CEP/Município/UF da filial vem
-                # na linha imediatamente anterior ao logotipo "Localiza" + CNPJ.
-                m_cnpj_prest = re.search(r'CNPJ\s*-\s*([\d./-]+)\s*\n+\s*FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE)
-                m_cep_prest = re.search(
-                    r'(\d{5}-?\d{3})\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})\s*\n+\s*Localiza\s*\n+\s*CNPJ\s*-',
-                    t, re.IGNORECASE)
-                m_log_prest = None
+                # Bloco do cabeçalho da filial emissora: tudo antes de "FATURA /
+                # DUPLICATA" (ou, quando esse rótulo vem colado ao número sem
+                # espaço, antes do próprio "Nº: <código> - <dígitos>").
+                m_fatura = re.search(r'FATURA\s*/\s*DUPLICATA|N[ºo]\.?\s*:\s*[A-Z]+\s*-?\s*\d+', t, re.IGNORECASE)
+                bloco_prest = t[:m_fatura.start()] if m_fatura else t
+
+                # CNPJ e CEP/Município/UF da filial: pega a ÚLTIMA ocorrência
+                # antes da fatura — a ordem relativa de "CNPJ -" x "Localiza"
+                # (logotipo) varia entre notas, então não fixamos qual vem antes.
+                cnpjs = list(re.finditer(r'CNPJ\s*-?\s*:?\s*([\d./-]{14,20})', bloco_prest, re.IGNORECASE))
+                m_cnpj_prest = cnpjs[-1] if cnpjs else None
+                ceps = list(re.finditer(r'(\d{5}-?\d{3})\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})\b', bloco_prest, re.IGNORECASE))
+                m_cep_prest = ceps[-1] if ceps else None
+
+                logradouro_raw = ""
                 if m_cep_prest:
-                    antes = t[:m_cep_prest.start()]
-                    # A última linha antes do CEP costuma vir com um e-mail colado
-                    # pelo OCR ("...CAMINHO ARVORES assistenciaaclientesOlocaliza.com"
-                    # — o "@" às vezes sai lido como "O"). O endereço em si é todo
-                    # maiúsculo neste template; cortamos no primeiro trecho minúsculo
-                    # colado sem depender do "@" estar legível.
-                    linhas_antes = [l for l in antes.split('\n') if l.strip()]
-                    ultima_linha = linhas_antes[-1] if linhas_antes else ""
-                    m_log_prest = re.match(r'([A-ZÀ-Ú0-9][A-ZÀ-Ú0-9.,\-\s]*?)(?:\s+[a-z]\S*)?\s*$', ultima_linha)
+                    antes_cep = bloco_prest[:m_cep_prest.start()]
+                    # Endereço sempre começa por um logradouro brasileiro comum
+                    # (AV/ROD/RUA/TV/...) — âncora estável tanto se o texto tem
+                    # quebras de linha quanto se está tudo numa linha só.
+                    m_addr = re.search(
+                        r'\b((?:AV|R|ROD|TV|AL|PC|ESTRADA|PRA[ÇC]A|ALAMEDA|TRAVESSA)\.?\s[^\n]*)',
+                        antes_cep, re.IGNORECASE)
+                    if m_addr:
+                        logradouro_raw = _strip_texto_colado(m_addr.group(1))
 
                 cnpj = re.sub(r'\D', '', m_cnpj_prest.group(1)) if m_cnpj_prest else ""
                 mun = m_cep_prest.group(2).strip() if m_cep_prest else "SALVADOR"
                 uf = m_cep_prest.group(3).strip() if m_cep_prest else "BA"
                 cep = re.sub(r'\D', '', m_cep_prest.group(1)) if m_cep_prest else ""
-                logradouro_raw = m_log_prest.group(1).strip() if m_log_prest else ""
                 logradouro, numero, bairro, complemento = _split_endereco_localiza(logradouro_raw)
                 mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
 
@@ -2301,21 +2322,38 @@ class SPPdfExtractor:
                     )
                 )
             else:
-                # A razão social do tomador vem quebrada em 2 fragmentos pelo OCR
-                # (colunas intercaladas): o nome (sem o sufixo) fica na linha ANTES
-                # do rótulo "CÓDIGO:", e só o sufixo ("LTDA") vem depois do rótulo
-                # "CLIENTE:". Ex.: "...TEMIS PROJETOS DE MEIO AMBIENTE E
-                # SUSTENTABILIDADE CÓDIGO: 02640209\nCLIENTE: LTDA".
-                m_nome1 = re.search(r'\n\.?\s*[—\-]?\s*([A-ZÀ-Ú][^\n]*?)\s*C[ÓO]DIGO:\s*\d+', t, re.IGNORECASE)
-                m_nome2 = re.search(r'CLIENTE:\s*(.+?)(?=\n\s*ENDERE[ÇC]O:|\n\s*C[ÓO]DIGO:|\n\s*INSC)', t, re.IGNORECASE | re.DOTALL)
-                m_end = re.search(r'ENDERE[ÇC]O:\s*(.+?)\nCEP/CID/UF:\s*([\d-]+)\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})', t, re.IGNORECASE)
+                m_end = re.search(
+                    r'ENDERE[ÇC]O:\s*(.+?)\s*CEP/CID/UF:\s*([\d-]+)\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})',
+                    t, re.IGNORECASE | re.DOTALL)
 
-                nome1 = m_nome1.group(1).strip() if m_nome1 else ""
-                nome2 = m_nome2.group(1).replace('\n', ' ').strip() if m_nome2 else ""
-                if nome1 and nome2 and nome2.upper() not in nome1.upper():
-                    razao = f"{nome1} {nome2}".strip()
+                # A razão social do tomador aparece em 2 formatos: (a) quebrada em
+                # 2 fragmentos por colunas intercaladas do OCR — o nome (sem
+                # sufixo) fica ANTES do rótulo "CÓDIGO:", e só o sufixo ("LTDA")
+                # vem DEPOIS do rótulo "CLIENTE:" (ex.: "...SUSTENTABILIDADE
+                # CÓDIGO: 02640209\nCLIENTE: LTDA"); (b) já completa logo após
+                # "CLIENTE:" no texto digital sem quebras, só faltando o espaço
+                # antes do sufixo societário colado (ex.: "CLIENTE: TEMIS...
+                # SUSTENTABILIDADELTDA"). Distinguimos pela ORDEM entre os 2
+                # rótulos: se "CLIENTE:" vem ANTES de "CÓDIGO:", é o formato (b).
+                m_cliente_label = re.search(r'CLIENTE:', t, re.IGNORECASE)
+                m_codigo_label = re.search(r'C[ÓO]DIGO:\s*\d+', t, re.IGNORECASE)
+                if m_cliente_label and m_codigo_label and m_cliente_label.start() < m_codigo_label.start():
+                    m_full = re.search(r'CLIENTE:\s*(.+?)\s*ENDERE[ÇC]O:', t, re.IGNORECASE | re.DOTALL)
+                    razao = re.sub(r'\s+', ' ', m_full.group(1)).strip() if m_full else ""
+                    razao = re.sub(r'([A-ZÀ-Ú])\s*(LTDA|EIRELI|S\.A\.?|ME|EPP)\s*$', r'\1 \2', razao, flags=re.IGNORECASE)
                 else:
-                    razao = nome2 or nome1
+                    nome1 = ""
+                    if m_codigo_label:
+                        janela = t[max(0, m_codigo_label.start() - 80): m_codigo_label.start()]
+                        m_nome1 = re.search(r'([A-ZÀ-Ú][A-ZÀ-Ú0-9.,&\s]*?)\s*$', janela)
+                        nome1 = m_nome1.group(1).strip(' .—-') if m_nome1 else ""
+                    m_nome2 = re.search(
+                        r'CLIENTE:\s*(.+?)(?=\s*ENDERE[ÇC]O:|\s*C[ÓO]DIGO:|\s*INSC)', t, re.IGNORECASE | re.DOTALL)
+                    nome2 = re.sub(r'\s+', ' ', m_nome2.group(1)).strip() if m_nome2 else ""
+                    if nome1 and nome2 and nome2.upper() not in nome1.upper():
+                        razao = f"{nome1} {nome2}".strip()
+                    else:
+                        razao = nome2 or nome1
 
                 # O CNPJ do tomador só é buscado DEPOIS do endereço (janela
                 # restrita) — buscar no texto inteiro pegava o 1º "CNPJ:" do
@@ -4892,7 +4930,10 @@ class SPPdfExtractor:
             # PRAZO\n\nR$ 3.168,70"), então o valor real caía no fallback 0.0.
             # Aceita qualquer coisa entre o rótulo e o próximo "R$" (limite curto
             # para não pular para um valor de linha seguinte não relacionado).
-            m_val = re.search(r'VALOR\s+TOTAL\b[\s\S]{0,80}?R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            # Sem \b depois de "TOTAL": no texto digital sem espaços de uma nota
+            # real (YUI/ACBUL) o rótulo cola direto na data ("TOTAL04/05/2026"),
+            # e letra->dígito não é fronteira de palavra para o regex.
+            m_val = re.search(r'VALOR\s+TOTAL[\s\S]{0,80}?R\$\s*([\d.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
