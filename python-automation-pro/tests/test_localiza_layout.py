@@ -115,6 +115,24 @@ def test_detect_localiza():
             os.remove(dummy_path)
 
 
+def test_numero_localiza_apenas_digitos():
+    """Regressão de produção (nota real YUI/ACBUL): o número precisa ser só
+    dígitos (o ERP contábil rejeita "Número da NFS-e" não numérico), mesmo
+    quando o rótulo seguinte ("CLIENTE") vem colado sem espaço ao número."""
+    dummy_path = "tests/dummy_localiza_numero.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+    try:
+        ex = SPPdfExtractor(dummy_path)
+        ex.layout = LAYOUT_LOCALIZA
+        ex.raw_text = "FATURA / DUPLICATA Nº: ACBUL - 212176CLIENTE: LTDA"
+        assert ex._extrair_numero() == "212176"
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
 def test_extract_localiza_layout(monkeypatch):
     dummy_path = "tests/dummy_localiza_full.pdf"
     os.makedirs("tests", exist_ok=True)
@@ -132,7 +150,9 @@ def test_extract_localiza_layout(monkeypatch):
         assert len(nfse_list) == 1
         nfse = nfse_list[0]
 
-        assert nfse.numero == "ACPIT - 311630"
+        # Só o número, sem o código da filial ("ACPIT -") — o ERP contábil
+        # rejeita "Número da NFS-e" não numérico.
+        assert nfse.numero == "311630"
         assert nfse.data_emissao.strftime("%d/%m/%Y") == "31/03/2026"
         # Documento não-municipal (fatura de locação): mesmo placeholder usado
         # pelos demais layouts de locação (ARMAC, LMR, etc.), sem aviso falso.

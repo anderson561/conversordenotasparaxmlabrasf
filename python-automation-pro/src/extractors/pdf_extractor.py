@@ -776,7 +776,15 @@ class SPPdfExtractor:
             if m: return str(int(m.group(1)))
 
         if self.layout == LAYOUT_LOCALIZA:
-            m = re.search(r'N[ºo]:\s*([A-Z0-9\s-]+)', t, re.IGNORECASE)
+            # "FATURA / DUPLICATA Nº: ACPIT - 311630" -> só o número (o "código
+            # da filial" antes do traço, ex. ACPIT/AAREC/AASSA/ACBUL, não é
+            # numérico). Capturar o valor alfanumérico inteiro quebrava a
+            # importação no ERP contábil ("Número da NFS-e não é do tipo
+            # numérico") em TODAS as notas Localiza reais testadas. Além disso,
+            # em ao menos uma nota real (YUI/ACBUL) o rótulo seguinte ("CLIENTE")
+            # vinha colado sem espaço logo após o número — `\d+` já para no
+            # primeiro caractere não numérico, então essa colagem não vaza mais.
+            m = re.search(r'N[ºo]:\s*[A-Z]*\s*-?\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_SAO_PAULO:
