@@ -1493,7 +1493,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA):
             return "FATURA"
 
         if self.layout == LAYOUT_SAO_PAULO_2:
@@ -2231,30 +2231,106 @@ class SPPdfExtractor:
             return self._extrair_entidade_lauro_freitas(is_prestador)
 
         if self.layout == LAYOUT_LOCALIZA:
+            def _split_endereco_localiza(raw_addr: str):
+                """"AV TANCREDO NEVES, 1632 - CAMINHO ARVORES" -> logradouro/
+                número/bairro/complemento. O bairro é sempre o ÚLTIMO segmento
+                separado por hífen (ex.: "RUA TERRITORIO DO AMAPA, 146 CS 2 -
+                PITUBA" -> bairro "PITUBA", complemento "CS 2")."""
+                m_num = re.search(r',\s*(\d+)', raw_addr)
+                if m_num:
+                    logradouro = raw_addr[:m_num.start()].strip()
+                    numero = m_num.group(1)
+                    resto = raw_addr[m_num.end():].strip()
+                else:
+                    logradouro, numero, resto = raw_addr.strip(), "S/N", ""
+                bairro, complemento = "Não informado", None
+                if resto:
+                    partes = [p.strip() for p in resto.split('-') if p.strip()]
+                    if partes:
+                        bairro = partes[-1]
+                        if len(partes) > 1:
+                            complemento = " - ".join(partes[:-1]) or None
+                return logradouro or "Não informado", numero, bairro, complemento
+
             if is_prestador:
+                # A filial emissora (endereço/CNPJ) muda por nota — a Localiza usa
+                # um CNPJ por filial (raiz 16.670.085, sufixo do estabelecimento).
+                # Hardcodar CNPJ/endereço de uma única filial amostrada quebrava
+                # (com dado ERRADO, não sinalizado) qualquer nota de outra filial.
+                # Âncoras: o CNPJ do prestador vem "CNPJ - NN.NNN.NNN/NNNN-NN" logo
+                # antes de "FATURA / DUPLICATA"; o CEP/Município/UF da filial vem
+                # na linha imediatamente anterior ao logotipo "Localiza" + CNPJ.
+                m_cnpj_prest = re.search(r'CNPJ\s*-\s*([\d./-]+)\s*\n+\s*FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE)
+                m_cep_prest = re.search(
+                    r'(\d{5}-?\d{3})\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})\s*\n+\s*Localiza\s*\n+\s*CNPJ\s*-',
+                    t, re.IGNORECASE)
+                m_log_prest = None
+                if m_cep_prest:
+                    antes = t[:m_cep_prest.start()]
+                    # A última linha antes do CEP costuma vir com um e-mail colado
+                    # pelo OCR ("...CAMINHO ARVORES assistenciaaclientesOlocaliza.com"
+                    # — o "@" às vezes sai lido como "O"). O endereço em si é todo
+                    # maiúsculo neste template; cortamos no primeiro trecho minúsculo
+                    # colado sem depender do "@" estar legível.
+                    linhas_antes = [l for l in antes.split('\n') if l.strip()]
+                    ultima_linha = linhas_antes[-1] if linhas_antes else ""
+                    m_log_prest = re.match(r'([A-ZÀ-Ú0-9][A-ZÀ-Ú0-9.,\-\s]*?)(?:\s+[a-z]\S*)?\s*$', ultima_linha)
+
+                cnpj = re.sub(r'\D', '', m_cnpj_prest.group(1)) if m_cnpj_prest else ""
+                mun = m_cep_prest.group(2).strip() if m_cep_prest else "SALVADOR"
+                uf = m_cep_prest.group(3).strip() if m_cep_prest else "BA"
+                cep = re.sub(r'\D', '', m_cep_prest.group(1)) if m_cep_prest else ""
+                logradouro_raw = m_log_prest.group(1).strip() if m_log_prest else ""
+                logradouro, numero, bairro, complemento = _split_endereco_localiza(logradouro_raw)
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+
                 return Entidade(
-                    cnpj_cpf="16670085091444",
+                    cnpj_cpf=cnpj or "00000000000000",
                     razao_social="LOCALIZA RENT A CAR S/A",
                     endereco=Endereco(
-                        endereco="ROD BR 324, 1084", bairro="CABULA",
-                        municipio="SALVADOR", uf="BA", cep="41150170"
+                        logradouro=logradouro, numero=numero, complemento=complemento,
+                        bairro=bairro, codigo_municipio=mun_cod, municipio=mun, uf=uf, cep=cep
                     )
                 )
             else:
-                m_cli = re.search(r'CLIENTE:\s*(.+?)(?=\nENDEREÇO:|\nCÓDIGO:)', t, re.IGNORECASE | re.DOTALL)
-                m_end = re.search(r'ENDEREÇO:\s*(.+?)\nCEP/CID/UF:\s*([\d-]+)\s*-\s*([A-Z\s]+)\s*-\s*([A-Z]{2})', t, re.IGNORECASE)
-                m_cnpj = re.search(r'CNPJ:\s*([\d./-]+)', t, re.IGNORECASE)
-                
-                razao = m_cli.group(1).replace('\n', ' ').strip() if m_cli else ""
-                cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ""
-                end_full = m_end.group(1).strip() if m_end else ""
+                # A razão social do tomador vem quebrada em 2 fragmentos pelo OCR
+                # (colunas intercaladas): o nome (sem o sufixo) fica na linha ANTES
+                # do rótulo "CÓDIGO:", e só o sufixo ("LTDA") vem depois do rótulo
+                # "CLIENTE:". Ex.: "...TEMIS PROJETOS DE MEIO AMBIENTE E
+                # SUSTENTABILIDADE CÓDIGO: 02640209\nCLIENTE: LTDA".
+                m_nome1 = re.search(r'\n\.?\s*[—\-]?\s*([A-ZÀ-Ú][^\n]*?)\s*C[ÓO]DIGO:\s*\d+', t, re.IGNORECASE)
+                m_nome2 = re.search(r'CLIENTE:\s*(.+?)(?=\n\s*ENDERE[ÇC]O:|\n\s*C[ÓO]DIGO:|\n\s*INSC)', t, re.IGNORECASE | re.DOTALL)
+                m_end = re.search(r'ENDERE[ÇC]O:\s*(.+?)\nCEP/CID/UF:\s*([\d-]+)\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})', t, re.IGNORECASE)
+
+                nome1 = m_nome1.group(1).strip() if m_nome1 else ""
+                nome2 = m_nome2.group(1).replace('\n', ' ').strip() if m_nome2 else ""
+                if nome1 and nome2 and nome2.upper() not in nome1.upper():
+                    razao = f"{nome1} {nome2}".strip()
+                else:
+                    razao = nome2 or nome1
+
+                # O CNPJ do tomador só é buscado DEPOIS do endereço (janela
+                # restrita) — buscar no texto inteiro pegava o 1º "CNPJ:" do
+                # documento, que é o do PRESTADOR (Localiza), não o do cliente.
+                cnpj = ""
+                if m_end:
+                    m_cnpj = re.search(r'CNPJ:\s*([\d./-]+)', t[m_end.end():], re.IGNORECASE)
+                    cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ""
+
+                logradouro_raw = m_end.group(1).strip() if m_end else ""
+                logradouro, numero, bairro, complemento = _split_endereco_localiza(logradouro_raw)
                 cep = re.sub(r'\D', '', m_end.group(2)) if m_end else ""
                 mun = m_end.group(3).strip() if m_end else ""
                 uf = m_end.group(4).strip() if m_end else ""
-                
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf) if mun else _ibge_resolver.default_code
+
                 return Entidade(
                     cnpj_cpf=cnpj or "00000000000000", razao_social=razao or "Não Identificado",
-                    endereco=Endereco(endereco=end_full, municipio=mun, uf=uf, cep=cep)
+                    endereco=Endereco(
+                        logradouro=logradouro, numero=numero, complemento=complemento,
+                        bairro=bairro, codigo_municipio=mun_cod, municipio=mun or None, uf=uf or _ibge_resolver.default_uf,
+                        cep=cep or "00000000"
+                    )
                 )
 
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
@@ -4802,7 +4878,13 @@ class SPPdfExtractor:
             )
 
         if self.layout == LAYOUT_LOCALIZA:
-            m_val = re.search(r'VALOR TOTAL\s+R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            # "VALOR TOTAL" e o "R$ valor" nem sempre ficam colados: no OCR da
+            # grade de vencimento/condição de pagamento, o rótulo e o valor saem
+            # em linhas separadas por outros campos ("VALOR TOTAL\n15/04/2026 A
+            # PRAZO\n\nR$ 3.168,70"), então o valor real caía no fallback 0.0.
+            # Aceita qualquer coisa entre o rótulo e o próximo "R$" (limite curto
+            # para não pular para um valor de linha seguinte não relacionado).
+            m_val = re.search(r'VALOR\s+TOTAL\b[\s\S]{0,80}?R\$\s*([\d.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
@@ -5834,10 +5916,20 @@ class SPPdfExtractor:
         current_invoice = []
         
         def is_new_invoice(text: str, current_group_num: Optional[str] = None) -> bool:
-            
+
             # Se o texto contém um divisor visual forte (muitos sublinhados/hífens)
             if re.search(r'_{20,}|={20,}|-{20,}', text):
                 return True
+
+            # Localiza: a fatura (pág. com "FATURA / DUPLICATA Nº:") normalmente
+            # vem seguida de um boleto/Pix que repete "LOCALIZA RENT A CAR S/A"
+            # só como nome do beneficiário do pagamento — não é uma fatura nova.
+            # Sem este caso, a heurística genérica de número diverge entre as
+            # duas páginas (a do boleto não tem "Nº:", então pega um dígito
+            # solto de outro campo, ex. uma data) e a mesma fatura vira 2 XMLs.
+            if is_localiza and re.search(r'LOCALIZA RENT A CAR S/A', text, re.IGNORECASE) \
+                    and not re.search(r'FATURA\s*/\s*DUPLICATA\s*N[ºo]', text, re.IGNORECASE):
+                return False
 
             patterns = [
                 relax("PREFEITURA"), relax("MUNICIPIO"), relax("MUNICÍPIO"), relax("NOTA CARIOCA"),

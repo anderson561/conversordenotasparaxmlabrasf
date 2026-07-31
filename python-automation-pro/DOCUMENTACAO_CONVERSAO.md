@@ -176,6 +176,13 @@ Layouts de emissores fixos (a razão social e o endereço do prestador são conh
 ### 17. Localiza — `localiza_fatura`
 - Faturas de locação/revenda de serviços veiculares da Localiza Rent A Car.
 - Identificado por "LOCALIZA RENT A CAR S/A" ou "FATURA / DUPLICATA".
+- A camada de texto embutida (pdfminer) costuma vir ilegível (fonte com codificação customizada) — o pipeline cai para OCR automaticamente (sem keywords reconhecíveis no texto digital).
+- **CNPJ/endereço do prestador NÃO são fixos no código**: a Localiza usa um CNPJ por filial (raiz `16.670.085`, sufixo do estabelecimento) — extraídos dinamicamente do bloco de cabeçalho (CNPJ ancorado antes de "FATURA / DUPLICATA"; CEP/Município/UF na linha antes do logotipo "Localiza"). Um hardcode anterior (CNPJ/endereço de uma única filial amostrada) quebrava silenciosamente qualquer nota de outra filial com um `ValidationError` não capturado corretamente — a nota inteira era descartada (0 XMLs), sem aviso.
+- A razão social do tomador pode vir quebrada em 2 fragmentos por colunas intercaladas do OCR (nome antes do rótulo "CÓDIGO:", sufixo "LTDA" depois do rótulo "CLIENTE:") — os dois são reconstituídos.
+- O CNPJ do tomador é buscado numa janela **depois** do endereço do tomador (buscar no texto inteiro pegaria o 1º "CNPJ:", que é o do prestador).
+- "VALOR TOTAL" e o valor em R$ podem não ficar colados no texto (vencimento/condição de pagamento entre os dois) — regex tolerante a até 80 caracteres entre rótulo e valor.
+- A fatura (pág. 1) costuma vir seguida de um boleto/Pix (pág. 2) que repete "LOCALIZA RENT A CAR S/A" só como nome do beneficiário — tratado como continuação da mesma nota, não uma 2ª fatura.
+- Não é uma NFS-e municipal (não tem código de verificação eletrônico) → `CodigoVerificacao = "FATURA"`, mesmo padrão dos demais layouts de locação.
 
 ### 18. CPE Tecnologia — `cpe_locacao`
 - Fatura de locação; detecção por "CPE BAHIA" ou "cpe tecnologia".
