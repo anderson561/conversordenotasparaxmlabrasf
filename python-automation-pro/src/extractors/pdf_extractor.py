@@ -1384,6 +1384,16 @@ class SPPdfExtractor:
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO):
             return "0601"
 
+        if self.layout == LAYOUT_BARREIRAS:
+            # Barreiras também emite locação de bens móveis (não sujeita a ISS)
+            # pelo mesmo portal municipal de NFS-e - vem com o item "00.00 -
+            # LOCAÇÃO DE BENS MÓVEIS" (não é um item real da LC116, é o próprio
+            # portal sinalizando a não-tributação). Ancorado no texto literal
+            # para não colidir com os itens reais de serviços tributados de
+            # outras notas do mesmo layout.
+            if re.search(r'00\.00\s*-\s*LOCA[ÇC][ÃA]O\s+DE\s+BENS\s+M[OÓ]VEIS', t, re.IGNORECASE):
+                return "0000"
+
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             # "Classificação do Serviço (LEI 116/2003) + Desdobro\n\n01.01.01 -
             # Análise e desenvolvimento de sistemas." — o item da LC 116 vem como
@@ -4619,6 +4629,61 @@ class SPPdfExtractor:
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
+
+        if self.layout == LAYOUT_BARREIRAS:
+            # Grade "rótulos em bloco, depois valores em bloco" - vista em notas
+            # de locação de bens móveis NÃO sujeitas a ISS, emitidas pelo mesmo
+            # portal municipal de Barreiras (nota real nº 1162, OLIVEIRA & CHAVES
+            # -> SÃO PEDRO CONSTRUTORA): "VALOR SERVIÇO (R$) DEDUÇÕES (R$)
+            # DESCONTO INCONDICIONAL" com os 3 rótulos primeiro, só depois os
+            # valores ("4.755,00 0,00"). O genérico assume o valor colado ao
+            # próprio rótulo (ex. "VALOR SERVIÇO (R$)\n16.473,00", já coberto
+            # pelo teste existente) e cai no fallback zero nessa estrutura.
+            # Gate: só dispara quando NENHUM dígito aparece nos ~15 caracteres
+            # logo após o rótulo "VALOR SERVIÇO" - a variante já coberta
+            # (valor colado) continua pelo caminho genérico, sem risco de
+            # regressão.
+            m_vs_label = re.search(r'VALOR\s+SERVI[ÇC]O', t, re.IGNORECASE)
+            if m_vs_label and not re.match(r'\s*(?:\(R\$\)\s*)?\d', t[m_vs_label.end():m_vs_label.end() + 15]):
+                m_serv = re.search(r'VALOR\s+SERVI[ÇC]O[\s\S]{0,120}?(\d{1,3}(?:\.\d{3})*,\d{2})', t, re.IGNORECASE)
+                val_serv = self._parse_valor(m_serv.group(1)) if m_serv else 0.0
+
+                # "BASE CÁLCULO (R$) ALÍQUOTA (%) ISS (R$)" seguido de 3 valores
+                # na mesma ordem posicional (ex.: "4.755,00 / 0.00 / 0,00" - o
+                # 2º valor às vezes vem com PONTO em vez de vírgula decimal,
+                # mas como é sempre a alíquota em % e aqui sai 0, o parser
+                # genérico ainda devolve 0.0 corretamente).
+                base = aliq = iss = 0.0
+                m_base_bloco = re.search(
+                    r'BASE\s+C[AÁ]LCULO([\s\S]{0,150}?)(?=DESCONTO\s*\n?\s*CONDICIONAL|Chave\s+de\s+acesso|$)',
+                    t, re.IGNORECASE)
+                if m_base_bloco:
+                    nums = re.findall(r'\d{1,3}(?:\.\d{3})*[.,]\d{2}', m_base_bloco.group(1))
+                    if len(nums) >= 3:
+                        base = self._parse_valor(nums[0])
+                        aliq = self._parse_valor(nums[1]) / 100
+                        iss = self._parse_valor(nums[2])
+
+                # Valor líquido: o rótulo "VALOR LÍQUIDO" e seu valor real
+                # ficam separados por uma sequência de outros campos de
+                # retenção federal (todos 0,00 nesta nota) - o valor do
+                # líquido é sempre o ÚLTIMO número antes da "Chave de acesso".
+                liquido = val_serv
+                m_liq_bloco = re.search(
+                    r'VALOR\s+L[IÍ]QUIDO([\s\S]{0,250}?)(?=Chave\s+de\s+acesso|$)',
+                    t, re.IGNORECASE)
+                if m_liq_bloco:
+                    nums_liq = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', m_liq_bloco.group(1))
+                    if nums_liq:
+                        liquido = self._parse_valor(nums_liq[-1])
+
+                return Valores(
+                    valor_servicos=val_serv,
+                    base_calculo=base or val_serv,
+                    aliquota=aliq,
+                    valor_iss=iss,
+                    valor_liquido_nfse=liquido,
+                )
 
         if self.layout == LAYOUT_CUIABA:
             # Só intercepta o FORMATO EM GRADE (scan degradado, consolidado MTI):
