@@ -95,4 +95,4 @@ O extrator é escalável por layout, sem reescrever o núcleo. O checklist típi
 
 ---
 
-*Documentação atualizada em 2026‑07‑27 (36 layouts suportados).*
+*Documentação atualizada em 2026‑07‑31 (36 layouts suportados; fixes de robustez no Localiza — 2 estruturas de texto — e no São Paulo digital — extração de entidades/valores da nota AMIL).*
