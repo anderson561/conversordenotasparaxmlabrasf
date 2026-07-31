@@ -71,6 +71,7 @@ LAYOUT_CAMACARI_2 = 'camacari_ba_scan'  # Camaçari/BA ESCANEADO (foto/JPG -> OC
 LAYOUT_MATA_SAO_JOAO = 'mata_sao_joao_ba'  # Mata de São João/BA (plataforma SAATRI - matadesaojoao.saatri.com.br) - NFS-e tributada, escaneada de boa qualidade (OCR zoom3 limpo, sem rotação); layout dedicado do município. Estrutura: blocos "Prestador/Tomador do(s) Serviço(s)" contíguos, grade de valores rótulo-em-cima/valor-embaixo, código de serviço "01.01.01" (item LC 116) -> 4 dígitos
 LAYOUT_ROSARIO_LIMEIRA = 'rosario_da_limeira_mg'  # Rosário da Limeira/MG (plataforma FUTURIZE) - NFS-e tributada DIGITAL (pdfminer limpo, sem OCR); layout dedicado do município. Blocos "PRESTADOR/TOMADOR DE SERVIÇOS" com rótulos por linha; endereço em linha única "logradouro - [extras] - bairro - CEP - município - UF"; código "Trib. Nacional 09.01.04" (item LC 116) -> 4 dígitos. Nota "fora do município" (prestação em outra cidade) mantém município do prestador na incidência (decisão do usuário)
 LAYOUT_CAMACARI_AVULSA = 'camacari_ba_avulsa'  # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA) Série "A", emitida pela própria Prefeitura, escaneada (OCR). Distinta das notas Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2): blocos "IDENTIFICAÇÃO DO PRESTADOR/TOMADOR" com rótulos "Nome / Razão", "CPF / CNPJ:", "CEP: ... Município: ... UF:", "Logradouro: ... Nº ...", "Bairro: ...". Valores CONFIÁVEIS vêm da camada DIGITAL (pdfminer): o OCR troca o 1º dígito do VALOR TRIBUTÁVEL (14.685->74.685) e deixa o VALOR LÍQUIDO em branco. Detecção casa AVULSA + CAMAÇARI (precede o bloco CPqD)
+LAYOUT_FF_LOCACAO = 'ff_locacao'  # F&F Comércio e Serviços de Telecomunicações de Segurança Eletrônica LTDA (Fatura de Locação de CFTV), escaneada. Detecção por CNPJ do emissor (13.398.812/0001-89), não pela frase "FATURA DE LOCAÇÃO" - o layout de 2 colunas do OCR quebra essa frase (intercalada com o nome da empresa). Campo "VALOR TOTAL DA FATURA" da nota-fonte traz um placeholder de template não substituído ("#venda_valor_total#") - valor real vem da tabela de itens (coluna "Valor Liquido")
 
 
 # Etiquetas para Identificação de Entidades
@@ -177,6 +178,12 @@ class SPPdfExtractor:
             return LAYOUT_GERACAO_ENERGIA
         if re.search(r'LMR\s+ENGENHARIA|LTR\s+ENGENHARIA|L\.M\.R\.\s+ENGENHARIA', t, re.IGNORECASE):
             return LAYOUT_LMR_ENGENHARIA
+        # F&F Comércio (fatura de locação de CFTV) - detectado pelo CNPJ do
+        # emissor, não pela frase "FATURA DE LOCAÇÃO": o layout de 2 colunas do
+        # OCR quebra essa frase (intercalada com o nome da empresa em linhas
+        # separadas), então a marca genérica de locação nunca casa nesta nota.
+        if re.search(r'13\.?398\.?812[/.]?0001-?89', t, re.IGNORECASE):
+            return LAYOUT_FF_LOCACAO
         if re.search(r'CPE BAHIA|cpe tecnologia', t, re.IGNORECASE):
             return LAYOUT_CPE_LOCACAO
         if re.search(r'GUINCHO CIDADE', t, re.IGNORECASE):
@@ -287,6 +294,12 @@ class SPPdfExtractor:
             return LAYOUT_GERACAO_ENERGIA
         if re.search(r'LMR\s+ENGENHARIA|LTR\s+ENGENHARIA|L\.M\.R\.\s+ENGENHARIA', t, re.IGNORECASE):
             return LAYOUT_LMR_ENGENHARIA
+        # F&F Comércio (fatura de locação de CFTV) - detectado pelo CNPJ do
+        # emissor, não pela frase "FATURA DE LOCAÇÃO": o layout de 2 colunas do
+        # OCR quebra essa frase (intercalada com o nome da empresa em linhas
+        # separadas), então a marca genérica de locação nunca casa nesta nota.
+        if re.search(r'13\.?398\.?812[/.]?0001-?89', t, re.IGNORECASE):
+            return LAYOUT_FF_LOCACAO
         if re.search(r'CPE BAHIA|cpe tecnologia', t, re.IGNORECASE):
             return LAYOUT_CPE_LOCACAO
         if re.search(r'GUINCHO CIDADE', t, re.IGNORECASE):
@@ -586,6 +599,12 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1))
                 if res: return res
 
+        if self.layout == LAYOUT_FF_LOCACAO:
+            m = re.search(r'Emiss[ãa]o\s*:?\s*[\n\s]*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
         if self.layout == LAYOUT_GERACAO_ENERGIA:
             m = re.search(r'(\d{2}/\d{2}/\d{4})', t)
             if m:
@@ -845,6 +864,12 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_LMR_ENGENHARIA:
             m = re.search(r'FATURA/DUPLICATA\s+N[ºo°]\s*[:\s\n]*(\d+)', t, re.IGNORECASE)
             if m: return str(int(m.group(1))) # remove leading zeros
+
+        if self.layout == LAYOUT_FF_LOCACAO:
+            # "FATURA DE LOCAÇÃO ... Nº: 520366" - rótulo próprio do cabeçalho
+            # (também repetido no rodapé de assinatura, mesmo valor).
+            m = re.search(r'N[º°o]\s*:?\s*(\d{4,})', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_GERACAO_ENERGIA:
             m = re.search(r'03\.292\.008.*?LOCA.*?BENS.*?\s+(\d+)', t, re.IGNORECASE | re.DOTALL)
@@ -1356,7 +1381,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO):
             return "0601"
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
@@ -1501,7 +1526,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_FF_LOCACAO):
             return "FATURA"
 
         if self.layout == LAYOUT_SAO_PAULO_2:
@@ -2243,6 +2268,88 @@ class SPPdfExtractor:
                         municipio=mun,
                         uf=uf,
                         cep=cep
+                    )
+                )
+
+        if self.layout == LAYOUT_FF_LOCACAO:
+            if is_prestador:
+                mun_cod = _ibge_resolver.extract_and_validate("Camaçari", "BA", city_hint="Camaçari")
+                return Entidade(
+                    cnpj_cpf="13398812000189",
+                    razao_social="F&F COMÉRCIO E SERVIÇOS DE TELECOMUNICAÇÕES DE SEGURANÇA ELETRÔNICA LTDA",
+                    endereco=Endereco(
+                        logradouro="Rua Senhor do Bomfim",
+                        numero="544",
+                        complemento="Loja 02",
+                        bairro="Monte Gordo",
+                        codigo_municipio=mun_cod,
+                        municipio="Camaçari",
+                        uf="BA",
+                        cep="42839852"
+                    ),
+                    telefone="40628609"
+                )
+            elif is_intermediario:
+                return None
+            else:
+                # Bloco do tomador delimitado pelo marcador "DESTINATARIO" -
+                # sem isso, os rótulos abaixo casariam primeiro com os dados
+                # do prestador (que usa os mesmos rótulos ENDEREÇO/CEP/CNPJ).
+                pos_dest = t.find("DESTINATARIO")
+                bloco_dest = t[pos_dest:] if pos_dest != -1 else t
+
+                # "RAZÃO 7396 - Boutique Guarajuba PH Gestão\nSOCIAL" - rótulo
+                # de 2 linhas ("RAZÃO"/"SOCIAL") quebrado pelo OCR em torno do
+                # valor de uma linha só. Mantém o código de cliente ("7396 -")
+                # colado, tal como impresso - não fabricar uma separação que a
+                # nota não delimita.
+                m_raz = re.search(r'RAZ[ÃA]O\s+(.+?)\s*\n\s*SOCIAL', bloco_dest, re.IGNORECASE)
+                razao = re.sub(r'\s+', ' ', m_raz.group(1)).strip() if m_raz else "Tomador Não Identificado"
+
+                m_cnpj = re.search(r'CNPJ\s*/\s*CPF\s*:?\s*([\d./-]+)', bloco_dest, re.IGNORECASE)
+                cnpj_tomador = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
+
+                # "ENDEREÇO: GUARAJUBA, 0 Pousada Boutique Guarajuba - CNPJ/CPF: ..."
+                # - o rótulo "CNPJ/CPF" da coluna vizinha cola direto no fim do
+                # endereço (mesmo efeito de colunas intercaladas já visto em
+                # Localiza/São Paulo). O endereço aqui é o nome do próprio
+                # estabelecimento, não rua+número tradicional - extrai como
+                # está, sem inventar uma estrutura que a nota não tem.
+                m_end = re.search(r'ENDERE[ÇC]O\s*:\s*(.+?)\s*-\s*CNPJ', bloco_dest, re.IGNORECASE | re.DOTALL)
+                logradouro = "Não informado"
+                if m_end:
+                    logradouro = re.sub(r'\s+', ' ', m_end.group(1)).strip()
+                    # "GUARAJUBA, 0 Pousada..." - "0" isolado logo após a
+                    # vírgula é ruído do OCR (não há número de rua nesta nota).
+                    logradouro = re.sub(r',\s*[0O]\s+', ', ', logradouro)
+
+                # Continuação do endereço (bairro/distrito), empurrada para a
+                # linha seguinte pela mesma intercalação de colunas.
+                m_bairro = re.search(r'CNPJ\s*/\s*CPF\s*:?\s*[\d./-]+\s*\n\s*([^\n]+?)\s*\n\s*CIDADE', bloco_dest, re.IGNORECASE)
+                bairro = m_bairro.group(1).strip() if m_bairro else "Não informado"
+
+                m_mun = re.search(r'CIDADE\s*:\s*(.+?)\s*CEP', bloco_dest, re.IGNORECASE)
+                municipio = m_mun.group(1).strip() if m_mun else "Camaçari"
+
+                m_cep = re.search(r'CEP\s*:\s*([\d-]+)\s*UF', bloco_dest, re.IGNORECASE)
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else ""
+
+                m_uf = re.search(r'UF\s*:\s*([A-Z]{2})', bloco_dest, re.IGNORECASE)
+                uf = m_uf.group(1).strip() if m_uf else "BA"
+
+                mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+                return Entidade(
+                    cnpj_cpf=cnpj_tomador,
+                    razao_social=razao,
+                    endereco=Endereco(
+                        logradouro=logradouro,
+                        numero="S/N",
+                        bairro=bairro,
+                        codigo_municipio=mun_cod,
+                        municipio=municipio,
+                        uf=uf,
+                        cep=cep or "00000000"
                     )
                 )
 
@@ -5061,6 +5168,35 @@ class SPPdfExtractor:
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
             )
 
+        if self.layout == LAYOUT_FF_LOCACAO:
+            # "VALOR TOTAL DA FATURA" costuma trazer um placeholder de
+            # template NÃO SUBSTITUÍDO pela própria nota-fonte ("R$
+            # #venda_valor_total#" - bug do sistema de faturamento do
+            # emissor, confirmado na imagem renderizada, não é erro de OCR).
+            # Quando isso acontece o regex de dígitos não casa e caímos no
+            # fallback da tabela de itens; se uma nota futura vier com esse
+            # campo devidamente preenchido, ele é usado primeiro.
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+FATURA\s*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            if m_val:
+                v = self._parse_valor(m_val.group(1))
+            else:
+                # Tabela "Descrição | Contrato | Valor Unitário | Qtde. |
+                # Valor Liquido": cada linha de item traz 2 valores "R$"
+                # (unitário e líquido, nessa ordem) - somamos só os líquidos
+                # (índices ímpares), robusto a mais de 1 item.
+                m_ini = re.search(r'Valor\s+L[ií]quido', t, re.IGNORECASE)
+                m_fim = re.search(r'VALOR\s+TOTAL\s+DA\s+FATURA', t, re.IGNORECASE)
+                bloco_itens = t
+                if m_ini:
+                    bloco_itens = t[m_ini.end():m_fim.start()] if m_fim else t[m_ini.end():]
+                valores_rs = re.findall(r'R\$\s*([\d\.,]+)', bloco_itens)
+                liquidos = valores_rs[1::2] if len(valores_rs) >= 2 else valores_rs
+                v = sum(self._parse_valor(x) for x in liquidos)
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
         if self.layout == LAYOUT_GERACAO_ENERGIA:
             m_val = re.search(r'(\d{2}/\d{2}/\d{4})\s+([\d\.,]+)\s+([\d\.,]+)', t)
             v = self._parse_valor(m_val.group(3)) if m_val else 0.0
@@ -5703,6 +5839,23 @@ class SPPdfExtractor:
                     if header_cam.strip():
                         best_text = f"{header_cam}\n{best_text}"
 
+                # F&F Comércio (fatura de locação de CFTV): achado real — para
+                # ESTA nota específica, o MESMO pixmap (zoom 3x) produz um
+                # texto muito mais completo (1016 vs 558 caracteres — recupera
+                # o rótulo "RAZÃO SOCIAL", o bloco "ENDEREÇO"/"CNPJ/CPF" do
+                # tomador e a tabela de itens inteira) quando passado ao
+                # Tesseract por CAMINHO DE ARQUIVO em vez de objeto PIL em
+                # memória (provável diferença de metadado de DPI mudando o
+                # pré-processamento interno). Não mexemos no `_ocr_page`
+                # global — os outros ~35 layouts já validados usam o caminho
+                # por objeto sem problema — só refazemos a leitura quando o
+                # CNPJ da F&F já foi reconhecido no texto (mesmo degradado), e
+                # só trocamos se o resultado for estritamente mais completo.
+                if re.search(r'13\.?398\.?812[/.]?0001-?89', best_text, re.IGNORECASE):
+                    recut_ff = self._ocr_recut_ff_locacao(page)
+                    if len(recut_ff.strip()) > len(best_text.strip()):
+                        best_text = recut_ff
+
                 return best_text
             finally:
                 doc.close()
@@ -5731,6 +5884,36 @@ class SPPdfExtractor:
             pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_ff_locacao(page) -> str:
+        """Re-OCR da página inteira (mesmo zoom 3x do `_ocr_page` padrão), mas
+        entregando a imagem ao Tesseract por CAMINHO DE ARQUIVO em vez de
+        objeto PIL em memória. Achado real (nota F&F Comércio): o MESMO
+        pixmap rende 558 caracteres pelo caminho normal (objeto em memória) e
+        1016 caracteres por este caminho (arquivo) — a diferença recupera
+        campos inteiros que a leitura padrão simplesmente omite (rótulo
+        "RAZÃO SOCIAL", bloco "ENDEREÇO"/"CNPJ/CPF" do tomador, a tabela de
+        itens). Isolado como recut de layout específico (não altera o
+        `_ocr_page` para os demais ~35 layouts já validados)."""
+        try:
+            import pymupdf
+            import pytesseract
+            import tempfile
+            import os
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0))
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    tmp_path = tmp.name
+                pix.save(tmp_path)
+                return pytesseract.image_to_string(tmp_path, lang='por')
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
         except Exception:
             return ""
 
