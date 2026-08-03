@@ -95,4 +95,4 @@ O extrator é escalável por layout, sem reescrever o núcleo. O checklist típi
 
 ---
 
-*Documentação atualizada em 2026‑07‑31 (37 layouts suportados; novo layout F&F Comércio — fatura de locação de CFTV; fixes de robustez no Localiza — 2 estruturas de texto —, no São Paulo digital — extração de entidades/valores da nota AMIL —, no Camaçari escaneado — recorte do cabeçalho cortava o número da nota — e no Barreiras — grade de valores da locação de bens móveis caía no fallback zero).*
+*Documentação atualizada em 2026‑07‑31 (37 layouts suportados; novo layout F&F Comércio — fatura de locação de CFTV; fixes de robustez no Localiza — 2 estruturas de texto —, no São Paulo digital — extração de entidades/valores da nota AMIL —, no Camaçari escaneado — recorte do cabeçalho cortava o número da nota —, no Barreiras — grade de valores da locação de bens móveis caía no fallback zero — e no São Paulo (digital+escaneado) — endereço em linha única e intermediário fantasma).*

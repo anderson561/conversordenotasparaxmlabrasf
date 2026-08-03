@@ -2634,6 +2634,19 @@ class SPPdfExtractor:
                 re.search(r'CPF\s*[/I]\s*CNPJ', m_bloco.group(0), re.IGNORECASE):
             return None
 
+        # São Paulo (digital e escaneado): o campo "CPF/CNPJ:" do intermediário
+        # vem com "----" (placeholder de campo vazio) quando não há
+        # intermediário de verdade (achado real 2026-07-31, nota UNIMED CNU).
+        # Sem este guard, o rótulo "INTERMEDIÁRIO DE SERVIÇOS" tem o "DE
+        # SERVIÇOS" restante (após o rótulo "Intermediário" ser reconhecido e
+        # descartado) tratado como razão social válida pelo fallback genérico
+        # linha-a-linha — fabricando um intermediário fantasma com CNPJ
+        # sentinela. Retornar None ANTES da extração de razão evita cair
+        # nesse fallback.
+        if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) and is_intermediario and m_bloco and \
+                re.search(r'CPF\s*/\s*CNPJ\s*:?\s*-{2,}', m_bloco.group(0), re.IGNORECASE):
+            return None
+
         if bloco_sv is not None:
             bloco = bloco_sv
         elif bloco_cuiaba is not None:
@@ -2838,7 +2851,7 @@ class SPPdfExtractor:
             razao = re.sub(r'^\d{2}\.\d{3}\.\d{3}\s*', '', razao).strip()
             razao = re.sub(r'^\d{8,}\s*', '', razao).strip()
             razao = re.sub(r'[\s/!|:.-]+$', '', razao).strip()
-            
+
         if not razao:
             razao = f'{tipo} Não Identificado'
 
@@ -2911,8 +2924,50 @@ class SPPdfExtractor:
         m_end = re.search(rf'(?:{relax("Endereço")}|{relax("Logradouro")})[:\s]*(.*?)(?={relax("Município")}|{relax("Municipio")}|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|{relax("Bairro")}|{relax("Complemento")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
         if m_end:
             partes_end = m_end.group(1).strip().lstrip(':').strip()
+            if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) and partes_end:
+                # Endereço em linha única "LOGRADOURO NÚMERO - BAIRRO - CEP:
+                # ..." ou "LOGRADOURO NÚMERO, COMPLEMENTO - BAIRRO - CEP: ..."
+                # SEM rótulo "Bairro:" separado (achado real 2026-07-31, nota
+                # UNIMED CNU - COOPERATIVA CENTRAL). O genérico acima erra os
+                # 2 formatos: sem vírgula, o número nunca é separado do nome
+                # da rua ("R FREI CANECA 1355" fica inteiro no logradouro, o
+                # que forçava numero="S/N"); com vírgula mas o texto após ela
+                # sendo complemento (não número), o 2º bit vazava inteiro pro
+                # campo "numero" (ex. "GUARAJUBA SHOPPING - GUARAJUBA (MONTE
+                # GORDO) -"). Regra: o ÚLTIMO segmento (separado por " - ") é
+                # sempre o bairro; no restante, um número só é aceito quando
+                # for de fato numérico (dígitos ou "S/N") — texto genuíno vira
+                # complemento, e o número fica "S/N" em vez de fabricado.
+                segs_sp = [s.strip() for s in partes_end.split(' - ') if s.strip()]
+                if segs_sp:
+                    bairro_sp = re.sub(r'[\s:=-]+$', '', segs_sp[-1]).strip()
+                    if bairro_sp:
+                        end_data['bairro'] = bairro_sp
+                    resto_sp = segs_sp[0]
+                    if ',' in resto_sp:
+                        antes_sp, depois_sp = [p.strip() for p in resto_sp.split(',', 1)]
+                        m_num_sp = re.match(r'^(.*\D)\s+(\d+[A-Za-z]?)$', antes_sp)
+                        if m_num_sp:
+                            end_data['logradouro'] = m_num_sp.group(1).strip()
+                            end_data['numero'] = m_num_sp.group(2)
+                            if depois_sp:
+                                end_data['complemento'] = depois_sp
+                        elif re.fullmatch(r'S/?N|\d+[A-Za-z]?', depois_sp, re.IGNORECASE):
+                            end_data['logradouro'] = antes_sp
+                            end_data['numero'] = depois_sp
+                        else:
+                            end_data['logradouro'] = antes_sp
+                            if depois_sp:
+                                end_data['complemento'] = depois_sp
+                    else:
+                        m_num_sp = re.match(r'^(.*\D)\s+(\d+[A-Za-z]?)$', resto_sp)
+                        if m_num_sp:
+                            end_data['logradouro'] = m_num_sp.group(1).strip()
+                            end_data['numero'] = m_num_sp.group(2)
+                        else:
+                            end_data['logradouro'] = resto_sp
             # Se houver vírgulas, tentamos quebrar em Logradouro, Número, Bairro
-            if ',' in partes_end:
+            elif ',' in partes_end:
                 bits = [b.strip() for b in partes_end.split(',')]
                 if len(bits) >= 3:
                     end_data['logradouro'] = bits[0]
