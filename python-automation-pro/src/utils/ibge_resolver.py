@@ -39,6 +39,7 @@ class IBGEResolver:
 
     KNOWN_CITIES = {
         "CAMACARI": "2905701", "CAMAÇARI": "2905701",
+        "SIMOES FILHO": "2929206", "SIMÕES FILHO": "2929206",
         "LAURO DE FREITAS": "2919207",
         "FEIRA DE SANTANA": "2910800",
         "BARREIRAS": "2903201",
