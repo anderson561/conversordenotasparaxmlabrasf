@@ -6444,6 +6444,46 @@ class SPPdfExtractor:
             # VALORES saem íntegros — a extração de número/data tolera o corte.
             crop2 = img.crop((int(w * 0.78), int(h * 0.01), w, int(h * 0.18)))
             txt2 = pytesseract.image_to_string(crop2, lang='por', config='--psm 6')
+
+            # Recorte com DESKEW FINO ADITIVO. Achado real 2026-08-03 (nota
+            # nº 246, AVANÇO GESTÃO -> PH Gestão, pág.29 do lote PH Gestão):
+            # o scan está levemente torto (~-1°). A linha "Número da Nota" é a
+            # mais alta da célula; com a página inclinada ela sai do
+            # enquadramento e some do OCR (o recorte largo lê só "246" solto,
+            # sem rótulo; o estreito corta o rótulo para "o da Nota"). Em ambos
+            # a âncora "…mero da Nota" não casa e o número desaba pro fallback
+            # 00000000. Aqui estima-se a inclinação fina (±3°) SÓ na faixa do
+            # cabeçalho, maximizando a variância do perfil horizontal (as
+            # linhas de texto ficam nítidas quando horizontais), e reprocessa-se
+            # a faixa já desentortada. Concatenado (não substitui) e só quando
+            # há inclinação relevante (|ângulo| >= 0.25°): páginas retas
+            # retornam o texto anterior byte-a-byte -> zero regressão nas notas
+            # já validadas (1050/4494/9100).
+            try:
+                import numpy as np
+                band = img.crop((int(w * 0.72), int(h * 0.005), w, int(h * 0.22))).convert('RGB')
+                bw = (np.asarray(band.convert('L')) < 160).astype('float32')
+                best_a, best_score = 0.0, -1.0
+                for i in range(-12, 13):
+                    a = i * 0.25
+                    rot = Image.fromarray((bw * 255).astype('uint8')).rotate(
+                        a, resample=Image.BILINEAR, fillcolor=0)
+                    score = float(np.asarray(rot).sum(axis=1).astype('float32').var())
+                    if score > best_score:
+                        best_score, best_a = score, a
+                if abs(best_a) >= 0.25:
+                    # Desentorta a página inteira pelo ângulo estimado e recorta
+                    # a MESMA caixa larga validada (0.72 / 0.01-0.16): com ela na
+                    # horizontal o PSM 6 volta a ler rótulo+valor intercalados
+                    # ("Número da Nota" -> "246"). Recortar a banda alta direto
+                    # faria o PSM 6 empilhar os 3 rótulos separados dos valores.
+                    desk = img.rotate(best_a, resample=Image.BICUBIC,
+                                      fillcolor=(255, 255, 255))
+                    crop3 = desk.crop((int(w * 0.72), int(h * 0.01), w, int(h * 0.16)))
+                    txt3 = pytesseract.image_to_string(crop3, lang='por', config='--psm 6')
+                    return f"{txt}\n{txt2}\n{txt3}"
+            except Exception:
+                pass
             return f"{txt}\n{txt2}"
         except Exception:
             return ""
