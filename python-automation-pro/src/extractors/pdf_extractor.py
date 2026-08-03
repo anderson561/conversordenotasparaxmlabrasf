@@ -664,8 +664,10 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_CAMACARI_2:
             # No Camaçari escaneado a caixa de cabeçalho (recorte dedicado) traz
             # "Data de Emissão : |\n— 28/05/2026 16:22" com hora — preferimos ela
-            # à "Data da prestação" (só data). O "—"/"|" são ruído de borda.
-            m = re.search(r'Data\s+de\s+Emiss[ãa]o\s*:?\s*\|?\s*[\n\s—-]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            # à "Data da prestação" (só data). O "—"/"|" são ruído de borda. O "D"
+            # inicial pode vir cortado no recorte estreito ("ata de Emissão\n
+            # 11/05/2026 12:50", nota nº 9100) — por isso o `[Dd]?` opcional.
+            m = re.search(r'[Dd]?ata\s+de\s+Emiss[ãa]o\s*:?\s*\|?\s*[\n\s—-]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
@@ -941,13 +943,17 @@ class SPPdfExtractor:
 
         if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2):
             # Rótulo "Número da Nota" — o OCR deste layout às vezes troca o "ú" por "i"
-            # ("Nimero da Nota") e, por ser um documento em duas colunas, o valor real
-            # nem sempre fica colado ao rótulo (pode vir depois de texto de outra coluna,
-            # ex: "Número da Nota\nPREFEITURA MUNICIPAL DE CAMAÇARI 961"). Por isso
-            # buscamos o rótulo e pegamos o primeiro número dentro de uma janela após
-            # ele, em vez de exigir adjacência imediata.
-            m_lab = re.search(r'N[uiú]mero\s+da\s+Nota', t, re.IGNORECASE)
-            if m_lab:
+            # ("Nimero da Nota") e, no recorte estreito do cabeçalho, chega a cortar a
+            # 1ª letra ("imero da Nota"); por isso ancoramos no trecho estável
+            # "mero da Nota". Por ser documento em duas colunas, o valor real nem sempre
+            # fica colado ao rótulo (ex: "Número da Nota\nPREFEITURA MUNICIPAL DE
+            # CAMAÇARI 961"). Além disso, no recorte largo o valor pode ser a Inscrição
+            # Municipal do prestador lida no lugar (nota nº 9100, pág.14 — IM
+            # "0042148001" saía como número); por isso ITERAMOS todas as ocorrências do
+            # rótulo (a do recorte largo pode trazer só a IM, a do estreito traz o nº
+            # real) e descartamos candidatos com >=8 dígitos (comprimento de IM/CNPJ,
+            # nunca de um número de NFS-e sequencial).
+            for m_lab in re.finditer(r'mero\s+da\s+Nota', t, re.IGNORECASE):
                 janela = t[m_lab.end(): m_lab.end() + 80]
                 # Em PDFs gerados digitalmente (não OCR), o marcador de página
                 # ("Pagina 1/1") pode cair dentro dessa janela, antes do valor
@@ -955,11 +961,11 @@ class SPPdfExtractor:
                 janela = re.sub(r'P[áa]gina\s*\d+\s*/\s*\d+', ' ', janela, flags=re.IGNORECASE)
                 for m_num in re.finditer(r'\b(\d+)\b', janela):
                     num = m_num.group(1)
-                    # Descarta números de 1 dígito (paginação residual) e o ano
-                    # isolado (que também pode aparecer perto do rótulo).
-                    if len(num) < 2:
+                    # Descarta 1 dígito (paginação residual), o ano isolado, e
+                    # blocos de >=8 dígitos (Inscrição Municipal/CNPJ lidos por engano).
+                    if len(num) < 2 or len(num) >= 8:
                         continue
-                    if num in ('2024', '2025', '2026') and len(num) <= 4:
+                    if num in ('2024', '2025', '2026', '2027') and len(num) <= 4:
                         continue
                     return num
 
@@ -1693,6 +1699,23 @@ class SPPdfExtractor:
                 chave = re.sub(r'\D', '', m.group(0))
                 if len(chave) >= 50:
                     return chave[:50]
+
+        if self.layout == LAYOUT_CAMACARI_2:
+            # Código de autenticidade da célula do cabeçalho (recorte dedicado):
+            # é alfanumérico MISTURANDO letras e dígitos (ex.: "8075HO406"). No
+            # recorte largo, logo abaixo do rótulo, o OCR às vezes lê a Inscrição
+            # Municipal do prestador — só dígitos (ex.: "9042148001") — e o padrão
+            # genérico a capturava como código. Ancoramos em "autenticidade"
+            # (tolera o "Có" inicial cortado no recorte estreito → "digo de
+            # autenticidade") e exigimos letra+dígito no candidato, o que rejeita
+            # a IM puramente numérica. Se nada legível casar, cai no XXXX-XXXX +
+            # aviso abaixo (a fonte deste campo é fraca e às vezes sai ilegível).
+            for m_lab in re.finditer(r'autenticidade', t, re.IGNORECASE):
+                janela = t[m_lab.end(): m_lab.end() + 40]
+                for m_cod in re.finditer(r'\b([A-Z0-9]{6,12})\b', janela, re.IGNORECASE):
+                    cand = m_cod.group(1).upper()
+                    if re.search(r'[A-Z]', cand) and re.search(r'\d', cand):
+                        return cand
 
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
@@ -6405,8 +6428,23 @@ class SPPdfExtractor:
             if angle:
                 img = img.rotate(-angle, expand=True)
             w, h = img.size
+            # Recorte largo (x=0.72), validado nas notas 1050/4494. Em algumas
+            # notas a linha "Inscrição Municipal: NNNN" do prestador (logo abaixo
+            # da célula) cai nesta faixa e o PSM 6 a lê no lugar do número/data
+            # reais (nota nº 9100, pág.14 do lote PH Gestão: a IM "0042148001"
+            # saía como número e a "Data de Emissão" ficava sem valor).
             crop = img.crop((int(w * 0.72), int(h * 0.01), w, int(h * 0.16)))
-            return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            txt = pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            # Recorte estreito ADITIVO (x=0.78): isola só a coluna da célula
+            # "Número da Nota / Data de Emissão / Código", sem a IM do prestador
+            # à esquerda — recupera número/data que o recorte largo perde nessa
+            # variante. Concatenado (não substitui): as notas já validadas seguem
+            # com o texto do recorte largo intacto (zero regressão). O recorte
+            # estreito corta a 1ª letra dos rótulos ("imero"/"ata"), mas os
+            # VALORES saem íntegros — a extração de número/data tolera o corte.
+            crop2 = img.crop((int(w * 0.78), int(h * 0.01), w, int(h * 0.18)))
+            txt2 = pytesseract.image_to_string(crop2, lang='por', config='--psm 6')
+            return f"{txt}\n{txt2}"
         except Exception:
             return ""
 
