@@ -65,6 +65,7 @@ LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Loc
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS-e eNotas Gateway, Lauro de Freitas/BA)
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
+LAYOUT_PJB_LOCACAO = 'pjb_locacao'  # PJB Construção Aluguel de Máq. e Ser. (CNPJ 08.885.357, Simões Filho/BA) - Fatura de Locação de bens móveis escaneada, sem incidência de ISS; prestador fixo, tomador do bloco DESTINATÁRIO
 LAYOUT_IACU_NFSE = 'iacu_nfse'  # Prefeitura Municipal de Iaçu/BA (plataforma nfservico.com.br) - NFS-e tributada, escaneada; caixa de cabeçalho via recorte dedicado
 LAYOUT_SAO_PAULO_2 = 'sao_paulo_sp_scan'  # São Paulo/SP ESCANEADO (JPG/foto -> OCR) - mesmo cabeçalho do LAYOUT_SAO_PAULO digital, mas via OCR ruidoso; caixa de cabeçalho via recorte dedicado
 LAYOUT_CAMACARI_2 = 'camacari_ba_scan'  # Camaçari/BA ESCANEADO (foto/JPG -> OCR) - mesmo cabeçalho do LAYOUT_CAMACARI, gated por from_ocr; SUPERSET (herda os branches do CAMACARI como fallback) + tratamento próprio: re-OCR zoom4/PSM6, recorte de cabeçalho, grade com alíquota↔ISS trocados e ISS calculado, correção do 1º dígito do CNPJ do tomador
@@ -164,6 +165,19 @@ class SPPdfExtractor:
         Identifica o layout da nota a partir de marcas textuais únicas.
         """
         t = self.raw_text
+        # PJB Construção (Fatura de Locação de máquinas): detectada bem no TOPO
+        # da cadeia porque o texto cita "SIMÕES FILHO", "CAMAÇARI" e "MONTE
+        # GORDO" (cidade do emitente / do tomador) — se deixada para depois,
+        # esses nomes disparam antes os layouts municipais homônimos. A frase
+        # "FATURA DE LOCAÇÃO" chega garblada no OCR ("FATURA Dl Nº"), por isso
+        # não se pode depender do fallback genérico de locação.
+        # Exige a marca do emitente ("PJB CONSTRU"/CNPJ 08.885.357) E um marcador
+        # ESTRUTURAL da fatura ("DESTINATÁRIO"/"NATUREZA DA OPERAÇÃO"): sem isso,
+        # a planilha-resumo mensal (que LISTA "PJB CONSTRUCAO..." como uma linha
+        # de fornecedor) casaria e geraria uma nota-fantasma vazia.
+        if (re.search(r'PJB\s+CONSTRU', t, re.IGNORECASE) or re.search(r'08\.?885\.?357[/.]?0001-?06', t)) \
+                and re.search(r'DESTINAT|NATUREZA\s+DA\s+OPERA', t, re.IGNORECASE):
+            return LAYOUT_PJB_LOCACAO
         if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
             return LAYOUT_SULSEG_COBRANCA
         # PASSWORD/eNotas: detecção específica do emitente (CNPJ 04.021.023 ou
@@ -271,7 +285,7 @@ class SPPdfExtractor:
             return LAYOUT_ARMAC_LOCACAO
         # Fatura de Locação genérica: DEVE ficar por último, depois de todos os
         # emitentes específicos de locação (CPE, Guincho, BF, LMR, Geração,
-        # Locontainers, SUL&SEG, ARMAC) e de todos os layouts municipais — cada
+        # Locontainers, SUL&SEG, ARMAC, PJB) e de todos os layouts municipais — cada
         # um desses ganha por marca própria; só cai aqui uma fatura de locação de
         # locadora ainda não catalogada (ex.: LOC BAHIA). Ver gotcha Forma A
         # (ordem da cadeia de detecção).
@@ -284,6 +298,14 @@ class SPPdfExtractor:
         Returns a layout constant or LAYOUT_GENERICO if none match.
         """
         t = page_text
+        # PJB Construção (Fatura de Locação): no TOPO — o texto cita "SIMÕES
+        # FILHO"/"CAMAÇARI"/"MONTE GORDO", que senão disparariam os layouts
+        # municipais homônimos antes. Exige marca do emitente E marcador
+        # estrutural da fatura (DESTINATÁRIO/NATUREZA), senão a planilha-resumo
+        # que lista "PJB" casaria (ver _detect_layout para o racional completo).
+        if (re.search(r'PJB\s+CONSTRU', t, re.IGNORECASE) or re.search(r'08\.?885\.?357[/.]?0001-?06', t)) \
+                and re.search(r'DESTINAT|NATUREZA\s+DA\s+OPERA', t, re.IGNORECASE):
+            return LAYOUT_PJB_LOCACAO
         if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
             return LAYOUT_SULSEG_COBRANCA
         if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR', t, re.IGNORECASE):
@@ -605,6 +627,15 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1))
                 if res: return res
 
+        if self.layout == LAYOUT_PJB_LOCACAO:
+            # "Data Emissão\n08/05/2026" (o rótulo pode vir garblado; ancorar em
+            # "Emiss" tolera o OCR). Também há "Data Saída/Entrada" com a mesma
+            # data nesta nota - a primeira ocorrência (emissão) já resolve.
+            m = re.search(r'Emiss\S*o\s*[:\s\n]*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
         if self.layout == LAYOUT_GERACAO_ENERGIA:
             m = re.search(r'(\d{2}/\d{2}/\d{4})', t)
             if m:
@@ -870,6 +901,16 @@ class SPPdfExtractor:
             # (também repetido no rodapé de assinatura, mesmo valor).
             m = re.search(r'N[º°o]\s*:?\s*(\d{4,})', t, re.IGNORECASE)
             if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_PJB_LOCACAO:
+            # Número da fatura aparece 3x: na linha da parcela ("R$ 1.050,00
+            # 22980 1 DD/MM/AAAA"), no cabeçalho ("LOCAÇÃO 22.980") e no rodapé
+            # ("Nº 22.980"). A linha da parcela é a âncora mais estável e já vem
+            # sem pontos; o fallback genérico pegava só "22" de "22.980".
+            m = re.search(r'R\$\s*[\d.,]+\s+(\d{4,})\s+\d+\s+\d{2}/\d{2}/\d{4}', t)
+            if not m:
+                m = re.search(r'N[º°o\W]\s*(\d{1,3}(?:\.\d{3})+)', t)
+            if m: return re.sub(r'\D', '', m.group(1))
 
         if self.layout == LAYOUT_GERACAO_ENERGIA:
             m = re.search(r'03\.292\.008.*?LOCA.*?BENS.*?\s+(\d+)', t, re.IGNORECASE | re.DOTALL)
@@ -1381,6 +1422,12 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_PJB_LOCACAO:
+            # Locação de bens móveis sem incidência de ISS (LC 116/2003, item
+            # não tributável) - mesmo critério do Barreiras para esse tipo de
+            # operação: código "0000" (não é serviço da lista da LC116).
+            return "0000"
+
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO):
             return "0601"
 
@@ -2280,6 +2327,83 @@ class SPPdfExtractor:
                         cep=cep
                     )
                 )
+
+        if self.layout == LAYOUT_PJB_LOCACAO:
+            if is_intermediario:
+                return None
+            if is_prestador:
+                # Emitente FIXO: o cabeçalho da PJB (CNPJ, endereço em Simões
+                # Filho/BA) é constante da locadora e o OCR o degrada muito
+                # (o CNPJ 08.885.357 nem sempre sobrevive) - fixamos aqui para
+                # não herdar o ruído. Simões Filho registrada no KNOWN_CITIES.
+                mun_cod = _ibge_resolver.extract_and_validate("Simões Filho", "BA", city_hint="Simões Filho")
+                return Entidade(
+                    cnpj_cpf="08885357000106",
+                    razao_social="PJB CONSTRUÇÃO ALUGUEL DE MÁQ. E SER. LTDA",
+                    endereco=Endereco(
+                        logradouro="Via Acesso II BR 324",
+                        numero="S/N",
+                        bairro="CIA Sul",
+                        codigo_municipio=mun_cod,
+                        municipio="Simões Filho",
+                        uf="BA",
+                        cep="43700000",
+                    ),
+                )
+            # Tomador: bloco "DESTINATÁRIO/REMETENTE" delimitado até o início da
+            # tabela de produto/parcela - sem isso os rótulos ENDEREÇO/CNPJ
+            # casariam com o cabeçalho do emitente (mesmos rótulos).
+            pos = re.search(r'DESTINAT\S*RIO', t, re.IGNORECASE)
+            ini = pos.end() if pos else 0
+            m_fim = re.search(r'DADOS\s+DO\s+PRODUTO|VALOR\s+DA\s+PARC', t[ini:], re.IGNORECASE)
+            bloco = t[ini:ini + m_fim.start()] if m_fim else t[ini:]
+
+            # Razão + CNPJ vêm na mesma linha ("PH GESTAO E CONSULTORIA S.A.
+            # 25.311.856/0001-09"). Removemos defensivamente qualquer U+FFFD
+            # (char de substituição) e o ponto final, sem inventar letra - nesta
+            # nota os acentos do OCR chegam corretos (Á/Ç), não como U+FFFD.
+            m_rc = re.search(r'([A-Z][^\n]*?)\s+(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', bloco)
+            razao, cnpj = "Tomador Não Identificado", "00000000000000"
+            if m_rc:
+                razao = re.sub(r'�', '', m_rc.group(1))
+                razao = re.sub(r'\s+', ' ', razao).strip()
+                razao = re.sub(r'[\s.]+$', '', razao)
+                cnpj = re.sub(r'\D', '', m_rc.group(2))
+
+            # Linha de endereço logo abaixo do rótulo "Endereço Bairro/Distrito".
+            # "ALM HUMAITÁ, 0 GUARAJUBA (MONTE GOR": antes da vírgula é o
+            # logradouro; o "0"/"O" seguinte é ruído (não há número real na
+            # nota); o resto é o bairro/distrito, impresso truncado pelo scan.
+            logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
+            m_end = re.search(r'Endere\S*o[^\n]*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_end:
+                addr = re.sub(r'�', '', m_end.group(1)).strip()
+                if ',' in addr:
+                    antes, depois = [p.strip() for p in addr.split(',', 1)]
+                    logradouro = antes or "Não informado"
+                    depois = re.sub(r'^[O0]\s+', '', depois).strip()
+                    bairro = depois or "Não informado"
+                elif addr:
+                    logradouro = addr
+
+            # Município do tomador: o campo vem misturado com as colunas
+            # vizinhas e o distrito impresso truncado no scan; assumimos
+            # Camaçari/BA (Guarajuba/Monte Gordo é distrito de Camaçari) -
+            # decisão confirmada pelo usuário.
+            mun_cod = _ibge_resolver.extract_and_validate("Camaçari", "BA", city_hint="Camaçari")
+            return Entidade(
+                cnpj_cpf=cnpj,
+                razao_social=razao,
+                endereco=Endereco(
+                    logradouro=logradouro,
+                    numero=numero,
+                    bairro=bairro,
+                    codigo_municipio=mun_cod,
+                    municipio="Camaçari",
+                    uf="BA",
+                    cep="00000000",
+                ),
+            )
 
         if self.layout == LAYOUT_FF_LOCACAO:
             if is_prestador:
@@ -5312,6 +5436,21 @@ class SPPdfExtractor:
                 valores_rs = re.findall(r'R\$\s*([\d\.,]+)', bloco_itens)
                 liquidos = valores_rs[1::2] if len(valores_rs) >= 2 else valores_rs
                 v = sum(self._parse_valor(x) for x in liquidos)
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_PJB_LOCACAO:
+            # Locação de bens móveis: NÃO incide ISS (a própria nota traz "NÃO
+            # INCIDÊNCIA DO ISS CONFORME LEI ... LOCAÇÃO DE BENS MÓVEIS"), então
+            # base/alíquota/ISS = 0. O valor vem na linha da parcela ("R$
+            # 1.050,00 22980 1 DD/MM/AAAA"); fallback no total da fatura ("VALOR
+            # TOTAL DA FATURA EM R$ ... 1.050,00", separado por texto/quebras).
+            m_val = re.search(r'R\$\s*([\d\.]+,\d{2})\s+\d{4,}\s+\d+\s+\d{2}/\d{2}/\d{4}', t)
+            if not m_val:
+                m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+FATURA.*?([\d\.]+,\d{2})', t, re.IGNORECASE | re.DOTALL)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
