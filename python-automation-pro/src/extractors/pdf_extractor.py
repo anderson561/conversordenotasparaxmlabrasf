@@ -627,6 +627,18 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1))
                 if res: return res
 
+        if self.layout == LAYOUT_OSASCO_REPASSE:
+            # O cabeçalho traz "Emissão: 07/05/2026" (só data). A HORA só aparece
+            # no rodapé: "Nota Fiscal de Repasse (NF-R) emitida em 07/05/2026 às
+            # 16:02:47 ...". Preferimos o rodapé (data+hora); se não sair no OCR,
+            # caímos no cabeçalho (só data), e por fim no loop genérico de rótulos.
+            m = re.search(r'emitida\s+em\s+(\d{2}/\d{2}/\d{4})\s+[àáa]s\s+(\d{2}:\d{2}(?::\d{2})?)', t, re.IGNORECASE)
+            if not m:
+                m = re.search(r'Emiss[ãa]o\s*:?\s*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2) if m.lastindex and m.lastindex >= 2 else None)
+                if res: return res
+
         if self.layout == LAYOUT_PJB_LOCACAO:
             # "Data Emissão\n08/05/2026" (o rótulo pode vir garblado; ancorar em
             # "Emiss" tolera o OCR). Também há "Data Saída/Entrada" com a mesma
@@ -886,8 +898,11 @@ class SPPdfExtractor:
 
         if self.layout == LAYOUT_OSASCO_REPASSE:
             # Ordem invertida do padrão usual ("Número da Nota"): "Nota No.: 2440738"
-            # ou "Nota Nº: 02479318" (variações vistas em documentos reais).
-            m = re.search(r'Nota\s+N[º°o]\.?\s*:?\s*(\d+)', t, re.IGNORECASE)
+            # ou "Nota Nº: 02479318" (variações vistas em documentos reais). No
+            # ESCANEADO (OCR) o ponto após "No" sai como vírgula ("Nota No,: 2279456",
+            # nota nº 2279456 iFood, pág.8 do lote Guarajuba Suítes), por isso o
+            # separador tolera tanto "." quanto "," (`[.,]?`).
+            m = re.search(r'Nota\s+N[º°o][.,]?\s*:?\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_BF_AMBIENTAIS:
@@ -4782,8 +4797,15 @@ class SPPdfExtractor:
         m_razao = re.search(r'Raz[ãa]o\s+Social\s*(?:/\s*Nome)?\s*:\s*(.+)', bloco, re.IGNORECASE)
         razao = m_razao.group(1).split('\n')[0].strip() if m_razao else f'{tipo_label} Não Identificado'
 
-        # "CNPJ/CPF:" ou "CPF/CNPJ:" — ordem varia entre documentos
-        m_cnpj = re.search(r'(?:CNPJ\s*/\s*CPF|CPF\s*/\s*CNPJ)\s*:\s*([\d./-]+)', bloco, re.IGNORECASE)
+        # "CNPJ/CPF:" ou "CPF/CNPJ:" — ordem varia entre documentos. No ESCANEADO
+        # (OCR) o rótulo degrada ("CPF/CNPJ" -> "CEF/CNPI", nota nº 2279456 iFood,
+        # pág.8 do lote Guarajuba Suítes), quebrando a âncora e zerando o CNPJ do
+        # tomador. Fallback imune ao rótulo: o 1º CNPJ/CPF BEM-FORMADO dentro do
+        # bloco já isolado (EMITENTE/RECEPTOR) é o da entidade — a formatação
+        # (14 díg. com ./-) sobrevive ao OCR mesmo quando o rótulo não.
+        m_cnpj = re.search(r'(?:CNPJ\s*/\s*CPF|CPF\s*/\s*CNPJ)\s*:\s*(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
+        if not m_cnpj:
+            m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', bloco)
         cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
 
         m_im = re.search(r'Inscri[cç][aã]o\s+Municipal\s*:\s*(\d+)', bloco, re.IGNORECASE)
@@ -4799,7 +4821,10 @@ class SPPdfExtractor:
         m_mun = re.search(r'Munic[ií]pio\s*:\s*([^\n]+?)(?=\s*UF\b|\n|$)', bloco, re.IGNORECASE)
         municipio = m_mun.group(1).strip() if m_mun else 'Não informado'
 
-        m_uf = re.search(r'\bUF\s*:?\s*([A-Z]{2})\b', bloco, re.IGNORECASE)
+        # No ESCANEADO (OCR) o ":" após "UF" sai como ";" ("UF; BA", nota nº 2279456
+        # iFood, pág.8) — sem tolerar o ";", o UF caía no default 'SP' e o município
+        # do RECEPTOR (Camaçari/BA) era resolvido como São Paulo/SP (3550308).
+        m_uf = re.search(r'\bUF\s*[:;]?\s*([A-Z]{2})\b', bloco, re.IGNORECASE)
         uf = m_uf.group(1).upper() if m_uf else 'SP'
 
         # "E-mail:" ou "Email:"
@@ -4810,7 +4835,10 @@ class SPPdfExtractor:
         m_fone = re.search(r'(?:Telefone|Fone)\s*:\s*([\(\)\d\s-]{6,20})', bloco, re.IGNORECASE)
         telefone = m_fone.group(1).strip() if m_fone else None
 
-        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+        # city_hint=municipio: sem ele, o resolver não acerta Camaçari mesmo com
+        # UF=BA (retorna 2927408 em vez de 2905701) — o hint desambigua contra
+        # o KNOWN_CITIES. (Lapso recorrente já catalogado; desta vez passado.)
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
 
         return Entidade(
             cnpj_cpf=cnpj,
