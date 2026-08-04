@@ -2685,12 +2685,23 @@ class SPPdfExtractor:
         # caminho genérico já testado, sem risco de regressão.
         bloco_sv = None
         if self.layout == LAYOUT_SALVADOR and not is_intermediario:
+            # A âncora do cabeçalho "TOMADOR"/"Cliente" só conta se aparecer ANTES
+            # da DISCRIMINAÇÃO (região do cabeçalho da nota). Sem essa restrição, a
+            # palavra "TOMADOR" no CORPO da discriminação (ex.: "-I8S RETIDO PELO
+            # TOMADOR 5% = R$450,00 (DEVIDO NA CIDADE DE CAMAÇARI- BA)", nota real
+            # DELTALINE nº 624) fazia `tem_label_tomador` virar verdadeiro e o
+            # recorte dedicado do 2º "Nome/Razão Social" ser pulado — a extração
+            # genérica então ancorava naquele "TOMADOR" do corpo e copiava
+            # "5% = R$450,00 (DEVIDO...)" como razão social do tomador (com CNPJ
+            # sentinela). As variantes que TÊM cabeçalho "TOMADOR DE SERVIÇOS" real
+            # (antes da discriminação) continuam pulando o recorte e caindo na
+            # extração genérica/zoom, sem regressão.
+            m_disc = re.search(r'DISCRIMINA[ÇC][ÃA]O', t, re.IGNORECASE)
+            disc_pos = m_disc.start() if m_disc else len(t)
             tem_label_tomador = re.search(
-                "|".join(relax(l) for l in _LABELS_TOMADOR), t, re.IGNORECASE)
+                "|".join(relax(l) for l in _LABELS_TOMADOR), t[:disc_pos], re.IGNORECASE)
             nomes = list(re.finditer(r'Nome\s*/?\s*Raz[ãa]o\s+Social', t, re.IGNORECASE))
             if not tem_label_tomador and len(nomes) >= 2:
-                m_disc = re.search(r'DISCRIMINA[ÇC][ÃA]O', t, re.IGNORECASE)
-                disc_pos = m_disc.start() if m_disc else len(t)
                 if is_prestador:
                     m_prest = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]O', t, re.IGNORECASE)
                     ini = m_prest.start() if m_prest else 0
