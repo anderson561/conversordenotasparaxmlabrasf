@@ -3013,6 +3013,15 @@ class SPPdfExtractor:
             razao = re.sub(r'^\d{2}\.\d{3}\.\d{3}\s*', '', razao).strip()
             razao = re.sub(r'^\d{8,}\s*', '', razao).strip()
             razao = re.sub(r'[\s/!|:.-]+$', '', razao).strip()
+            if self.layout == LAYOUT_NACIONAL:
+                # DANFSe: o OCR gruda no nome (a) o prefixo do CNPJ com VÍRGULA
+                # em vez de ponto ("49.244,210 THIAGO GUEDES...") — a limpeza
+                # acima só pega a versão com pontos; e (b) a inicial isolada da
+                # coluna vizinha "E-mail" no fim ("PH GESTAO ... S.A. E"). Remove
+                # os dois (gated no layout p/ não arriscar razões de 1 letra em
+                # outros layouts).
+                razao = re.sub(r'^\d{2}[.,]\d{3}[.,]\d{3}\s+', '', razao).strip()
+                razao = re.sub(r'\s+[A-Z]$', '', razao).strip()
 
         if not razao:
             razao = f'{tipo} Não Identificado'
@@ -3225,6 +3234,26 @@ class SPPdfExtractor:
                 if m_mun:
                     end_data['municipio'] = m_mun.group(1).strip()
                     end_data['uf'] = 'MT'
+
+        if self.layout == LAYOUT_NACIONAL and (
+                not end_data.get('municipio') or end_data.get('municipio') in ('Não informado', '')):
+            # DANFSe: "Município" é CABEÇALHO de coluna ("Endereço | Município |
+            # CEP") e o valor real fica na linha de valores, entre o endereço e
+            # o CEP — a âncora genérica "Município: <valor>" casa o cabeçalho e
+            # captura vazio, então o resolver varria o doc inteiro e pescava
+            # "SALVADOR" do topo ("MUNICIPIO DO SALVADOR"), resolvendo a capital
+            # (nota nº 44 pág.18: intermediário PH Gestão saía Salvador 2927408
+            # em vez de Camaçari 2905701). O valor tem sempre a forma
+            # "<Cidade> - <UF> <CEP>"; a cidade vem em Title Case e os tokens de
+            # endereço vêm em CAIXA ALTA ("GUARAJUBA (MONTE"), então exigir
+            # início Title Case (`[A-ZÀ-Ý][a-zà-ÿ]`) pula o endereço e pega só a
+            # cidade (funciona p/ cidades compostas: "Feira de Santana", etc.).
+            m_dan = re.search(
+                r'([A-ZÀ-Ý][a-zà-ÿ][A-Za-zà-ÿÀ-Ý\s]*?)\s*[-–]\s*([A-Z]{2})\b\s*\d{5}-?\s?\d{3}',
+                bloco_clean)
+            if m_dan:
+                end_data['municipio'] = re.sub(r'\s+', ' ', m_dan.group(1)).strip()
+                end_data['uf'] = m_dan.group(2).upper()
 
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'],
@@ -6547,6 +6576,26 @@ class SPPdfExtractor:
         prestador = self._extrair_entidade("Prestador")
         tomador   = self._extrair_entidade("Tomador")
         intermediario = self._extrair_entidade("Intermediario")
+
+        # DANFSe Nacional: quando o TOMADOR vem "não identificado" na própria nota
+        # (o documento imprime, em tarja de largura total, "TOMADOR DO SERVIÇO NÃO
+        # IDENTIFICADO NA NFS-e") mas há um INTERMEDIÁRIO identificado, promover o
+        # intermediário a tomador. Regra de negócio (decisão do usuário 2026-08-04,
+        # nota nº 44 pág.18 do lote Guarajuba Suítes: o MEI prestador lançou a PH
+        # Gestão como intermediário e deixou o tomador em branco; para a
+        # contabilidade, a PH Gestão é o tomador efetivo). Esvazia o
+        # <Intermediario> — a mesma entidade não fica nos dois papéis.
+        if self.layout == LAYOUT_NACIONAL and intermediario is not None:
+            tomador_nao_ident = (
+                tomador is None
+                or (tomador.cnpj_cpf or '').startswith('00000000000')
+                or bool(re.search(r'N[ÃA]O\s+IDENTIFICADO', tomador.razao_social or '', re.IGNORECASE))
+            )
+            interm_ident = not (intermediario.cnpj_cpf or '').startswith('00000000000')
+            if tomador_nao_ident and interm_ident:
+                tomador = intermediario
+                intermediario = None
+
         valores   = self._extrair_valores()
 
         discriminacao = self._extrair_discriminacao()
