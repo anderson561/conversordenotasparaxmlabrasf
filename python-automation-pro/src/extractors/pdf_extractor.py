@@ -165,6 +165,20 @@ class SPPdfExtractor:
         Identifica o layout da nota a partir de marcas textuais únicas.
         """
         t = self.raw_text
+        # DANFSe Nacional (NFS-e Nacional v1.0) ANTES de qualquer marca municipal:
+        # a DANFSe é emitida PELO município, então o cabeçalho traz "Prefeitura
+        # Municipal de <X>" / "Município de <X>", que casaria o layout municipal
+        # homônimo antes (ex.: DANFSe de Camaçari caía em `camacari_ba_scan` pelo
+        # check `PREFEITURA MUNICIPAL DE CAMAÇARI`, e o parser DANFSe + a regra
+        # intermediário→tomador, ambos gated em LAYOUT_NACIONAL, nunca rodavam →
+        # tomador não extraído, nota real ANA PAULA→PH GESTÃO, pág.11 do lote
+        # Guarajuba 06/2026). As marcas "DANFSe v1.0" e "Documento Auxiliar da
+        # NFS-e" são do DOCUMENTO NACIONAL padrão — não aparecem nos formatos
+        # municipais próprios —, então este check estreito no topo é seguro. O
+        # check largo (Chave de Acesso|Competência da NFS-e) permanece adiante
+        # como fallback para OCR severo em notas sem colisão municipal.
+        if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
+            return LAYOUT_NACIONAL
         # PJB Construção (Fatura de Locação de máquinas): detectada bem no TOPO
         # da cadeia porque o texto cita "SIMÕES FILHO", "CAMAÇARI" e "MONTE
         # GORDO" (cidade do emitente / do tomador) — se deixada para depois,
@@ -298,6 +312,12 @@ class SPPdfExtractor:
         Returns a layout constant or LAYOUT_GENERICO if none match.
         """
         t = page_text
+        # DANFSe Nacional ANTES das marcas municipais (mesmo racional de
+        # _detect_layout): a DANFSe traz "Prefeitura Municipal de <X>" e casaria
+        # o layout municipal homônimo antes. "DANFSe v1.0"/"Documento Auxiliar da
+        # NFS-e" são do documento nacional padrão — check estreito e seguro.
+        if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
+            return LAYOUT_NACIONAL
         # PJB Construção (Fatura de Locação): no TOPO — o texto cita "SIMÕES
         # FILHO"/"CAMAÇARI"/"MONTE GORDO", que senão disparariam os layouts
         # municipais homônimos antes. Exige marca do emitente E marcador
