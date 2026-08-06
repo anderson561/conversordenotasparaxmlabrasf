@@ -4067,6 +4067,87 @@ class SPPdfExtractor:
         candidatos = [d + c[1:] for d in '0123456789' if cls._cnpj_valido(d + c[1:])]
         return candidatos[0] if len(candidatos) == 1 else c
 
+    def _recuperar_cnpj_tomador_camacari(self, page_idx: int) -> str:
+        """Recorte de recuperação para o CPF/CNPJ do TOMADOR em notas de
+        Camaçari escaneadas, usado só quando o rótulo "CPF/CNPJ" do bloco
+        TOMADOR não devolveu nenhum valor no OCR padrão. Achado real: nota
+        nº 962 (pág.20, lote Guarajuba 06/2026) — o campo estava cobertO no
+        scan original por um marca-texto amarelo com um rabisco a caneta por
+        cima, que zera o OCR só nessa célula (o resto da página lê
+        normalmente, inclusive o CNPJ do PRESTADOR). Localiza dinamicamente
+        o rótulo via posição de palavra (`image_to_data`, ancorado depois do
+        cabeçalho "TOMADOR"), recorta a região à direita do rótulo em zoom
+        alto (10x) e converte para escala de cinza + limiar de luminância
+        (remove a cor do destaque/rabisco, preserva o traço preto) antes do
+        OCR final com whitelist numérico. Devolve '' se não achar um padrão
+        de CPF/CNPJ válido — nunca piora o sentinela atual (é um recorte
+        aditivo, só chamado como último recurso pelo chamador)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from pytesseract import Output
+            from PIL import Image
+            import io
+            import os
+
+            tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            if os.path.exists(tess_path):
+                pytesseract.pytesseract.tesseract_cmd = tess_path
+
+            doc = pymupdf.open(self.pdf_path)
+            try:
+                if not (0 <= page_idx < len(doc)):
+                    return ''
+                page = doc[page_idx]
+
+                zoom_loc = 4.0
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom_loc, zoom_loc))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                data = pytesseract.image_to_data(img, lang='por', config='--psm 6', output_type=Output.DICT)
+
+                tomador_y = None
+                cnpj_hits = []
+                for i in range(len(data['text'])):
+                    txt = (data['text'][i] or '').strip()
+                    if not txt:
+                        continue
+                    up = txt.upper()
+                    if 'TOMADOR' in up and tomador_y is None:
+                        tomador_y = data['top'][i]
+                    if re.search(r'CNPJ|CPF', up):
+                        cnpj_hits.append((data['top'][i], data['left'][i], data['width'][i], data['height'][i]))
+
+                if tomador_y is None:
+                    return ''
+                candidatos_pos = [h for h in cnpj_hits if h[0] > tomador_y]
+                if not candidatos_pos:
+                    return ''
+                top, left, width, height = min(candidatos_pos, key=lambda h: h[0])
+
+                w_pg, h_pg = page.rect.width, page.rect.height
+                x0 = (left + width) / zoom_loc
+                x1 = min(x0 + 0.30 * w_pg, w_pg)
+                y0 = max((top - height * 0.5) / zoom_loc, 0)
+                y1 = min((top + height * 2.0) / zoom_loc, h_pg)
+                clip = pymupdf.Rect(x0, y0, x1, y1)
+
+                pix2 = page.get_pixmap(matrix=pymupdf.Matrix(10.0, 10.0), clip=clip)
+                gray = Image.open(io.BytesIO(pix2.tobytes("png"))).convert('L')
+            finally:
+                doc.close()
+
+            for thresh in (130, 150, 170):
+                bw = gray.point(lambda p: 0 if p < thresh else 255)
+                out = pytesseract.image_to_string(
+                    bw, lang='por',
+                    config='--psm 6 -c tessedit_char_whitelist=0123456789./-')
+                m = re.search(r'\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2}', out)
+                if m:
+                    return re.sub(r'\D', '', m.group(0))
+            return ''
+        except Exception:
+            return ''
+
     def _extrair_entidade_camacari2(self, is_prestador: bool) -> Optional[Entidade]:
         """Extrai prestador/tomador da NFS-e de Camaçari/BA ESCANEADA (foto/JPG
         -> OCR). Estrutura: blocos "PRESTADOR DE SERVIÇOS" e "TOMADOR DE
@@ -4109,6 +4190,18 @@ class SPPdfExtractor:
 
         m_cnpj = re.search(r'CPF/CNPJ\s*:?\s*(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
         cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ''
+        if not cnpj and not is_prestador and getattr(self, 'from_ocr', False):
+            # OCR padrão não achou nenhum valor para o rótulo "CPF/CNPJ" do
+            # tomador — achado real: nota nº 962 (pág.20, lote Guarajuba
+            # 06/2026) tinha o campo cobertO por um marca-texto + rabisco no
+            # scan original, que zera o OCR só nessa célula. Último recurso:
+            # recorte dedicado com localização dinâmica + binarização (ver
+            # `_recuperar_cnpj_tomador_camacari`). Só dispara quando sabemos
+            # de qual página do PDF este bloco veio (`_pagina_hint`, setado
+            # por `parse_multiple`); sem isso, mantém o comportamento atual.
+            pagina_hint = getattr(self, '_pagina_hint', None)
+            if pagina_hint:
+                cnpj = self._recuperar_cnpj_tomador_camacari(pagina_hint - 1)
         if not is_prestador and cnpj:
             cnpj = self._corrige_cnpj_primeiro_digito(cnpj)
         if not cnpj:
@@ -6942,6 +7035,11 @@ class SPPdfExtractor:
             # Propaga a origem (OCR vs texto embutido) para a detecção de layout
             # do bloco distinguir SP escaneado (LAYOUT_SAO_PAULO_2) do SP digital.
             sub_ext.from_ocr = self.from_ocr
+            # Propaga a página (1-based) de onde este bloco veio no PDF original
+            # -- usado só como último recurso por recortes de recuperação que
+            # precisam reabrir e renderizar a página real (ex.:
+            # `_recuperar_cnpj_tomador_camacari`).
+            sub_ext._pagina_hint = page_idx
 
             try:
                 nfse = sub_ext.parse()
