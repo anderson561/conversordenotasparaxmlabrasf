@@ -3655,15 +3655,30 @@ class SPPdfExtractor:
             m = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', bloco)
             return re.sub(r'\D', '', m.group(1)) if m else '00000000000000'
 
+        # Rótulo e valor às vezes vêm na MESMA linha ("Nome/Razão SAO PEDRO...",
+        # nota real nº 20264631, ALFA MEDICAL -> SÃO PEDRO, pág.6 do lote NFS
+        # HJHJ), em vez de rótulo+quebra-de-linha+valor (formato das notas já
+        # cobertas por teste). Os campos abaixo já toleravam isso com `\n*`
+        # (Bairro/CEP) — Nome/Razão, Endereço e Inscrição exigiam `\n+`
+        # (obrigava quebra) e caíam nos sentinelas "Prestador/Tomador Não
+        # Identificado" / "Não informado" mesmo com o valor real presente no
+        # texto. Trocado para `\n*` (tolera zero ou mais quebras), preservando
+        # o comportamento já validado quando a quebra existe.
         if is_prestador:
             cnpj = _cnpj_cpf(bloco_prestador)
-            insc = _campo(r'Inscri[çc][aã]o\s*\n+\s*(\d+)', bloco_prestador)
-            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n+\s*(.+)', bloco_prestador) or 'Prestador Não Identificado'
-            endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n+\s*(.+)', bloco_prestador) or 'Não informado'
-            bairro = _campo(r'Bairro\s*:?\s*\n*\s*([^\n]+)', bloco_prestador) or 'Não informado'
+            insc = _campo(r'Inscri[çc][aã]o\s*\n*\s*(\d+)', bloco_prestador)
+            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n*\s*(.+)', bloco_prestador) or 'Prestador Não Identificado'
+            endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n*\s*(.+)', bloco_prestador) or 'Não informado'
+            # Bairro/Município às vezes compartilham a MESMA linha ("Bairro:
+            # Centro Município: LAURO DE FREITAS UF: BA") — a captura genérica
+            # até fim-de-linha ([^\n]+) vazava o rótulo seguinte inteiro para
+            # dentro do valor. Não-greedy com lookahead pro próximo rótulo
+            # conhecido (ou fim de linha, ou fim do bloco) resolve os dois
+            # formatos sem regredir o caso "cada rótulo na própria linha".
+            bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_prestador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_prestador)
-            municipio = (_campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_prestador)
-                         or _campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_vazado)
+            municipio = (_campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_prestador)
+                         or _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_vazado)
                          or 'LAURO DE FREITAS')
             uf = (_campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_prestador)
                   or _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_vazado)
@@ -3673,11 +3688,11 @@ class SPPdfExtractor:
         else:
             cnpj = _cnpj_cpf(bloco_vazado)
             insc = None
-            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n+\s*(.+)', bloco_tomador) or 'Tomador Não Identificado'
-            endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n+\s*(.+)', bloco_tomador) or 'Não informado'
-            bairro = _campo(r'Bairro\s*:?\s*\n*\s*([^\n]+)', bloco_tomador) or 'Não informado'
+            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n*\s*(.+)', bloco_tomador) or 'Tomador Não Identificado'
+            endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n*\s*(.+)', bloco_tomador) or 'Não informado'
+            bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_tomador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_tomador)
-            municipio = _campo(r'Munic[íi]pio\s*:\s*([^\n]+)', bloco_tomador) or 'Não informado'
+            municipio = _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_tomador) or 'Não informado'
             uf = _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_tomador) or 'BA'
             email = _campo(r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_tomador)
 
@@ -5278,8 +5293,36 @@ class SPPdfExtractor:
                 iss = self._parse_valor(m_row.group(4))
                 iss_retido = m_row.group(5).strip().lower() == 'sim'
             else:
-                deducoes = base = aliquota = iss = 0.0
-                iss_retido = False
+                # Variante MEI/Simples Nacional com Alíquota/Valor do ISS
+                # "inutilizados" (nota traz "*" em vez de "0,00" nessas 2
+                # células, conforme o art. 57 §2º I da Resolução 94 do CGSN,
+                # citado no rodapé da própria nota). O OCR às vezes COLAPSA os
+                # dois asteriscos num só ao linearizar a grade em uma única
+                # linha ("0,00 283,39 * Não", nota real nº 20264631, ALFA
+                # MEDICAL -> SÃO PEDRO, pág.6 do lote NFS HJHJ) — a regra
+                # estrita acima (que exige 4 grupos NUMÉRICOS) nunca casa, e a
+                # extração cai no fallback zero para TUDO, inclusive a Base de
+                # Cálculo (que É um número real, "283,39"). Aqui exigimos só
+                # os 2 primeiros valores (Dedução/Base, sempre numéricos) e
+                # tratamos Alíquota/ISS ausentes da região intermediária como
+                # 0,00 — fiel à face do documento (campo inutilizado = sem
+                # tributação, não erro de leitura), não fabricação de valor.
+                m_row_mei = re.search(
+                    r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\)\s*'
+                    r'Al[íi]quota\s*\(%\)\s*Valor\s+do\s+ISS\s*\(R\$\)\s*ISSQN\s+Retido\s*\(R\$\)\s*'
+                    r'(?:R\$\s*)?([\d\.,]+)\s*(?:R\$\s*)?([\d\.,]+)\s*(.{0,20}?)\s*(Sim|N[ãa]o)',
+                    t, re.IGNORECASE | re.DOTALL
+                )
+                if m_row_mei:
+                    deducoes = self._parse_valor(m_row_mei.group(1))
+                    base = self._parse_valor(m_row_mei.group(2))
+                    nums_meio = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', m_row_mei.group(3))
+                    aliquota = (self._parse_valor(nums_meio[0]) / 100) if nums_meio else 0.0
+                    iss = self._parse_valor(nums_meio[1]) if len(nums_meio) >= 2 else 0.0
+                    iss_retido = m_row_mei.group(4).strip().lower() == 'sim'
+                else:
+                    deducoes = base = aliquota = iss = 0.0
+                    iss_retido = False
 
             m_val_total = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s+FISCAL\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
             val_serv = self._parse_valor(m_val_total.group(1)) if m_val_total else base
