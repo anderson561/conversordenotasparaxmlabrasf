@@ -73,6 +73,7 @@ LAYOUT_MATA_SAO_JOAO = 'mata_sao_joao_ba'  # Mata de São João/BA (plataforma S
 LAYOUT_ROSARIO_LIMEIRA = 'rosario_da_limeira_mg'  # Rosário da Limeira/MG (plataforma FUTURIZE) - NFS-e tributada DIGITAL (pdfminer limpo, sem OCR); layout dedicado do município. Blocos "PRESTADOR/TOMADOR DE SERVIÇOS" com rótulos por linha; endereço em linha única "logradouro - [extras] - bairro - CEP - município - UF"; código "Trib. Nacional 09.01.04" (item LC 116) -> 4 dígitos. Nota "fora do município" (prestação em outra cidade) mantém município do prestador na incidência (decisão do usuário)
 LAYOUT_CAMACARI_AVULSA = 'camacari_ba_avulsa'  # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA) Série "A", emitida pela própria Prefeitura, escaneada (OCR). Distinta das notas Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2): blocos "IDENTIFICAÇÃO DO PRESTADOR/TOMADOR" com rótulos "Nome / Razão", "CPF / CNPJ:", "CEP: ... Município: ... UF:", "Logradouro: ... Nº ...", "Bairro: ...". Valores CONFIÁVEIS vêm da camada DIGITAL (pdfminer): o OCR troca o 1º dígito do VALOR TRIBUTÁVEL (14.685->74.685) e deixa o VALOR LÍQUIDO em branco. Detecção casa AVULSA + CAMAÇARI (precede o bloco CPqD)
 LAYOUT_FF_LOCACAO = 'ff_locacao'  # F&F Comércio e Serviços de Telecomunicações de Segurança Eletrônica LTDA (Fatura de Locação de CFTV), escaneada. Detecção por CNPJ do emissor (13.398.812/0001-89), não pela frase "FATURA DE LOCAÇÃO" - o layout de 2 colunas do OCR quebra essa frase (intercalada com o nome da empresa). Campo "VALOR TOTAL DA FATURA" da nota-fonte traz um placeholder de template não substituído ("#venda_valor_total#") - valor real vem da tabela de itens (coluna "Valor Liquido")
+LAYOUT_BROTAS_MACAUBAS = 'brotas_macaubas_ba'  # Prefeitura de Brotas de Macaúbas/BA (CNPJ 13.797.600/0001-74, plataforma nfservico.com.br - mesma da IAÇU) - NFS-e tributada, escaneada (JPG/foto, tipicamente de cabeça para baixo). Reaproveita o parser de entidade do Iaçu (mesmos rótulos/estrutura), com 2 ajustes tolerantes: "|" (OCR de "Nº") colado no endereço do prestador, e nome/CREA do engenheiro colado na razão social do tomador. Caixa de cabeçalho via o MESMO recorte dedicado do Iaçu (_ocr_header_box_iacu, agora com suporte a ângulo de rotação); número/valores/discriminação com âncoras próprias (grade de valores sem o campo "Valor total das deduções" que o Iaçu tem). Código de serviço fixo "0702" (mapeado do CNAE 4391-6/00 impresso na nota - a nota traz "Item da lista de serviços: 0", que não é um código LC116 válido; decisão do usuário)
 
 
 # Etiquetas para Identificação de Entidades
@@ -292,6 +293,12 @@ class SPPdfExtractor:
         # corrompido no OCR ("IA?U"), então toleramos até 2 chars entre "IA" e "U".
         if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U\b', t, re.IGNORECASE) or re.search(r'nfservico\.com\.br\S*iacu', t, re.IGNORECASE):
             return LAYOUT_IACU_NFSE
+        # Brotas de Macaúbas/BA (mesma plataforma nfservico.com.br do Iaçu,
+        # mesmo racional de marca específica do município — decisão do
+        # usuário — para não colidir com outros municípios do mesmo SaaS).
+        # "MACAÚBAS" pode sair "MACA?BAS"/"MACAUBAS" no OCR (o "Ú" some).
+        if re.search(r'PREFEITURA\s+DE\s+BROTAS\s+DE\s+MACA.{0,2}BAS', t, re.IGNORECASE) or re.search(r'13\.?797\.?600.{0,3}0001.?74', t):
+            return LAYOUT_BROTAS_MACAUBAS
         # ARMAC (locadora específica, fatura escaneada) — precede o genérico de
         # locação por ter estrutura própria (blocos "Dados do Locador/Tomador",
         # tabela multi-item) que exige extração dedicada + re-OCR em zoom alto.
@@ -415,6 +422,8 @@ class SPPdfExtractor:
             return LAYOUT_NACIONAL
         if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U\b', t, re.IGNORECASE) or re.search(r'nfservico\.com\.br\S*iacu', t, re.IGNORECASE):
             return LAYOUT_IACU_NFSE
+        if re.search(r'PREFEITURA\s+DE\s+BROTAS\s+DE\s+MACA.{0,2}BAS', t, re.IGNORECASE) or re.search(r'13\.?797\.?600.{0,3}0001.?74', t):
+            return LAYOUT_BROTAS_MACAUBAS
         if re.search(r'00\.?242\.?184', t) or (re.search(r'\bARMAC\b', t, re.IGNORECASE) and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
             return LAYOUT_ARMAC_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
@@ -584,8 +593,11 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1).replace('.', '/'))
                 if res: return res
 
-        if self.layout == LAYOUT_IACU_NFSE:
-            # "Data e hora de Emissão:\n\n10/07/2026 16:37:22" (recorte do cabeçalho).
+        if self.layout in (LAYOUT_IACU_NFSE, LAYOUT_BROTAS_MACAUBAS):
+            # "Data e hora de Emissão:\n\n10/07/2026 16:37:22" (recorte do
+            # cabeçalho). Mesmo rótulo/formato em Brotas de Macaúbas (mesma
+            # plataforma nfservico.com.br) — confirmado na nota real nº 70
+            # (16/06/2026 17:43:22).
             m = re.search(r'Data\s+e\s+hora\s+de\s+Emiss[aã]o\s*:?\s*[\n\s]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
@@ -822,6 +834,15 @@ class SPPdfExtractor:
             # (_ocr_header_box_iacu), prependido ao texto. Ancorado no rótulo
             # próprio; o valor pode ser um único dígito.
             m = re.search(r'N[úu]mero\s+da\s+nota\s*:?\s*[\n\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_BROTAS_MACAUBAS:
+            # "Número da nota:\nÀ 70" — mesmo rótulo do Iaçu, mas com um
+            # caractere solto de ruído (achado real: fragmento do QR Code
+            # logo abaixo, lido como "À") entre o rótulo e o valor — a regex
+            # do Iaçu exige só espaço/quebra de linha aí e não casa. Tolerante
+            # a qualquer caractere não-dígito entre o rótulo e o número.
+            m = re.search(r'N[úu]mero\s+da\s+nota\s*:?[^\d\n]*\n?[^\d\n]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
@@ -1242,6 +1263,17 @@ class SPPdfExtractor:
                 disc = re.sub(r'\s+', ' ', m.group(1)).strip()
                 if disc: return disc
 
+        if self.layout == LAYOUT_BROTAS_MACAUBAS:
+            # Bloco entre "DISCRIMINAÇÃO DOS SERVIÇOS" e "DADOS PARA
+            # PAGAMENTO" — sem a âncora de fim, a extração genérica vaza para
+            # o bloco de pagamento/anotações manuscritas da nota (achado real
+            # na nota nº 70: "...ESTACIONAMENTO DADOS PARA PAGAMENTO: SÃO
+            # PEDRO CONSTRUTORA OBRA. E 0 STAÇÃO DOS SERVIÇOS...").
+            m = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS(.*?)DADOS\s+PARA\s+PAGAMENTO', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc: return disc
+
         if self.layout == LAYOUT_SALVADOR:
             # O rótulo "DISCRIMINAÇÃO DOS SERVIÇOS" sai truncado/corrompido no
             # OCR (ex.: "DISCRIMINA! IÇoS"), então ancoramos só no prefixo
@@ -1469,6 +1501,16 @@ class SPPdfExtractor:
             # operação: código "0000" (não é serviço da lista da LC116).
             return "0000"
 
+        if self.layout == LAYOUT_BROTAS_MACAUBAS:
+            # A nota imprime "Item da lista de serviços: 0 - Prestação de
+            # serviços em geral" — não é um código LC116 real de 4 dígitos
+            # (item "0" não existe na lista), então não há como extrair um
+            # código válido do próprio texto. Fixo em "0702" (execução de
+            # obras de construção civil), mapeado do CNAE impresso na nota
+            # ("4391600 - Obras de fundações") — decisão do usuário (nota
+            # real nº 70, revitalização de cobertura de estacionamento).
+            return "0702"
+
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO):
             return "0601"
 
@@ -1670,10 +1712,12 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).strip().upper()
 
-        if self.layout == LAYOUT_IACU_NFSE:
+        if self.layout in (LAYOUT_IACU_NFSE, LAYOUT_BROTAS_MACAUBAS):
             # "Código de Verificação:\n\nc5cae3fd79" (recorte do cabeçalho). É um
             # hash alfanumérico minúsculo — preservamos exatamente como impresso
             # (sem uppercase), pois é a chave de consulta de autenticidade.
+            # Mesmo rótulo/formato em Brotas de Macaúbas (mesma plataforma) —
+            # confirmado na nota real nº 70 ("6990d3ab9e").
             m = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*:?\s*[\n\s]*([A-Za-z0-9]{6,})', t, re.IGNORECASE)
             if m:
                 return m.group(1).strip()
@@ -1883,6 +1927,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_iacu(is_prestador)
+
+        if self.layout == LAYOUT_BROTAS_MACAUBAS:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_brotas_macaubas(is_prestador)
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             if is_intermediario:
@@ -4546,6 +4595,83 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_brotas_macaubas(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da NFS-e de Brotas de Macaúbas/BA. Mesma
+        plataforma (nfservico.com.br) e mesma estrutura de blocos/rótulos do
+        Iaçu (ver `_extrair_entidade_iacu`), mas com um endereço mais rico
+        (inclui complemento) e 2 achados de OCR específicos desta nota real
+        (nº 70, M P C ARAUJO -> SÃO PEDRO CONSTRUTORA) — por isso um extrator
+        próprio (não reaproveita o do Iaçu diretamente, que não modela
+        complemento e cujo regex de endereço quebra nesta estrutura):
+        (1) o endereço do PRESTADOR traz um complemento ("CASA") entre o
+        número e o bairro, e o próprio número sai com um "|" colado (OCR de
+        "Nº") e um sufixo de letra ("26-B") — regex de endereço tolerante a
+        ambos (também casa o endereço mais simples do tomador, sem
+        complemento);
+        (2) a razão social do TOMADOR vem colada, na mesma linha, ao nome/CREA
+        do engenheiro responsável impresso à direita ("SAO PEDRO CONSTRUTORA
+        LTDA Eng. Victor Hage Carmo") — cortamos a partir de 2+ espaços,
+        mesmo padrão já usado no Camaçari."""
+        t = self.raw_text
+        m_prest = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        m_tom = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        m_disc = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+
+        if is_prestador:
+            ini = m_prest.end() if m_prest else 0
+            fim = m_tom.start() if m_tom else len(t)
+        else:
+            ini = m_tom.end() if m_tom else 0
+            fim = m_disc.start() if m_disc else len(t)
+        bloco = t[ini:fim]
+        placeholder = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        m_raz = re.search(r'Nome\s*/?\s*Raz[ãa]o\s+Social\s*:?\s*[\n\s]*(.+)', bloco, re.IGNORECASE)
+        razao = m_raz.group(1).strip() if m_raz else placeholder
+        if not is_prestador and razao:
+            # corta o nome/CREA do engenheiro responsável colado, na mesma
+            # linha, à direita da razão social ("SAO PEDRO CONSTRUTORA LTDA
+            # Eng. Victor Hage Carmo") — ancorado no token "Eng." (só 1
+            # espaço separa os dois, então um corte por 2+ espaços não pega).
+            razao = re.sub(r'\s+Eng\.?\s.*$', '', razao, flags=re.IGNORECASE).strip()
+        razao = razao or placeholder
+
+        m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', bloco) or re.search(r'\b(\d{14})\b', bloco)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        logradouro, numero, complemento, bairro = 'Não informado', 'S/N', '', 'Não informado'
+        cep, municipio, uf = '00000000', 'Não informado', 'BA'
+        bloco_end = re.sub(r'(?<=[A-Za-zÀ-Úà-ú0-9])\s*\|\s*(?=\d)', ' ', bloco)
+        m_end = re.search(
+            r'([A-Za-zÀ-Úà-ú][A-Za-zÀ-Úà-ú0-9 .\']+?)\s+(\d+[A-Za-z]?(?:-[A-Za-z0-9]+)?),?\s*'
+            r'([^\n-]*?)\s*-\s*([^\n-]+?)\s*-\s*CEP\s*:?\s*(\d{5}-?\d{3})\s*-\s*([^\n-]+?)\s*-\s*([A-Z]{2})\b',
+            bloco_end, re.IGNORECASE)
+        if m_end:
+            logradouro = m_end.group(1).strip()
+            numero = m_end.group(2).strip()
+            complemento = m_end.group(3).strip()
+            bairro = m_end.group(4).strip()
+            cep = re.sub(r'\D', '', m_end.group(5))
+            municipio = m_end.group(6).strip()
+            uf = m_end.group(7).upper()
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=numero,
+                complemento=complemento or None,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -5482,6 +5608,55 @@ class SPPdfExtractor:
                 valor_liquido_nfse=liquido,
             )
 
+        if self.layout == LAYOUT_BROTAS_MACAUBAS:
+            # NFS-e tributada (Prefeitura de Brotas de Macaúbas/BA, mesma
+            # plataforma do Iaçu, mas grade diferente): "Base de cálculo (R$):
+            # Alíquota (%): Valor do ISS (R$): Crédito (R$):" com 4 valores na
+            # linha seguinte (SEM o campo "Valor total das deduções" que o
+            # Iaçu tem nessa mesma linha — não aparece no OCR desta nota, por
+            # isso um regex próprio em vez de reaproveitar o grid do Iaçu);
+            # depois "Valor IR (R$): Valor CSLL (R$): Outras retenções (R$):
+            # Valor líquido (R$):" com outros 4 valores; e "Valor COFINS (R$):"
+            # isolado, com 1 valor. Validado contra a nota real nº 70
+            # (10.091,13 / 5,00% / 504,56 / 0,00 / ... / 9.586,57 / 0,00).
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*=?\s*R\$?\s*([\d.,]+)', t, re.IGNORECASE)
+            val_serv = self._parse_valor(m_val.group(1)) if m_val else 0.0
+
+            NUM = r'([\d.]*,\d{2})'
+
+            def _grid(rotulos_regex: str, n: int):
+                m = re.search(rotulos_regex + r'[^\n]*\n\s*' + r'\s+'.join([NUM] * n), t, re.IGNORECASE)
+                return [self._parse_valor(g) for g in m.groups()] if m else [0.0] * n
+
+            base, aliquota_pct, iss, _credito = _grid(
+                r'Base\s+de\s+c[áa]lculo\s*\(R\$\)\s*:?\s*Al[íi]quota\s*\(%\)\s*:?\s*'
+                r'Valor\s+do\s+ISS\s*\(R\$\)\s*:?\s*Cr[ée]dito\s*\(R\$\)\s*:?', 4)
+            valor_ir, valor_csll, outras_retencoes, liquido = _grid(
+                # "Outras rentenções" (achado real: OCR insere um "n" extra em
+                # "retenções") — tolerante a esse artefato.
+                r'Valor\s+IR\s*\(R\$\)\s*:?\s*Valor\s+CSLL\s*\(R\$\)\s*:?\s*'
+                r'Outras\s+\w*ten[çc][õo]es\s*\(R\$\)\s*:?\s*Valor\s+l[íi]quido\s*\(R\$\)\s*:?', 4)
+            [valor_cofins] = _grid(r'Valor\s+COFINS\s*\(R\$\)\s*:?', 1)
+            [valor_pis] = _grid(r'Valor\s+PIS\s*\(R\$\)\s*:?', 1)
+            [valor_inss] = _grid(r'Valor\s+INSS\s*\(R\$\)\s*:?', 1)
+            [valor_deducoes] = _grid(r'Valor\s+total\s+das\s+dedu[çc][õo]es\s*\(R\$\)\s*:?', 1)
+
+            return Valores(
+                valor_servicos=val_serv or base,
+                valor_deducoes=valor_deducoes,
+                valor_pis=valor_pis,
+                valor_cofins=valor_cofins,
+                valor_inss=valor_inss,
+                valor_ir=valor_ir,
+                valor_csll=valor_csll,
+                valor_iss=iss,
+                iss_retido=False,
+                outras_retencoes=outras_retencoes,
+                base_calculo=base or val_serv,
+                aliquota=aliquota_pct / 100,
+                valor_liquido_nfse=liquido or val_serv,
+            )
+
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
             # NFS-e tributada (ISS 3%, Simples Nacional). Cada valor tem rótulo
             # próprio com o valor na linha seguinte. O "VALOR DO ISS" é
@@ -6247,8 +6422,13 @@ class SPPdfExtractor:
                 # Verificação) fica vazia na leitura de página inteira — é pequena
                 # e divide espaço com um QR Code. Um recorte dedicado em zoom alto
                 # recupera esses três campos; prependemos ao texto principal.
-                if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U', best_text, re.IGNORECASE) or re.search(r'nfservico\.com\.br', best_text, re.IGNORECASE):
-                    header_iacu = self._ocr_header_box_iacu(page)
+                # Brotas de Macaúbas/BA usa a mesma plataforma (nfservico.com.br)
+                # e a mesma caixa de cabeçalho do Iaçu, mas suas fotos chegam de
+                # cabeça para baixo — por isso passamos best_angle aqui (o Iaçu
+                # continua com angle=0 quando best_angle for 0, comportamento
+                # inalterado).
+                if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U', best_text, re.IGNORECASE) or re.search(r'nfservico\.com\.br', best_text, re.IGNORECASE) or re.search(r'BROTAS\s+DE\s+MACA.{0,2}BAS', best_text, re.IGNORECASE):
+                    header_iacu = self._ocr_header_box_iacu(page, best_angle)
                     if header_iacu.strip():
                         best_text = f"{header_iacu}\n{best_text}"
 
@@ -6474,13 +6654,18 @@ class SPPdfExtractor:
             return ""
 
     @staticmethod
-    def _ocr_header_box_iacu(page) -> str:
+    def _ocr_header_box_iacu(page, angle: int = 0) -> str:
         """Recorta e reprocessa em zoom alto (5x) o canto superior direito da
         NFS-e de Iaçu/BA (plataforma nfservico.com.br): a caixa "Número da nota"
         / "Data e hora de Emissão" / "Código de Verificação". Esses três campos
         saem vazios na leitura de página inteira (a caixa é pequena e tem um QR
         Code logo abaixo). Usa PSM 6 (bloco único). Validado contra a nota real
-        N'S ASSUNÇÃO nº 2: recupera "2", "10/07/2026 16:37:22" e "c5cae3fd79"."""
+        N'S ASSUNÇÃO nº 2: recupera "2", "10/07/2026 16:37:22" e "c5cae3fd79".
+        O parâmetro `angle` (mesma orientação já corrigida por `_ocr_page`) é
+        aditivo — as fotos originais do Iaçu já chegam retas (angle=0, sem
+        rotação, comportamento inalterado); achado real: as de Brotas de
+        Macaúbas (mesma plataforma) chegam de cabeça para baixo (angle=180),
+        e sem rotacionar o recorte cai no canto errado (caixa vazia)."""
         try:
             import pymupdf
             import pytesseract
@@ -6489,6 +6674,8 @@ class SPPdfExtractor:
 
             pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
+            if angle:
+                img = img.rotate(-angle, expand=True)
             w, h = img.size
             crop = img.crop((int(w * 0.65), int(h * 0.08), w, int(h * 0.26)))
             return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
