@@ -56,6 +56,7 @@ class IBGEResolver:
         "IACU": "2912707", "IAÇU": "2912707",
         "MATA DE SAO JOAO": "2921005", "MATA DE SÃO JOÃO": "2921005",
         "ROSARIO DA LIMEIRA": "3156452", "ROSÁRIO DA LIMEIRA": "3156452",
+        "BROTAS DE MACAUBAS": "2904506", "BROTAS DE MACAÚBAS": "2904506",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
