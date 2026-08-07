@@ -5400,14 +5400,29 @@ class SPPdfExtractor:
             # campos vazios marcados por "-" e linhas em branco entre rótulo e
             # valor. Os padrões genéricos não casam essa estrutura (chegam a pescar
             # o número da nota como ISS), então extraímos por proximidade de cada
-            # rótulo próprio, pegando o primeiro "R$ n,nn" após ele.
+            # rótulo próprio, pegando o primeiro "R$ n,nn" (ou "R$ n.nn" — ver
+            # abaixo) após ele.
+            #
+            # Algumas plataformas geradoras de DANFSe Nacional (ex.: Domínio
+            # Sistemas, nota real nº 730080, Thomson Reuters -> Cafés Finos
+            # Vitória da Conquista, Criciúma/SC) imprimem TODOS os campos
+            # monetários estruturados da grade com PONTO decimal em vez da
+            # vírgula brasileira ("R$ 372.96"), embora o texto livre da
+            # "Descrição do Serviço" da mesma nota use vírgula normalmente
+            # ("Valor: R$ 372,96"). O regex antigo exigia vírgula
+            # (`[\d.]+,\d{2}`), então nunca casava nessas notas e todo campo
+            # caía no default 0.0 ("valor zerado"). `_parse_valor_tolerante`
+            # aceita os dois formatos, tratando o ÚLTIMO separador (vírgula ou
+            # ponto) da string como o decimal.
+            m_rs = r'R\$\s*(\d[\d.,]*\d)'
+
             def _rs_apos(label, janela=200):
                 m = re.search(label, t, re.IGNORECASE)
                 if not m:
                     return 0.0
                 trecho = t[m.end(): m.end() + janela]
-                m_v = re.search(r'R\$\s*([\d.]+,\d{2})', trecho)
-                return self._parse_valor(m_v.group(1)) if m_v else 0.0
+                m_v = re.search(m_rs, trecho)
+                return self._parse_valor_tolerante(m_v.group(1)) if m_v else 0.0
 
             serv = _rs_apos(r'Valor\s+do\s+Servi[çc]o')
             liquido = _rs_apos(r'Valor\s+L[íi]quido\s+da\s+NFS')
@@ -5419,8 +5434,8 @@ class SPPdfExtractor:
             # BC/ISS/alíquota só têm valor em notas com tributação efetiva; em MEI
             # ("Optante - Microempreendedor Individual") saem em branco ("-").
             def _num_rotulo(label, janela=40):
-                m = re.search(label + r'[\s\S]{0,' + str(janela) + r'}?R\$\s*([\d.]+,\d{2})', t, re.IGNORECASE)
-                return self._parse_valor(m.group(1)) if m else 0.0
+                m = re.search(label + r'[\s\S]{0,' + str(janela) + r'}?' + m_rs, t, re.IGNORECASE)
+                return self._parse_valor_tolerante(m.group(1)) if m else 0.0
 
             base = _num_rotulo(r'BC\s+ISSQN')
             iss = _num_rotulo(r'ISSQN\s+Apurado')
@@ -6469,6 +6484,25 @@ class SPPdfExtractor:
     def _parse_valor(valor_str: str) -> float:
         try: return float(valor_str.replace('.', '').replace(',', '.'))
         except: return 0.0
+
+    @staticmethod
+    def _parse_valor_tolerante(valor_str: str) -> float:
+        """Converte um número monetário aceitando vírgula OU ponto como
+        separador decimal — algumas plataformas de DANFSe Nacional (ex.:
+        Domínio Sistemas) imprimem a grade de valores com ponto decimal
+        ("R$ 372.96") em vez da vírgula brasileira, ao contrário de
+        `_parse_valor` (que assume vírgula=decimal/ponto=milhar sempre). O
+        ÚLTIMO separador (vírgula ou ponto) presente na string é tratado como
+        o decimal; qualquer separador anterior é descartado como milhar."""
+        try:
+            pos = max(valor_str.rfind(','), valor_str.rfind('.'))
+            if pos == -1:
+                return float(valor_str)
+            inteiro = re.sub(r'[.,]', '', valor_str[:pos])
+            decimal = valor_str[pos + 1:]
+            return float(f'{inteiro}.{decimal}')
+        except (ValueError, TypeError):
+            return 0.0
 
     # Termos esperados em qualquer NFS-e/DANFE, usados para pontuar a
     # qualidade do texto reconhecido em cada tentativa de rotação.
