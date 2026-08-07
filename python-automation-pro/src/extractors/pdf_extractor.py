@@ -74,6 +74,7 @@ LAYOUT_ROSARIO_LIMEIRA = 'rosario_da_limeira_mg'  # Rosário da Limeira/MG (plat
 LAYOUT_CAMACARI_AVULSA = 'camacari_ba_avulsa'  # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA) Série "A", emitida pela própria Prefeitura, escaneada (OCR). Distinta das notas Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2): blocos "IDENTIFICAÇÃO DO PRESTADOR/TOMADOR" com rótulos "Nome / Razão", "CPF / CNPJ:", "CEP: ... Município: ... UF:", "Logradouro: ... Nº ...", "Bairro: ...". Valores CONFIÁVEIS vêm da camada DIGITAL (pdfminer): o OCR troca o 1º dígito do VALOR TRIBUTÁVEL (14.685->74.685) e deixa o VALOR LÍQUIDO em branco. Detecção casa AVULSA + CAMAÇARI (precede o bloco CPqD)
 LAYOUT_FF_LOCACAO = 'ff_locacao'  # F&F Comércio e Serviços de Telecomunicações de Segurança Eletrônica LTDA (Fatura de Locação de CFTV), escaneada. Detecção por CNPJ do emissor (13.398.812/0001-89), não pela frase "FATURA DE LOCAÇÃO" - o layout de 2 colunas do OCR quebra essa frase (intercalada com o nome da empresa). Campo "VALOR TOTAL DA FATURA" da nota-fonte traz um placeholder de template não substituído ("#venda_valor_total#") - valor real vem da tabela de itens (coluna "Valor Liquido")
 LAYOUT_BROTAS_MACAUBAS = 'brotas_macaubas_ba'  # Prefeitura de Brotas de Macaúbas/BA (CNPJ 13.797.600/0001-74, plataforma nfservico.com.br - mesma da IAÇU) - NFS-e tributada, escaneada (JPG/foto, tipicamente de cabeça para baixo). Reaproveita o parser de entidade do Iaçu (mesmos rótulos/estrutura), com 2 ajustes tolerantes: "|" (OCR de "Nº") colado no endereço do prestador, e nome/CREA do engenheiro colado na razão social do tomador. Caixa de cabeçalho via o MESMO recorte dedicado do Iaçu (_ocr_header_box_iacu, agora com suporte a ângulo de rotação); número/valores/discriminação com âncoras próprias (grade de valores sem o campo "Valor total das deduções" que o Iaçu tem). Código de serviço fixo "0702" (mapeado do CNAE 4391-6/00 impresso na nota - a nota traz "Item da lista de serviços: 0", que não é um código LC116 válido; decisão do usuário)
+LAYOUT_GUARULHOS = 'guarulhos_sp'  # Prefeitura Municipal de Guarulhos/SP (plataforma Ginfes, guarulhos.ginfes.com.br) - NFS-e tributada, escaneada (foto/CamScanner). Grade densa de células cinza (baixo contraste) faz a leitura padrão perder o Código de Verificação, o Local da Prestação e toda a grade "Cálculo do ISSQN devido no Município" - recuperados via `_ocr_recut_guarulhos` (3 recortes em zoom alto + binarização, mesmo racional do Camaçari). Serviço de construção civil (item 7.02) prestado em OUTRO município (campos "Local da Prestação" + "Natureza Operação: Tributação fora do município"/"ISS a reter: Não" na própria nota) - decisão do usuário: a incidência do ISSQN vai para o município da obra (Cuiabá/MT), não para o do prestador (Guarulhos), via `Nfse.municipio_incidencia_override`
 
 
 # Etiquetas para Identificação de Entidades
@@ -299,6 +300,12 @@ class SPPdfExtractor:
         # "MACAÚBAS" pode sair "MACA?BAS"/"MACAUBAS" no OCR (o "Ú" some).
         if re.search(r'PREFEITURA\s+DE\s+BROTAS\s+DE\s+MACA.{0,2}BAS', t, re.IGNORECASE) or re.search(r'13\.?797\.?600.{0,3}0001.?74', t):
             return LAYOUT_BROTAS_MACAUBAS
+        # Guarulhos/SP (plataforma Ginfes) — específico do município (mesmo
+        # racional das demais notas escaneadas acima: não casar por marca
+        # genérica da plataforma para evitar colisão com outros municípios
+        # do mesmo SaaS ainda não testados).
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+GUARULHOS', t, re.IGNORECASE):
+            return LAYOUT_GUARULHOS
         # ARMAC (locadora específica, fatura escaneada) — precede o genérico de
         # locação por ter estrutura própria (blocos "Dados do Locador/Tomador",
         # tabela multi-item) que exige extração dedicada + re-OCR em zoom alto.
@@ -424,6 +431,8 @@ class SPPdfExtractor:
             return LAYOUT_IACU_NFSE
         if re.search(r'PREFEITURA\s+DE\s+BROTAS\s+DE\s+MACA.{0,2}BAS', t, re.IGNORECASE) or re.search(r'13\.?797\.?600.{0,3}0001.?74', t):
             return LAYOUT_BROTAS_MACAUBAS
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+GUARULHOS', t, re.IGNORECASE):
+            return LAYOUT_GUARULHOS
         if re.search(r'00\.?242\.?184', t) or (re.search(r'\bARMAC\b', t, re.IGNORECASE) and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
             return LAYOUT_ARMAC_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
@@ -489,6 +498,13 @@ class SPPdfExtractor:
         elif layout == LAYOUT_CAMACARI_AVULSA:
             # Não há campo de competência próprio; usamos o mês da data de
             # prestação (data_emissao já resolvida a partir de "DATA DE PRESTAÇÃO").
+            result = datetime(data_emissao.year, data_emissao.month, 1)
+        elif layout == LAYOUT_GUARULHOS:
+            # A "Competência" impressa na nota real (18/6/2026) cai no mesmo
+            # mês da Data de Emissão (18/06/2026) — e o campo sai ilegível
+            # até nos recortes dedicados (some entre outras colunas da
+            # caixa de cabeçalho). Usamos o mês da emissão em vez de arcar
+            # com o custo/risco de um recorte extra para um valor redundante.
             result = datetime(data_emissao.year, data_emissao.month, 1)
         elif layout == LAYOUT_TELECOM_COMUNICACAO:
             # Campo "REFERÊNCIA (ANO/MÊS): 2026/06" ou "REFERÊNCIA: 2026/06"
@@ -599,6 +615,14 @@ class SPPdfExtractor:
             # plataforma nfservico.com.br) — confirmado na nota real nº 70
             # (16/06/2026 17:43:22).
             m = re.search(r'Data\s+e\s+hora\s+de\s+Emiss[aã]o\s*:?\s*[\n\s]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
+        if self.layout == LAYOUT_GUARULHOS:
+            # "Data e Hora da Emissão: 18/06/2026 17:17:00" — linha canônica
+            # prependida por `_ocr_recut_guarulhos`.
+            m = re.search(r'Data\s+e\s+Hora\s+da\s+Emiss[ãa]o\s*:\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
@@ -843,6 +867,13 @@ class SPPdfExtractor:
             # do Iaçu exige só espaço/quebra de linha aí e não casa. Tolerante
             # a qualquer caractere não-dígito entre o rótulo e o número.
             m = re.search(r'N[úu]mero\s+da\s+nota\s*:?[^\d\n]*\n?[^\d\n]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_GUARULHOS:
+            # "Número da nota: 3" — linha canônica prependida por
+            # `_ocr_recut_guarulhos` (a leitura de página inteira perde este
+            # campo, colado ao QR Code).
+            m = re.search(r'N[úu]mero\s+da\s+nota\s*:\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
@@ -1274,6 +1305,21 @@ class SPPdfExtractor:
                 disc = re.sub(r'\s+', ' ', m.group(1)).strip()
                 if disc: return disc
 
+        if self.layout == LAYOUT_GUARULHOS:
+            # Bloco "REF: ... / OBRA: ... / [E]ND: ... / [C]NO DA OBRA: ..."
+            # até o código de serviço ("7.02 / 439910100 - ..."). O OCR
+            # engole a 1ª letra de "END"/"CNO" (bordas de célula) e cola a
+            # assinatura do engenheiro ("Thiago Guedes", "Eng. Civil",
+            # "CREA-BA...") entre as linhas — removida por não ser parte da
+            # descrição do serviço.
+            m = re.search(r'(REF\s*:.*?)(?=\d{1,2}\.\d{2}\s*/\s*\d+\s*-)', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                linhas = [ln.strip() for ln in m.group(1).split('\n') if ln.strip()]
+                linhas = [ln for ln in linhas if not re.search(r'Thiago|Eng\.|CREA-?BA', ln, re.IGNORECASE)]
+                linhas = [ln for ln in linhas if not re.match(r'^[a-zà-ú\s]{1,15}$', ln)]
+                disc = re.sub(r'\s+', ' ', ' '.join(linhas)).strip()
+                if disc: return disc
+
         if self.layout == LAYOUT_SALVADOR:
             # O rótulo "DISCRIMINAÇÃO DOS SERVIÇOS" sai truncado/corrompido no
             # OCR (ex.: "DISCRIMINA! IÇoS"), então ancoramos só no prefixo
@@ -1590,6 +1636,14 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).zfill(2) + m.group(2)
 
+        if self.layout == LAYOUT_GUARULHOS:
+            # "7.02 / 439910100 - Administração de obras" — item LC116/
+            # CNAE/descrição na mesma linha (grade "Código do Serviço /
+            # Atividade"). O item vem explícito, sem ambiguidade de mapeamento.
+            m = re.search(r'(\d{1,2})\.(\d{2})\s*/\s*\d+\s*-', t)
+            if m:
+                return m.group(1).zfill(2) + m.group(2)
+
         if self.layout == LAYOUT_SALVADOR:
             # "Item da Lista de Serviços:\n01714 - Advocacia." — a nota traz um
             # zero de preenchimento à esquerda do código LC 116 (17.14); removemos
@@ -1721,6 +1775,13 @@ class SPPdfExtractor:
             m = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*:?\s*[\n\s]*([A-Za-z0-9]{6,})', t, re.IGNORECASE)
             if m:
                 return m.group(1).strip()
+
+        if self.layout == LAYOUT_GUARULHOS:
+            # "Código de Verificação: 4J6UQZOW7" — linha canônica prependida
+            # por `_ocr_recut_guarulhos`.
+            m = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*:\s*([A-Z0-9]{6,})', t, re.IGNORECASE)
+            if m:
+                return m.group(1).strip().upper()
 
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
@@ -1932,6 +1993,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_brotas_macaubas(is_prestador)
+
+        if self.layout == LAYOUT_GUARULHOS:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_guarulhos(is_prestador)
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             if is_intermediario:
@@ -4672,6 +4738,85 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_guarulhos(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da NFS-e de Guarulhos/SP (Ginfes, foto).
+
+        A grade tem cabeçalhos de seção em cinza escuro ("Dados do Prestador
+        de Serviços"/"Dados do Tomador de Serviços") que o OCR não lê (baixo
+        contraste); só os rótulos de campo (linhas claras: "Razão Social/
+        Nome", "CNPJ/CPF", "Município", "Endereço e Cep") sobrevivem, ainda
+        que corrompidos. Delimitamos os dois blocos pela 2ª ocorrência do
+        rótulo "Razão Social/Nome" (mais estável que os cabeçalhos de seção,
+        ilegíveis, e mais preciso que delimitar pela 2ª ocorrência de CNPJ —
+        a razão social do TOMADOR vem impressa ANTES do CNPJ dele, então um
+        corte no CNPJ deixaria a razão do tomador dentro do bloco do
+        prestador)."""
+        t = self.raw_text
+        razoes = list(re.finditer(r'Ra[zs][ãa]o', t, re.IGNORECASE))
+        m_disc = re.search(r'REF\s*:', t, re.IGNORECASE)
+        placeholder = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        if len(razoes) < 2:
+            return Entidade(
+                cnpj_cpf='00000000000000', razao_social=placeholder,
+                endereco=Endereco(logradouro='Não informado', numero='S/N', bairro='Não informado',
+                                   codigo_municipio='3518800', municipio='Não informado', uf='SP', cep='00000000'),
+            )
+
+        if is_prestador:
+            ini, fim = razoes[0].start(), razoes[1].start()
+        else:
+            ini, fim = razoes[1].start(), (m_disc.start() if m_disc else len(t))
+        bloco = t[ini:fim]
+
+        primeira_linha = bloco.split('\n', 1)[0]
+        candidatos_razao = re.findall(r'[A-ZÀ-Ú0-9][A-ZÀ-Ú0-9 .\-]{3,}', primeira_linha)
+        razao = max(candidatos_razao, key=len).strip(' .-') if candidatos_razao else placeholder
+        razao = razao or placeholder
+
+        m_cnpj = re.search(r'(\d{2}[.\s]?\d{3}[.\s:]?\d{3}[/.]?\d{4}-?\d{2})', bloco)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        m_im = re.search(r'Mun\w{0,6}\s*\|?\s*(\d{3,8})\s*\|', bloco, re.IGNORECASE)
+        inscricao_municipal = m_im.group(1) if m_im else None
+
+        municipio, uf = 'Não informado', 'SP'
+        for linha in bloco.split('\n'):
+            if re.search(r'CEP', linha, re.IGNORECASE):
+                continue
+            m_mun = re.search(r'\b([A-ZÀ-Ú][A-ZÀ-Úa-zà-ú]+(?:\s+[A-ZÀ-Ú][A-ZÀ-Úa-zà-ú]+){0,4})\s*-\s*([A-Z]{2})\b', linha)
+            if m_mun:
+                municipio = re.sub(r'^Munic[íi]p[íi]?[oc]\s+', '', m_mun.group(1).strip(), flags=re.IGNORECASE)
+                uf = m_mun.group(2).upper()
+
+        logradouro, numero, bairro, cep = 'Não informado', 'S/N', 'Não informado', '00000000'
+        m_end = re.search(
+            r'([A-ZÀ-Ú][A-Za-zÀ-Úà-ú0-9 .\']+?)\s*[,+]?\s*(\d+[A-Za-z]?)\s*-\s*'
+            r'([^\n]+?)\s*CEP\s*:?\s*(\d{5}-?\d{3})',
+            bloco, re.IGNORECASE)
+        if m_end:
+            logradouro = m_end.group(1).strip()
+            numero = m_end.group(2).strip()
+            bairro = m_end.group(3).strip()
+            cep = re.sub(r'\D', '', m_end.group(4))
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            inscricao_municipal=inscricao_municipal,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -5657,6 +5802,38 @@ class SPPdfExtractor:
                 valor_liquido_nfse=liquido or val_serv,
             )
 
+        if self.layout == LAYOUT_GUARULHOS:
+            # Grade "Cálculo do ISSQN devido no Município" (célula cinza
+            # densa, ilegível na leitura padrão) — valores já resolvidos e
+            # entregues como linhas canônicas por `_ocr_recut_guarulhos`.
+            # Validado contra a nota real nº 3: Simples Nacional, ISS
+            # tributado FORA do município (ISS a reter: Não, Valor ISS
+            # 0,00) — a incidência real vai para outro município via
+            # `_extrair_municipio_incidencia_override` (Nfse-level, não
+            # afeta Valores).
+            def _val_apos_guarulhos(rotulo: str) -> float:
+                m = re.search(rotulo + r'\s*:\s*([\d.]*,\d{2})', t, re.IGNORECASE)
+                return self._parse_valor(m.group(1)) if m else 0.0
+
+            val_serv = _val_apos_guarulhos(r'Valor\s+dos\s+Servi[çc]os')
+            base = _val_apos_guarulhos(r'Base\s+de\s+C[áa]lculo')
+            aliquota = _val_apos_guarulhos(r'Al[íi]quota') / 100
+            iss = _val_apos_guarulhos(r'Valor\s+do\s+ISS')
+            liquido = _val_apos_guarulhos(r'Valor\s+L[íi]quido')
+
+            m_reter = re.search(r'ISS\s+a\s+reter\s*:\s*(Sim|N[ãa]o)', t, re.IGNORECASE)
+            iss_retido = bool(m_reter and m_reter.group(1).lower() == 'sim')
+
+            return Valores(
+                valor_servicos=val_serv,
+                base_calculo=base or val_serv,
+                aliquota=aliquota,
+                valor_iss=iss,
+                iss_retido=iss_retido,
+                valor_iss_retido=iss if iss_retido else 0.0,
+                valor_liquido_nfse=liquido or val_serv,
+            )
+
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
             # NFS-e tributada (ISS 3%, Simples Nacional). Cada valor tem rótulo
             # próprio com o valor na linha seguinte. O "VALOR DO ISS" é
@@ -6432,6 +6609,25 @@ class SPPdfExtractor:
                     if header_iacu.strip():
                         best_text = f"{header_iacu}\n{best_text}"
 
+                # Guarulhos/SP (plataforma Ginfes, foto/CamScanner): a leitura
+                # padrão (zoom 3x, PSM automático) só recupera ~850 caracteres
+                # desta nota (perde quase toda a grade). Zoom 4x + PSM 6 (bloco
+                # único) recupera prestador/tomador/discriminação/serviço de
+                # forma legível (validado contra a nota real nº 3) —
+                # substituímos a leitura da página inteira, e SOMAMOS o
+                # recorte dedicado (cabeçalho/natureza/grade de valores), que
+                # a leitura em bloco único ainda não recupera de forma
+                # confiável.
+                if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+GUARULHOS', best_text, re.IGNORECASE):
+                    pix_g = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0))
+                    img_g = Image.open(io.BytesIO(pix_g.tobytes("png")))
+                    texto_guarulhos = pytesseract.image_to_string(img_g, lang='por', config='--psm 6')
+                    if texto_guarulhos.strip():
+                        best_text = texto_guarulhos
+                    recut_guarulhos = self._ocr_recut_guarulhos(page)
+                    if recut_guarulhos.strip():
+                        best_text = f"{recut_guarulhos}\n{best_text}"
+
                 # São Paulo/SP escaneado (JPG/foto -> OCR): a caixa "Número da
                 # Nota" do canto superior direito sai ilegível na página inteira
                 # (o número "00331020" chega a virar "5"). Recorte dedicado na
@@ -6679,6 +6875,92 @@ class SPPdfExtractor:
             w, h = img.size
             crop = img.crop((int(w * 0.65), int(h * 0.08), w, int(h * 0.26)))
             return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_guarulhos(page) -> str:
+        """Recorte dedicado para a NFS-e de Guarulhos/SP (plataforma Ginfes,
+        foto/CamScanner). A leitura padrão (mesmo em zoom 4x/PSM 6, ver
+        `_ocr_page`) perde o Código de Verificação, o Local da Prestação e
+        toda a grade "Cálculo do ISSQN devido no Município" (células cinza
+        densas, comuns a este template). Três recortes em zoom alto —
+        cabeçalho (Número/Data/Competência/Código/Local), o marcador
+        "ISS a reter" e a coluna numérica da grade de valores — recuperam
+        esses campos; a extração já é feita AQUI (não deixada para os
+        métodos de parsing) porque cada recorte precisa de um `psm`/limiar
+        de binarização próprio, e o resultado é devolvido como um bloco de
+        texto canônico e limpo, fácil de casar por regex simples. Validado
+        contra a nota real nº 3 (KICHLER -> SÃO PEDRO CONSTRUTORA, obra em
+        Cuiabá/MT): recupera "4J6UQZOW7", "CUIABA - MT" e a sequência
+        4.511,41 / 4.511,41 / 4,00 / 0,00 / 4.511,41."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            linhas = []
+
+            # Número da NFS-e (canto superior, ao lado do QR Code).
+            pix_num = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=pymupdf.Rect(0, 0, 595, 90))
+            img_num = Image.open(io.BytesIO(pix_num.tobytes("png"))).convert('L')
+            txt_num = pytesseract.image_to_string(
+                img_num.point(lambda p: 0 if p < 100 else 255), lang='por', config='--psm 6')
+            m_num = re.search(r'NFS-?e\s*\n?\s*\|?\s*(\d+)', txt_num, re.IGNORECASE)
+            if m_num:
+                linhas.append(f"Número da nota: {m_num.group(1)}")
+
+            # Data e Hora da Emissão / Código de Verificação / Local da
+            # Prestação (2ª linha da caixa de cabeçalho).
+            pix_hdr = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=pymupdf.Rect(0, 82, 595, 140))
+            img_hdr = Image.open(io.BytesIO(pix_hdr.tobytes("png"))).convert('L')
+            txt_hdr = pytesseract.image_to_string(
+                img_hdr.point(lambda p: 0 if p < 120 else 255), lang='por', config='--psm 6')
+            m_dt = re.search(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', txt_hdr)
+            if m_dt:
+                linhas.append(f"Data e Hora da Emissão: {m_dt.group(1)} {m_dt.group(2)}")
+            m_cod = re.search(r'C[óo0]di?g?o?\s+de\s+Verifica[çc][ãa]o', txt_hdr, re.IGNORECASE)
+            if m_cod:
+                janela = txt_hdr[m_cod.end():m_cod.end() + 80]
+                m_val = re.search(r'\b([A-Z0-9]{7,10})\b', janela)
+                if m_val:
+                    linhas.append(f"Código de Verificação: {m_val.group(1)}")
+            m_loc = re.search(r'Loca[il]\s+da\s+Pr[ée]sta[çc][ãa]o', txt_hdr, re.IGNORECASE)
+            if m_loc:
+                janela = txt_hdr[m_loc.end():m_loc.end() + 40]
+                m_val = re.search(r'([A-Za-zÀ-Úà-ú]+)\s*-\s*([A-Z]{2})\b', janela)
+                if m_val:
+                    linhas.append(f"Local da Prestação: {m_val.group(1).upper()} - {m_val.group(2).upper()}")
+
+            # Natureza da Operação ("Tributação fora do município") e
+            # marcador "ISS a reter" (Sim/Não).
+            pix_nat = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0), clip=pymupdf.Rect(0, 480, 595, 665))
+            txt_nat = pytesseract.image_to_string(
+                Image.open(io.BytesIO(pix_nat.tobytes("png"))), lang='por', config='--psm 3')
+            if re.search(r'Tributa[çc][ãa]o\s+fora\s+do\s+munic[íi]pio', txt_nat, re.IGNORECASE):
+                linhas.append("Natureza Operação: Tributação fora do município")
+            m_reter = re.search(r'\(\s*(X|x)?\s*\)\s*Sim\s*\(\s*(X|x)?\s*\)\s*N[ãa]o', txt_nat, re.IGNORECASE)
+            if m_reter:
+                linhas.append(f"ISS a reter: {'Sim' if m_reter.group(1) else 'Não'}")
+
+            # Coluna numérica da grade "Cálculo do ISSQN devido no
+            # Município": Valor dos Serviços / Base de Cálculo / Alíquota /
+            # Valor do ISS / Valor Líquido, nessa ordem.
+            pix_val = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=pymupdf.Rect(470, 535, 595, 675))
+            img_val = Image.open(io.BytesIO(pix_val.tobytes("png"))).convert('L')
+            txt_val = pytesseract.image_to_string(
+                img_val.point(lambda p: 0 if p < 110 else 255),
+                config='--psm 6 -c tessedit_char_whitelist=0123456789,.')
+            numeros = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', txt_val)
+            if len(numeros) >= 5:
+                linhas.append(f"Valor dos Serviços: {numeros[0]}")
+                linhas.append(f"Base de Cálculo: {numeros[1]}")
+                linhas.append(f"Alíquota: {numeros[2]}")
+                linhas.append(f"Valor do ISS: {numeros[3]}")
+                linhas.append(f"Valor Líquido: {numeros[4]}")
+
+            return "\n".join(linhas)
         except Exception:
             return ""
 
@@ -7008,6 +7290,8 @@ class SPPdfExtractor:
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
 
+        municipio_incidencia_override = self._extrair_municipio_incidencia_override()
+
         return Nfse(
             numero=numero,
             codigo_verificacao=codigo_verificacao,
@@ -7022,8 +7306,28 @@ class SPPdfExtractor:
             optante_simples_nacional=optante_simples,
             regime_especial_tributacao=regime_especial,
             incentivador_cultural=incentivador,
-            avisos=avisos
+            avisos=avisos,
+            municipio_incidencia_override=municipio_incidencia_override,
         )
+
+    def _extrair_municipio_incidencia_override(self) -> Optional[str]:
+        """Quando a própria nota indica que o ISSQN é devido em OUTRO
+        município (serviço de construção civil prestado fora da sede do
+        prestador — LC 116/2003 art. 3º III), resolve o código IBGE desse
+        município para sobrepor a incidência padrão (que seria a do
+        prestador). Guarulhos/SP: campos "Natureza Operação: Tributação
+        fora do município" + "Local da Prestação" — decisão do usuário
+        (nota real nº 3, obra em Cuiabá/MT)."""
+        if self.layout != LAYOUT_GUARULHOS:
+            return None
+        t = self.raw_text
+        if not re.search(r'Tributa[çc][ãa]o\s+fora\s+do\s+munic[íi]pio', t, re.IGNORECASE):
+            return None
+        m = re.search(r'Local\s+da\s+Presta[çc][ãa]o\s*:\s*([A-Za-zÀ-Úà-ú]+)\s*-\s*([A-Z]{2})\b', t, re.IGNORECASE)
+        if not m:
+            return None
+        municipio, uf = m.group(1).strip(), m.group(2).upper()
+        return _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
 
     def parse_multiple(self) -> List[Nfse]:
         """Extrai múltiplas notas do mesmo PDF, fatiando blocos de texto por heurística de início de nota."""
