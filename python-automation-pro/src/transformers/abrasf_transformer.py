@@ -176,9 +176,10 @@ class Abrasf201Transformer:
         ET.SubElement(servico, 'CodigoCnae').text = "0000000"
         
         ET.SubElement(servico, 'Discriminacao').text = nfse.discriminacao
-        ET.SubElement(servico, 'CodigoMunicipio').text = cod_mun_prestador
+        cod_mun_incidencia = nfse.municipio_incidencia_override or cod_mun_prestador
+        ET.SubElement(servico, 'CodigoMunicipio').text = cod_mun_incidencia
         ET.SubElement(servico, 'ExigibilidadeISS').text = "1"
-        ET.SubElement(servico, 'MunicipioIncidencia').text = cod_mun_prestador
+        ET.SubElement(servico, 'MunicipioIncidencia').text = cod_mun_incidencia
         
         prestador_decl = ET.SubElement(inf_decl, 'Prestador')
         cpf_cnpj_prestador_decl = ET.SubElement(prestador_decl, 'CpfCnpj')

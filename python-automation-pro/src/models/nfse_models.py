@@ -55,3 +55,9 @@ class Nfse(BaseModel):
     status: str = "Normal"
     pagina_origem: Optional[int] = None
     avisos: List[str] = Field(default_factory=list)
+    # Sobrepõe o município padrão de incidência do ISSQN (município do
+    # prestador) quando a própria nota indica que o serviço foi tributado
+    # em OUTRO município (ex.: construção civil executada fora da sede do
+    # prestador, LC 116/2003 art. 3º III). None em todos os layouts que não
+    # setam isso explicitamente.
+    municipio_incidencia_override: Optional[str] = None
