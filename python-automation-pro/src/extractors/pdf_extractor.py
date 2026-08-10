@@ -2975,12 +2975,28 @@ class SPPdfExtractor:
             r'|\d{3}\.\d{3}\.\d{3}[ \t]*-[ \t]*\d{2})',
             bloco
         )
+        # Em grades DANFSe Nacional escaneadas, a coluna "CNPJ/CPF/NIF" é
+        # comum a todas as entidades e o OCR pode ler as linhas fora de
+        # ordem, colando o CNPJ do PRESTADOR (já extraído antes, nesta mesma
+        # chamada de `parse()`) dentro do bloco do TOMADOR/INTERMEDIÁRIO —
+        # achado real: DANFSe Nacional Várzea Grande/MT, nota 175. Descarta
+        # esse candidato repetido a favor de outro CNPJ válido do MESMO
+        # bloco; só aceita o repetido como último recurso, se não houver
+        # nenhum outro.
+        cnpj_prestador_ja_extraido = None if is_prestador else getattr(self, '_cnpj_prestador_extraido', None)
+        cnpj_fallback_repetido = None
         for m in matches:
             pure = re.sub(r'\D', '', m)
-            if self._validate_cnpj_cpf(pure):
-                cnpj = pure
-                break
-        
+            if not self._validate_cnpj_cpf(pure):
+                continue
+            if cnpj_prestador_ja_extraido and pure == cnpj_prestador_ja_extraido:
+                cnpj_fallback_repetido = pure
+                continue
+            cnpj = pure
+            break
+        if not cnpj and cnpj_fallback_repetido:
+            cnpj = cnpj_fallback_repetido
+
         if not cnpj:
             all_cnpjs = self._scavenge_all_cnpjs()
             # No bloco da entidade, tentamos ver se algum desses CNPJs aparece
@@ -7244,6 +7260,10 @@ class SPPdfExtractor:
         competencia = self._extrair_competencia(data_emissao)
 
         prestador = self._extrair_entidade("Prestador")
+        # Guarda o CNPJ do prestador já extraído para o tomador/intermediário
+        # poderem descartar um match idêntico (grade OCR intercalada vaza o
+        # CNPJ do prestador pro bloco de outra entidade — ver `_extrair_entidade`).
+        self._cnpj_prestador_extraido = prestador.cnpj_cpf if prestador else None
         tomador   = self._extrair_entidade("Tomador")
         intermediario = self._extrair_entidade("Intermediario")
 
@@ -7518,13 +7538,34 @@ class SPPdfExtractor:
             # 1. Quebra por divisores visuais (linhas horizontais de OCR)
             parts = re.split(r'(?=\n_{20,}|\n={20,}|\n-{20,})', page_text)
             
-            # 2. Quebra por cabeçalhos conhecidos se aparecerem colados no texto
-            # Usamos lookahead para não consumir o cabeçalho no split
-            headers_regex = r'(?=\n\s*\bDANFSe\b)'
-            
+            # 2. Quebra por cabeçalhos conhecidos se aparecerem colados no texto.
+            # Toda DANFSe Nacional imprime o PRÓPRIO título "DANFSe v1.0" logo
+            # após o rótulo "Chave de Acesso da NFS-e", nos primeiros ~70
+            # caracteres da página — mesmo quando há só UMA nota ali. Dividir
+            # nessa 1ª ocorrência fatiava esse preâmbulo de boilerplate (sem
+            # CNPJ/valor nenhum) como uma nota-fantasma própria (numero
+            # "00000000", prestador/tomador = fragmento garbage), uma por
+            # página DANFSe escaneada (achado real 2026-08-07, PDF "análise
+            # de notas SP-iss retido", págs. 3 e 4). Uma 2ª nota genuinamente
+            # colada na mesma página só teria seu título "DANFSe v1.0" bem
+            # depois de todo o conteúdo (milhares de chars) da 1ª — por isso
+            # só tratamos como início de nota nova as ocorrências a partir de
+            # `DANFSE_HEADER_MIN_OFFSET`, preservando o caso de 2 notas
+            # coladas (o que este split foi feito pra resolver) e eliminando
+            # a fantasma da nota única por página.
+            DANFSE_HEADER_MIN_OFFSET = 200
+
             final_parts = []
             for p in parts:
-                sub_parts = re.split(headers_regex, p, flags=re.I)
+                split_positions = [
+                    m.start() for m in re.finditer(r'\n\s*\bDANFSe\b', p, flags=re.I)
+                    if m.start() >= DANFSE_HEADER_MIN_OFFSET
+                ]
+                if split_positions:
+                    bounds = [0] + split_positions + [len(p)]
+                    sub_parts = [p[bounds[i]:bounds[i + 1]] for i in range(len(bounds) - 1)]
+                else:
+                    sub_parts = [p]
                 final_parts.extend([(sp, page_idx) for sp in sub_parts if len(sp.strip()) > 50])
             
             granular_blocks.extend(final_parts)
