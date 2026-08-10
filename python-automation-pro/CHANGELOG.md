@@ -11,7 +11,30 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
-## [Não lançado]
+## [1.3.0] - 2026-08-10
+
+### Adicionado
+
+- Novo layout **Monte Santo/BA** — município nunca antes suportado. PDF
+  digital construído sobre o padrão nacional da NFS-e, mas com template
+  próprio; os rótulos das entidades e os valores da nota vêm em blocos
+  separados do texto, e os valores só existem na 2ª página da nota (sem
+  cabeçalho/número/CNPJ próprios), exigindo detecção e tratamento
+  dedicados de continuação para não serem descartados como lixo.
+
+### Corrigido
+
+- Localiza (fatura de locação): nota de uma filial cujo próprio endereço
+  menciona "FEIRA DE SANTANA" caía no layout genérico dessa cidade em vez do
+  layout Localiza (colisão de detecção); uma página de continuação (resumo
+  de carros) virava nota-fantasma por citar "Localiza Rent a Car S.A." com
+  ponto em vez de barra; município do prestador/tomador caía no fallback da
+  capital da UF mesmo já cadastrado por nome (faltava `city_hint` em 2
+  chamadas ao resolver de IBGE); código do serviço saía como o genérico
+  "03115" em vez de "0601" (locação de bens móveis).
+
+42 layouts suportados (41 específicos + genérico de fallback). Suíte: 196
+testes passando.
 
 ## [1.2.0] - 2026-08-10
 
@@ -100,7 +123,8 @@ testes passando.
 - Primeira versão estável do conversor de NFS-e/NF-e em PDF para XML
   ABRASF 2.01.
 
-[Não lançado]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.2.0...HEAD
+[Não lançado]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.0.1...v1.1.0

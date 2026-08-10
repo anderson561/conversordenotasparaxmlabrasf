@@ -266,5 +266,129 @@ def test_extract_localiza_variante_digital_sem_quebras(monkeypatch):
             os.remove(dummy_path)
 
 
+# Texto REAL do pdfminer (nota ACFSA-237512, filial Agência Centro Feira de
+# Santana) — DIGITAL, 4 páginas (fatura + boleto/Pix + contrato de aluguel +
+# resumo de carros utilizados), unidas por "\x0c". Travas de regressão desta
+# nota:
+#  - o endereço da FILIAL emissora ("R MARIA QUITÉRIA, 1197 - FEIRA DE
+#    SANTANA - BA") faz o município do PRESTADOR colidir com o check solto e
+#    genérico `FEIRA DE SANTANA` do LAYOUT_FEIRA, que rodava ANTES do check
+#    (mais específico) do Localiza na cadeia de detecção — a nota inteira
+#    caía no layout errado. O check do Localiza precisa vir antes;
+#  - a pág. 4 (resumo de carros) reintroduz "Localiza Rent a Car S.A." (com
+#    PONTO, não a barra "S/A" das págs. 1-2) — a exclusão de nota fantasma em
+#    `is_new_invoice` que só reconhecia a grafia com barra deixava passar
+#    essa página como nota nova;
+#  - o município do prestador ("FEIRA DE SANTANA") e do tomador ("SALVADOR")
+#    estão cadastrados em KNOWN_CITIES por nome, mas só são resolvidos por
+#    nome quando `city_hint` é passado explicitamente — sem isso, cai
+#    silenciosamente no código da capital padrão da UF;
+#  - código do serviço (locação de bens móveis) precisa ser "0601", não o
+#    "03115" genérico de fallback.
+MOCK_DIGITAL_ACFSA = (
+    "LOCALIZA RENT A CAR S/A AG CENTRO FEIRA DE SANTANA R MARIA QUITÉRIA, 1197 - BRASILIA"
+    "44088-000 - FEIRA DE SANTANA - BA CNPJ - 16.670.085/0893-85 ASSISTÊNCIA A CLIENTES "
+    "TEL 0800 979 2020 assistenciaaclientes@localiza.com   FATURA / DUPLICATANº: ACFSA - "
+    "237512CLIENTE: TEMIS PROJETOS DE MEIO AMBIENTE E SUSTENTABILIDADELTDA ENDEREÇO: RUA "
+    "TERRITORIO DO AMAPA, 146 CS 2 - PITUBA CEP/CID/UF: 41830-540 - SALVADOR - BA CNPJ:  "
+    "07.345.543/0001-90 CÓDIGO: 02640209 INSC. ESTADUAL:  069725483  DATA DE EMISSÃO: "
+    "01/06/2026  DESCRIÇÃO VALOR ALUGUEL CONFORME CONTRATO     FSAF116902  R$ 848,10 VALOR "
+    "DO SEGURO R$ 53,85           VENCIMENTOCONDIÇÕESDE PAGAMENTOVALOR TOTAL16/06/2026 A "
+    "PRAZO R$ 901,95 Não contribuinte de ISS s/locação cfe. LC n. 116/03        Sacador: "
+    "Aceite:  "
+    "\x0c"
+    "16/06/202616/06/20262938 / 57004-72938 / 57004-7109061074492109061074492R$ "
+    "901,95R$ 901,95R$ 0,00R$ 0,00R$ 901,95R$ 901,95Valor da faturaValor da faturaR$ "
+    "901,95Data de VencimentoData de Vencimento16/06/2026DescriçãoDescriçãoFatura "
+    "237512BeneficiárioBeneficiárioLOCALIZA RENT A CAR S/AAv. Bernardo de Vasconcelos, "
+    "377 -Cachoeirinha - BELO HORIZONTE/MGCNPJ: 16.670.085/0001-55 Agência / Código do "
+    "beneficiárioAgência / Código do beneficiário2938 / 57004-7 Olá, Olá, TEMIS PROJETOS "
+    "DE MEIO AMBIENTE E SUSTENTABILIDADE LTDATEMIS PROJETOS DE MEIO AMBIENTE E "
+    "SUSTENTABILIDADE LTDA  !!"
+    "\x0c"
+    "Contrato de Aluguel de Carros/Proposta de SeguroN° FSAF116902FechadoACFSA-237512"
+    "Empresa:02640209TEMIS PROJETOS DE MEIOAMBIENTE E SUSTENTABILUsuário:17337981MARIANA "
+    "SANTOS DE JESUSVeículo:TEL1G59      Onix Plus LT 1.0 Custo Pré-fixado de Limite de "
+    "Danos: Grupo Reservado: CS - Economico C/Ar Sedan Grupo Cobrado: CS - Economico C/Ar "
+    "Sedan   TOTAL GERAL 901,95  FATURADO PARA EMPRESA 901,95  SALDO DEVIDO 901,95"
+    "\x0c"
+    "17337981 - MARIANA SANTOS DE JESUSUsuárioRESUMO DE CARROS UTILIZADOS DO CONTRATONo. "
+    "FSAF116902R. Maria Quitéria, 1197 - Brasilia44088-000 - Feira de Santana - BACNPJ: "
+    "16670085089385Telefone 08009792020Assistência a Clientes: 0800 979 2020Localiza Rent "
+    "a Car S.A.AG CENTRO FEIRA DE SANTANALocatárioCNPJ: 0734554300019002640209 - TEMIS "
+    "PROJETOS DE MEIO AMBIENTE E SUSTENTABILIDADE LTDAR: Territorio do Amapa n.146 - "
+    "Pituba41830540 Salvador - BA - BrasilPC9PBUC5G5DIReservaUtilizadaDia   "
+    "Hora310822454223460TEL1G59Onix Sedan 1.029/05/2026 15:5401/06/2026 15:56"
+    "\x0c"
+)
+
+
+def test_detect_localiza_nao_colide_com_feira_de_santana():
+    """Regressão de produção (nota real ACFSA-237512): o endereço da própria
+    filial emissora ("...FEIRA DE SANTANA - BA") não pode fazer a nota cair
+    no LAYOUT_FEIRA — o check do Localiza precisa vir antes na cadeia."""
+    dummy_path = "tests/dummy_localiza_feira.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+    try:
+        ex = SPPdfExtractor(dummy_path)
+        ex.raw_text = ("LOCALIZA RENT A CAR S/A AG CENTRO FEIRA DE SANTANA "
+                        "44088-000 - FEIRA DE SANTANA - BA "
+                        "FATURA / DUPLICATANº: ACFSA - 237512")
+        assert ex._detect_layout() == LAYOUT_LOCALIZA
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
+def test_extract_localiza_variante_feira_de_santana_4_paginas(monkeypatch):
+    dummy_path = "tests/dummy_localiza_acfsa.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text", lambda path: MOCK_DIGITAL_ACFSA)
+
+    try:
+        extractor = SPPdfExtractor(dummy_path)
+        nfse_list = extractor.parse_multiple()
+
+        # As págs. 2-4 (boleto/Pix, contrato, resumo de carros) são
+        # continuação da mesma fatura — inclusive a pág. 4, que reintroduz
+        # "Localiza Rent a Car S.A." (com ponto) como nome da filial.
+        assert len(nfse_list) == 1
+        nfse = nfse_list[0]
+
+        assert nfse.numero == "237512"
+        assert nfse.data_emissao.strftime("%d/%m/%Y") == "01/06/2026"
+        assert nfse.codigo_verificacao == "FATURA"
+        assert nfse.servico_codigo == "0601"
+
+        # Prestador: município "FEIRA DE SANTANA" resolvido por nome (não o
+        # fallback de capital da UF, que seria Salvador).
+        assert nfse.prestador.cnpj_cpf == "16670085089385"
+        assert nfse.prestador.razao_social == "LOCALIZA RENT A CAR S/A"
+        assert nfse.prestador.endereco.municipio == "FEIRA DE SANTANA"
+        assert nfse.prestador.endereco.codigo_municipio == "2910800"
+        assert nfse.prestador.endereco.uf == "BA"
+
+        # Tomador: município "SALVADOR" também resolvido por nome.
+        assert nfse.tomador.cnpj_cpf == "07345543000190"
+        assert nfse.tomador.razao_social == "TEMIS PROJETOS DE MEIO AMBIENTE E SUSTENTABILIDADE LTDA"
+        assert nfse.tomador.endereco.municipio == "SALVADOR"
+        assert nfse.tomador.endereco.codigo_municipio == "2927408"
+        assert nfse.tomador.endereco.uf == "BA"
+
+        val = nfse.valores
+        assert val.valor_servicos == pytest.approx(901.95)
+        assert val.valor_liquido_nfse == pytest.approx(901.95)
+
+        assert nfse.avisos == []
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

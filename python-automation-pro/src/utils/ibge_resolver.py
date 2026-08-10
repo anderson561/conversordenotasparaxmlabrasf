@@ -58,6 +58,7 @@ class IBGEResolver:
         "ROSARIO DA LIMEIRA": "3156452", "ROSÁRIO DA LIMEIRA": "3156452",
         "BROTAS DE MACAUBAS": "2904506", "BROTAS DE MACAÚBAS": "2904506",
         "GUARULHOS": "3518800",
+        "MONTE SANTO": "2921550",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
