@@ -5,6 +5,7 @@ from src.extractors.pdf_extractor import (
     LAYOUT_CAMACARI_AVULSA,
     LAYOUT_CAMACARI,
     LAYOUT_CAMACARI_2,
+    LAYOUT_CAMACARI_3,
 )
 import os
 
@@ -81,7 +82,8 @@ DIGITAL_TEXT = (
 def test_detect_camacari_avulsa():
     """A detecção casa AVULSA + CAMAÇARI e PRECEDE o bloco Camaçari CPqD. Como
     guarda de regressão, uma nota Camaçari CPqD SEM 'AVULSA' deve continuar
-    roteada para os layouts CPqD (digital -> CAMACARI, OCR -> CAMACARI_2)."""
+    roteada para os layouts CPqD (digital -> CAMACARI, OCR -> CAMACARI_3, o
+    SUPERSET de topo do CAMACARI_2 desde a nota nº 20335/PADUA COMÉRCIO)."""
     dummy_path = "tests/dummy_camacari_avulsa.pdf"
     os.makedirs("tests", exist_ok=True)
     with open(dummy_path, "wb") as f:
@@ -99,7 +101,7 @@ def test_detect_camacari_avulsa():
         ex2.from_ocr = False
         assert ex2._detect_layout() == LAYOUT_CAMACARI
         ex2.from_ocr = True
-        assert ex2._detect_layout() == LAYOUT_CAMACARI_2
+        assert ex2._detect_layout() == LAYOUT_CAMACARI_3
     finally:
         if os.path.exists(dummy_path):
             os.remove(dummy_path)
