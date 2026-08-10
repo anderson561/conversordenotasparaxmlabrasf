@@ -64,7 +64,7 @@ LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrôni
 LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
-LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS-e eNotas Gateway, Lauro de Freitas/BA)
+LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # NFS-e eNotas Gateway (Lauro de Freitas/BA) - nome do layout mantido por retrocompatibilidade, mas cobre MÚLTIPLOS emitentes na mesma plataforma: PASSWORD Sistemas Eletronicos (CNPJ 04.021.023/0001-33) e INFOMIX Soluções em Tecnologia (CNPJ 29.869.622/0001-32) - cada um detectado pelo próprio CNPJ, nunca pela marca genérica "eNotas", para não colidir com futuros emitentes do mesmo provedor. Extração de entidades/valores é genérica o bastante para servir ambos sem ramos dedicados, exceto 2 diferenças pontuais na estrutura de texto (código do serviço com nº de dígitos variável após a barra; rótulos "NOME/RAZÃO SOCIAL"+"E-MAIL" do tomador podem vir despejados juntos antes dos 2 valores)
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
 LAYOUT_PJB_LOCACAO = 'pjb_locacao'  # PJB Construção Aluguel de Máq. e Ser. (CNPJ 08.885.357, Simões Filho/BA) - Fatura de Locação de bens móveis escaneada, sem incidência de ISS; prestador fixo, tomador do bloco DESTINATÁRIO
@@ -280,7 +280,13 @@ class SPPdfExtractor:
         # razão social), conforme decidido — não casar por marca genérica do
         # gateway "eNotas" para evitar colisão com futuras notas de outros
         # emitentes que usem o mesmo provedor.
-        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR', t, re.IGNORECASE):
+        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR|'
+                     r'29\.?869\.?622[./]?0001-?32|INFOMIX\s+SOLU', t, re.IGNORECASE):
+            # INFOMIX SOLUÇÕES EM TECNOLOGIA LTDA — 2º emissor (também de Lauro
+            # de Freitas/BA) na MESMA plataforma eNotas Gateway do PASSWORD.
+            # Detecção por CNPJ próprio (não pela marca genérica "eNotas"),
+            # mesmo racional já documentado para não colidir com futuros
+            # emitentes na mesma plataforma.
             return LAYOUT_PASSWORD_ENOTAS
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
@@ -454,7 +460,13 @@ class SPPdfExtractor:
             return LAYOUT_PJB_LOCACAO
         if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
             return LAYOUT_SULSEG_COBRANCA
-        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR', t, re.IGNORECASE):
+        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR|'
+                     r'29\.?869\.?622[./]?0001-?32|INFOMIX\s+SOLU', t, re.IGNORECASE):
+            # INFOMIX SOLUÇÕES EM TECNOLOGIA LTDA — 2º emissor (também de Lauro
+            # de Freitas/BA) na MESMA plataforma eNotas Gateway do PASSWORD.
+            # Detecção por CNPJ próprio (não pela marca genérica "eNotas"),
+            # mesmo racional já documentado para não colidir com futuros
+            # emitentes na mesma plataforma.
             return LAYOUT_PASSWORD_ENOTAS
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
@@ -1910,11 +1922,17 @@ class SPPdfExtractor:
 
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
             # "CÓDIGO DO SERVIÇO\n\n15.03 / 1503 - Locação e manutenção..." — a
-            # nota traz o código LC116 em dois formatos (com e sem ponto); usamos
-            # os 4 dígitos sem ponto (1503) para manter o padrão dos demais layouts.
-            m = re.search(r'(\d{2})\.(\d{2})\s*/\s*(\d{4})\s*-', t)
+            # nota traz o código LC116 em dois formatos: "NN.NN" (item real da
+            # lista) e um "código interno" do gateway após a barra, que NÃO tem
+            # largura fixa (achado real, nota INFOMIX: "01.07 / 107 -", só 3
+            # dígitos, sem o zero à esquerda — o antigo `\d{4}` rígido não
+            # casava e caía no fallback genérico truncado "0001"). Usamos o
+            # próprio item "NN.NN" (grupos 1+2, sem ponto) em vez do código
+            # interno — mais robusto e, nas notas PASSWORD já validadas, dá o
+            # mesmo resultado (15.03 -> 1503 == o código interno "1503").
+            m = re.search(r'(\d{2})\.(\d{2})\s*/\s*\d{3,4}\s*-', t)
             if m:
-                return m.group(3)
+                return m.group(1) + m.group(2)
 
         if self.layout == LAYOUT_LAURO_FREITAS:
             # "ITEM DA LISTA DE SERVIÇOS:\n\n( Lei Municipal 1572/2015 )\n\n110201 -
@@ -4268,7 +4286,16 @@ class SPPdfExtractor:
             m = re.search(rotulo + r'\s*\n+\s*([^\n]+)', b, re.IGNORECASE)
             return m.group(1).strip() if m else None
 
-        razao = _campo(r'NOME\s*/\s*RAZ[ÃA]O\s+SOCIAL') or 'Tomador Não Identificado'
+        # Achado real (nota INFOMIX): às vezes os rótulos "NOME/RAZÃO SOCIAL" e
+        # "E-MAIL" vêm DESPEJADOS JUNTOS antes de seus 2 valores (em vez do
+        # padrão comum, rótulo imediatamente seguido do próprio valor, já
+        # validado nas notas PASSWORD) — sem tratar isso, `_campo` capturava o
+        # valor do rótulo seguinte ("E-MAIL") como se fosse a razão social.
+        # Tenta esse formato PRIMEIRO (mais específico); cai no genérico se
+        # não casar, preservando o comportamento das notas já validadas.
+        m_raz_dump = re.search(r'NOME\s*/\s*RAZ[ÃA]O\s+SOCIAL\s*\n+\s*E-?MAIL\s*\n+\s*([^\n]+)', b, re.IGNORECASE)
+        razao = (m_raz_dump.group(1).strip() if m_raz_dump else None) \
+            or _campo(r'NOME\s*/\s*RAZ[ÃA]O\s+SOCIAL') or 'Tomador Não Identificado'
         endereco_raw = _campo(r'ENDERE[ÇC]O') or 'Não informado'
         m_email = re.search(r'E-?MAIL\s*\n+\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', b, re.IGNORECASE)
         email = m_email.group(1) if m_email else None
