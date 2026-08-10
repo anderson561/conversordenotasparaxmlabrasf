@@ -71,6 +71,7 @@ LAYOUT_PJB_LOCACAO = 'pjb_locacao'  # PJB Construção Aluguel de Máq. e Ser. (
 LAYOUT_IACU_NFSE = 'iacu_nfse'  # Prefeitura Municipal de Iaçu/BA (plataforma nfservico.com.br) - NFS-e tributada, escaneada; caixa de cabeçalho via recorte dedicado
 LAYOUT_SAO_PAULO_2 = 'sao_paulo_sp_scan'  # São Paulo/SP ESCANEADO (JPG/foto -> OCR) - mesmo cabeçalho do LAYOUT_SAO_PAULO digital, mas via OCR ruidoso; caixa de cabeçalho via recorte dedicado
 LAYOUT_CAMACARI_2 = 'camacari_ba_scan'  # Camaçari/BA ESCANEADO (foto/JPG -> OCR) - mesmo cabeçalho do LAYOUT_CAMACARI, gated por from_ocr; SUPERSET (herda os branches do CAMACARI como fallback) + tratamento próprio: re-OCR zoom4/PSM6, recorte de cabeçalho, grade com alíquota↔ISS trocados e ISS calculado, correção do 1º dígito do CNPJ do tomador
+LAYOUT_CAMACARI_3 = 'camacari_ba_scan_v3'  # Camaçari/BA ESCANEADO (foto/JPG -> OCR) - SUPERSET do LAYOUT_CAMACARI_2 (herda TODOS os branches dele/do CAMACARI como fallback nos campos comuns, sem tocar no código já validado). Passa a ser o layout de TOPO para toda nota escaneada de Camaçari (a detecção retorna este, não mais o CAMACARI_2 diretamente). Tratamento próprio SÓ onde o CAMACARI_2 se mostrou frágil (achado real: nota nº 20335, PADUA COMÉRCIO E REFORMA DE PNEUS -> DELTALINE): (1) número da nota — quando a âncora "Número da Nota" não sobrevive a NENHUMA tentativa de recorte do cabeçalho, vai direto para o fallback honesto (nome do arquivo/aviso) em vez de cair num padrão genérico solto que pode capturar outro campo (ex.: o "Nº" do ENDEREÇO do prestador); (2) entidade/CNPJ do prestador — aceita a âncora "TOMADOR" isolada quando "DE SERVIÇOS" não sobrevive ao OCR (evitando que o extrator dedicado desista e caia no fallback genérico compartilhado, que pode atribuir ao prestador o CNPJ de OUTRA entidade do documento) e descarta (em vez de propagar) um CNPJ de prestador com checksum inválido
 LAYOUT_MATA_SAO_JOAO = 'mata_sao_joao_ba'  # Mata de São João/BA (plataforma SAATRI - matadesaojoao.saatri.com.br) - NFS-e tributada, escaneada de boa qualidade (OCR zoom3 limpo, sem rotação); layout dedicado do município. Estrutura: blocos "Prestador/Tomador do(s) Serviço(s)" contíguos, grade de valores rótulo-em-cima/valor-embaixo, código de serviço "01.01.01" (item LC 116) -> 4 dígitos
 LAYOUT_ROSARIO_LIMEIRA = 'rosario_da_limeira_mg'  # Rosário da Limeira/MG (plataforma FUTURIZE) - NFS-e tributada DIGITAL (pdfminer limpo, sem OCR); layout dedicado do município. Blocos "PRESTADOR/TOMADOR DE SERVIÇOS" com rótulos por linha; endereço em linha única "logradouro - [extras] - bairro - CEP - município - UF"; código "Trib. Nacional 09.01.04" (item LC 116) -> 4 dígitos. Nota "fora do município" (prestação em outra cidade) mantém município do prestador na incidência (decisão do usuário)
 LAYOUT_CAMACARI_AVULSA = 'camacari_ba_avulsa'  # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA) Série "A", emitida pela própria Prefeitura, escaneada (OCR). Distinta das notas Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2): blocos "IDENTIFICAÇÃO DO PRESTADOR/TOMADOR" com rótulos "Nome / Razão", "CPF / CNPJ:", "CEP: ... Município: ... UF:", "Logradouro: ... Nº ...", "Bairro: ...". Valores CONFIÁVEIS vêm da camada DIGITAL (pdfminer): o OCR troca o 1º dígito do VALOR TRIBUTÁVEL (14.685->74.685) e deixa o VALOR LÍQUIDO em branco. Detecção casa AVULSA + CAMAÇARI (precede o bloco CPqD)
@@ -317,7 +318,12 @@ class SPPdfExtractor:
             # já tratava notas escaneadas; por isso o LAYOUT_CAMACARI_2 é um
             # SUPERSET (herda os branches do CAMACARI como fallback) e só é
             # roteado quando o texto veio de OCR — o digital continua intocado.
-            return LAYOUT_CAMACARI_2 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
+            # O topo da cadeia para OCR passou a ser o LAYOUT_CAMACARI_3
+            # (SUPERSET do CAMACARI_2, achado real nota nº 20335/PADUA
+            # COMÉRCIO — ver comentário da constante) — o CAMACARI_2 segue
+            # 100% intocado e continua acessível diretamente (ex.: testes que
+            # setam `self.layout` na mão).
+            return LAYOUT_CAMACARI_3 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR # Ou um layout genérico da BA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
@@ -467,7 +473,12 @@ class SPPdfExtractor:
             # já tratava notas escaneadas; por isso o LAYOUT_CAMACARI_2 é um
             # SUPERSET (herda os branches do CAMACARI como fallback) e só é
             # roteado quando o texto veio de OCR — o digital continua intocado.
-            return LAYOUT_CAMACARI_2 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
+            # O topo da cadeia para OCR passou a ser o LAYOUT_CAMACARI_3
+            # (SUPERSET do CAMACARI_2, achado real nota nº 20335/PADUA
+            # COMÉRCIO — ver comentário da constante) — o CAMACARI_2 segue
+            # 100% intocado e continua acessível diretamente (ex.: testes que
+            # setam `self.layout` na mão).
+            return LAYOUT_CAMACARI_3 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
@@ -830,7 +841,7 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1))
                 if res: return res
 
-        if self.layout == LAYOUT_CAMACARI_2:
+        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # No Camaçari escaneado a caixa de cabeçalho (recorte dedicado) traz
             # "Data de Emissão : |\n— 28/05/2026 16:22" com hora — preferimos ela
             # à "Data da prestação" (só data). O "—"/"|" são ruído de borda. O "D"
@@ -841,7 +852,7 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
-        if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2):
+        if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # Este layout não traz um rótulo "Data de Emissão" — usamos "Data da
             # prestação do serviço" (mesmo rótulo já usado por _extrair_competencia)
             # e, como reforço, "Data Impressão". Sem isso, cai no fallback genérico
@@ -1137,6 +1148,40 @@ class SPPdfExtractor:
                 for m_num in re.finditer(r'\b(\d{4,10})\b', janela):
                     return m_num.group(1)
 
+        if self.layout == LAYOUT_CAMACARI_3:
+            # Mesma janela/iteração do bloco CAMACARI_2 abaixo — reproduzida
+            # aqui (em vez de widenar o `in (...)` dele) porque o desfecho em
+            # caso de falha TOTAL é diferente e mais seguro: quando NENHUMA
+            # das tentativas de recorte do cabeçalho preserva "Nota" legível
+            # (achado real, nota nº 20335, PADUA COMÉRCIO E REFORMA DE PNEUS
+            # -> DELTALINE: as 3 leituras saíram "Nta"/"enero da Nota"/
+            # "Nirmaro da Nota" — nenhuma bate "mero...Nota" literalmente),
+            # o bloco CAMACARI_2 cairia nos padrões genéricos mais abaixo
+            # (`_extrair_numero`), e um deles (`N[ºo]\s*[:\s\n]*(\d+)`, bem
+            # solto) capturou o "Nº: 00022" — que nesta nota NÃO é o número
+            # da nota, é o número da CASA do endereço do prestador (a mesma
+            # janela de recorte do cabeçalho, nesta nota, alcança essa linha
+            # do bloco PRESTADOR). Em vez de arriscar esse mesmo padrão solto,
+            # vai direto para o fallback honesto (nome do arquivo, que aqui
+            # recupera corretamente "20335" de "... NF 20335 ...") ou o
+            # placeholder + aviso — nunca fabricando um valor de outro campo.
+            for m_lab in re.finditer(r'mero\s+da\s+Nota', t, re.IGNORECASE):
+                janela = t[m_lab.end(): m_lab.end() + 80]
+                janela = re.sub(r'P[áa]gina\s*\d+\s*/\s*\d+', ' ', janela, flags=re.IGNORECASE)
+                for m_num in re.finditer(r'\b(\d+)\b', janela):
+                    num = m_num.group(1)
+                    if len(num) < 2 or len(num) >= 8:
+                        continue
+                    if num in ('2024', '2025', '2026', '2027'):
+                        continue
+                    return num
+            if getattr(self, 'pdf_path', None):
+                import os
+                m_fn = re.search(r'(?:NFS?|NOTA|NF)\s*[-_]*\s*(\d+)', os.path.basename(self.pdf_path), re.IGNORECASE)
+                if m_fn:
+                    return m_fn.group(1).strip()
+            return '00000000'
+
         if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2):
             # Rótulo "Número da Nota" — o OCR deste layout às vezes troca o "ú" por "i"
             # ("Nimero da Nota") e, no recorte estreito do cabeçalho, chega a cortar a
@@ -1371,7 +1416,7 @@ class SPPdfExtractor:
                 if disc:
                     return disc
 
-        if self.layout == LAYOUT_CAMACARI_2:
+        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # Bloco entre "DISCRIMINAÇÃO DOS SERVIÇOS" e "Retenções (R$)", no OCR
             # de grade ruidoso. As linhas úteis (descrição do serviço + "OPTANTE
             # PELO SIMPLES NACIONAL") vêm misturadas com a linha de cabeçalho da
@@ -1740,7 +1785,7 @@ class SPPdfExtractor:
                 if m_cod:
                     return m_cod.group(1)
 
-        if self.layout == LAYOUT_CAMACARI_2:
+        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # "Serviço: 000713 - DEDETIZAÇÃO, DESINFECÇÃO, ..." — item da lista
             # em 6 dígitos com zeros à esquerda (000713 = 07.13). Ancoramos em
             # exatamente 6 dígitos iniciados por "0" para não casar com o
@@ -1984,7 +2029,7 @@ class SPPdfExtractor:
                 if len(chave) >= 50:
                     return chave[:50]
 
-        if self.layout == LAYOUT_CAMACARI_2:
+        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # Código de autenticidade da célula do cabeçalho (recorte dedicado):
             # é alfanumérico MISTURANDO letras e dígitos (ex.: "8075HO406"). No
             # recorte largo, logo abaixo do rótulo, o OCR às vezes lê a Inscrição
@@ -2171,6 +2216,25 @@ class SPPdfExtractor:
                 return ent
             # fall-through: cai no extrator genérico (superset) se o dedicado
             # não conseguir montar a entidade.
+
+        if self.layout == LAYOUT_CAMACARI_3:
+            if is_intermediario:
+                return None
+            # 1ª tentativa: extrator dedicado do CAMACARI_3 (âncora "TOMADOR"
+            # tolerante, CNPJ do prestador validado por checksum — ver
+            # `_extrair_entidade_camacari3`). 2ª tentativa (se a 1ª não
+            # conseguir isolar nem o bloco): o extrator do CAMACARI_2, que já
+            # é mais seguro que o genérico. Só cai no genérico (3ª tentativa,
+            # mais arriscado — pode atribuir a esta entidade o CNPJ de OUTRA
+            # já extraída no documento) se AMBOS falharem.
+            ent = self._extrair_entidade_camacari3(is_prestador)
+            if ent is not None:
+                return ent
+            ent = self._extrair_entidade_camacari2(is_prestador)
+            if ent is not None:
+                return ent
+            # fall-through: cai no extrator genérico (superset) se nenhum dos
+            # dois dedicados conseguir montar a entidade.
 
         if self.layout == LAYOUT_SULSEG_COBRANCA:
             if is_intermediario:
@@ -3490,7 +3554,7 @@ class SPPdfExtractor:
         if not end_data.get('uf') or len(end_data['uf']) != 2 or end_data['uf'] == 'EX':
             if self.layout == LAYOUT_RIO:
                 end_data['uf'] = "RJ"
-            elif self.layout in (LAYOUT_SALVADOR, LAYOUT_BARREIRAS, LAYOUT_FEIRA, LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_MATA_SAO_JOAO):
+            elif self.layout in (LAYOUT_SALVADOR, LAYOUT_BARREIRAS, LAYOUT_FEIRA, LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3, LAYOUT_MATA_SAO_JOAO):
                 end_data['uf'] = "BA"
             elif self.layout == LAYOUT_CUIABA:
                 end_data['uf'] = "MT"
@@ -4501,6 +4565,143 @@ class SPPdfExtractor:
         m_mun = re.search(r'MUNIC[IÍ]PIO\s*:?\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s]+?)\s*(?:EaMiisia|UF|$)', bloco, re.IGNORECASE)
         municipio = m_mun.group(1).strip() if m_mun else ''
         # Descarta capturas degeneradas (só pontuação/1 letra) e usa o default.
+        if len(re.sub(r'[^A-Za-zÀ-ú]', '', municipio)) < 3:
+            municipio = municipio_default
+
+        m_uf = re.search(r'UF\s*:?\s*(BAHIA|[A-Z]{2})\b', bloco, re.IGNORECASE)
+        uf = m_uf.group(1).upper() if m_uf else uf_default
+        if uf == 'BAHIA':
+            uf = 'BA'
+
+        cod_mun = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio) if municipio else ''
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao or ('Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'),
+            inscricao_municipal=inscricao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=numero or 'S/N',
+                complemento=complemento,
+                bairro='Não informado',
+                codigo_municipio=cod_mun,
+                municipio=municipio or municipio_default,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+        )
+
+    def _extrair_entidade_camacari3(self, is_prestador: bool) -> Optional[Entidade]:
+        """Extrai prestador/tomador da NFS-e de Camaçari/BA ESCANEADA — SUPERSET
+        do `_extrair_entidade_camacari2` (código-fonte duplicado de propósito,
+        não refatorado por composição, para não arriscar alterar o
+        comportamento já validado do CAMACARI_2 em nenhuma nota antiga).
+
+        Corrige 2 fragilidades achadas na nota real nº 20335 (PADUA COMÉRCIO
+        E REFORMA DE PNEUS LTDA -> DELTALINE SERVICOS LTDA., pág. única):
+
+        1. O CAMACARI_2 exige o rótulo completo "TOMADOR DE SERVIÇOS"; nesta
+           nota o OCR leu "TOMADOR DE LR," (a palavra "SERVIÇOS" não
+           sobreviveu) — o CAMACARI_2 então devolvia `None` para AMBAS as
+           entidades, e o dispatch caía no extrator genérico compartilhado
+           por ~30 layouts. Aqui aceitamos a palavra isolada "TOMADOR" como
+           âncora de reserva quando a frase completa não casa.
+        2. Sem o bloco do prestador isolado corretamente, o CNPJ do prestador
+           (impresso "24.925.188/0001-47", OCR leu "24.928.188/0001-47" — um
+           dígito trocado 5→8, quebrando o checksum) não validava em bloco
+           algum, e o fallback genérico ("nenhum CNPJ de prestador válido no
+           bloco → usa o 1º CNPJ válido do documento inteiro") atribuiu ao
+           prestador o CNPJ do TOMADOR (o único que validou no documento).
+           Aqui, mesmo com o bloco do prestador corretamente isolado, se o
+           candidato de CNPJ capturado não validar o checksum, DESCARTAMOS
+           em vez de propagar um valor plausível-porém-errado — cai no
+           sentinela + aviso honesto (mesmo princípio de outros layouts:
+           "dados corretos > completude").
+        """
+        t = self.raw_text
+        m_prest = re.search(r'PRESTADOR\s*DE\s*SERVI[ÇC]OS', t, re.IGNORECASE)
+        m_tom = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        if not m_tom:
+            m_tom = re.search(r'\bTOMADOR\b', t, re.IGNORECASE)
+        m_disc = re.search(r'DISCRIMINA[ÇC][ÃA]O', t, re.IGNORECASE)
+
+        if is_prestador:
+            if not (m_prest and m_tom):
+                return None
+            bloco = t[m_prest.end():m_tom.start()]
+            municipio_default, uf_default = 'CAMACARI', 'BA'
+        else:
+            if not m_tom:
+                return None
+            fim = m_disc.start() if (m_disc and m_disc.start() > m_tom.end()) else len(t)
+            bloco = t[m_tom.end():fim]
+            municipio_default, uf_default = '', 'BA'
+
+        def _campo(pat: str) -> str:
+            m = re.search(pat, bloco, re.IGNORECASE)
+            return m.group(1).strip(' .:|') if m else ''
+
+        # Âncora só no sufixo estável "Raz[ãa]o Social" (tolerando "ão"->"ho"/
+        # "ao"/etc. via `.{0,2}` entre "Raz" e o "o" final) — dispensa exigir
+        # o prefixo "Nome/" ou "None/" (achado real: nesta nota o prestador
+        # saiu "Nome/Razho Social." e o tomador saiu "None/Razão Social:" —
+        # dois OCRs diferentes do MESMO rótulo, na mesma nota). Separador
+        # tolera ":" OU "." (achado real: "Social. PADUA COMERCIO...").
+        razao = _campo(r'Raz.{0,2}o\s+Social\s*[:.]?\s*(.+)')
+        razao = re.sub(r'\s{2,}.*$', '', razao).strip()  # corta ruído após 2+ espaços
+
+        # Separadores tolerantes a espaço no lugar do ponto (achado real: "24.928
+        # 188/0001-47" — o 2º ponto do CNPJ saiu como espaço no OCR) e a "."
+        # no lugar de ":" depois do rótulo (achado real: "CPF/CNPJ. 01
+        # 813.680/0001-25" — sem essa tolerância o CNPJ do TOMADOR, que sai
+        # correto e com checksum válido, deixava de casar e disparava sem
+        # necessidade o recorte de recuperação de último recurso, que tem
+        # sua própria margem de erro de OCR).
+        m_cnpj = re.search(r'CPF/CNPJ\s*[:.]?\s*(\d{2}[.\s]?\d{3}[.\s]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ''
+        if is_prestador and cnpj and not self._validate_cnpj_cpf(cnpj):
+            # Prestador não tem mecanismo de correção de dígito conhecido
+            # (diferente do tomador, corrigido abaixo por
+            # `_corrige_cnpj_primeiro_digito`) — um candidato com checksum
+            # inválido aqui é sinal de dígito corrompido pelo OCR (achado
+            # real: "24.928.188/0001-47" em vez do real
+            # "24.925.188/0001-47"). Descartar evita propagar o valor errado.
+            cnpj = ''
+        if not cnpj and not is_prestador and getattr(self, 'from_ocr', False):
+            # Mesmo último recurso já usado pelo CAMACARI_2 (marca-texto/
+            # rabisco cobrindo o campo do tomador no scan original).
+            pagina_hint = getattr(self, '_pagina_hint', None)
+            if pagina_hint:
+                cnpj = self._recuperar_cnpj_tomador_camacari(pagina_hint - 1)
+        if not is_prestador and cnpj:
+            cnpj = self._corrige_cnpj_primeiro_digito(cnpj)
+        if not cnpj:
+            cnpj = '00000000000000'
+
+        inscricao = _campo(r'Inscri[çc][ãa]o\s+Municipal\s*[:.]?\s*(\d+)')
+
+        logradouro = _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|$)')
+        # Exige pontuação explícita (":"/";"/".") logo após "Nº" — achado real:
+        # sem essa exigência, o próprio rótulo "Nome/Razão Social" (que começa
+        # com "No" — casa com `N[ºo°]`) era lido como se fosse "Nº", e o
+        # número do endereço saía "me" (resto de "Nome"). O "Nº" real desta
+        # nota vem sempre seguido de pontuação ("Nº; 00022:", "Nº. 38").
+        numero = _campo(r'N[ºo°]\s*[:;.]\s*([A-Za-z0-9]+)')
+        # Tolera "l" no meio de "Bairro" (achado real: "Balro:") — sem isso o
+        # lookahead nunca casa e o complemento inteiro ("LOTE 21 QUADRA 55")
+        # se perde.
+        complemento = _campo(r'Compl\.?\s*:?\s*(.+?)\s*(?:B[ail]{1,2}r{1,2}o|Beira|$)')
+
+        # Tolera "." no lugar de ":" depois do rótulo (achado real: "CEP.
+        # 42804039" / "CEP. 40330533" — as duas ocorrências, prestador e
+        # tomador, saem com ponto em vez de dois-pontos nesta nota).
+        cep = ''
+        m_cep = re.search(r'CEP\s*[:.]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
+        if m_cep:
+            cep = re.sub(r'\D', '', m_cep.group(1))
+
+        m_mun = re.search(r'MUNIC[IÍ]PIO\s*:?\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s]+?)\s*(?:EaMiisia|UF|$)', bloco, re.IGNORECASE)
+        municipio = m_mun.group(1).strip() if m_mun else ''
         if len(re.sub(r'[^A-Za-zÀ-ú]', '', municipio)) < 3:
             municipio = municipio_default
 
@@ -6415,7 +6616,7 @@ class SPPdfExtractor:
                 valor_pis=pis,
             )
 
-        if self.layout == LAYOUT_CAMACARI_2:
+        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # Grade "Retenções (R$) x Totais (R$)" do Camaçari ESCANEADO. Além do
             # ruído de OCR nos rótulos ("Nalor"->Valor, "Basa"->Base), os valores
             # da Alíquota e do ISS saem TROCADOS de linha: a nota lê
@@ -6449,7 +6650,7 @@ class SPPdfExtractor:
                     valor_liquido_nfse=liquido,
                 )
 
-        if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2):
+        if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             def _parse_valor_camacari(raw: str) -> float:
                 # O OCR deste layout costuma ler corretamente rótulos como
                 # "Aliquota (%)", mas perde toda a pontuação (separador de
