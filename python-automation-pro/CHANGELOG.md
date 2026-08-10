@@ -13,6 +13,8 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+## [1.2.0] - 2026-08-10
+
 ### Adicionado
 
 - Novo layout **Camaçari/BA via plataforma SISLOC** ("NFS-e Easy" da Benefix)
@@ -98,7 +100,8 @@ testes passando.
 - Primeira versão estável do conversor de NFS-e/NF-e em PDF para XML
   ABRASF 2.01.
 
-[Não lançado]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.1...HEAD
+[Não lançado]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.0.0...v1.0.1
