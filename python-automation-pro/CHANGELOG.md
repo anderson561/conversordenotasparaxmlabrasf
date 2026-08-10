@@ -13,6 +13,19 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+## [1.1.1] - 2026-08-07
+
+### Corrigido
+
+- DANFSe Nacional: página com uma única nota podia gerar uma **nota-fantasma**
+  extra (número "00000000", todos os campos zerados) antes da nota real — o
+  split de múltiplas-notas-por-página cortava no próprio título "DANFSe v1.0"
+  de abertura da página.
+- DANFSe Nacional: em notas cuja grade OCR lê as linhas fora de ordem física,
+  o tomador podia sair com o **mesmo CNPJ do prestador** em vez do seu
+  próprio, quando o CNPJ do prestador vazava para dentro do bloco de texto do
+  tomador.
+
 ## [1.1.0] - 2026-08-07
 
 ### Adicionado
@@ -63,7 +76,8 @@ testes passando.
 - Primeira versão estável do conversor de NFS-e/NF-e em PDF para XML
   ABRASF 2.01.
 
-[Não lançado]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.0...HEAD
+[Não lançado]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/anderson561/conversordenotasparaxmlabrasf/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/anderson561/conversordenotasparaxmlabrasf/releases/tag/v1.0.0
