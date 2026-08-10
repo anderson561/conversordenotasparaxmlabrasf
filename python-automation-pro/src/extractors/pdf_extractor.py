@@ -79,6 +79,7 @@ LAYOUT_FF_LOCACAO = 'ff_locacao'  # F&F Comércio e Serviços de Telecomunicaç�
 LAYOUT_BROTAS_MACAUBAS = 'brotas_macaubas_ba'  # Prefeitura de Brotas de Macaúbas/BA (CNPJ 13.797.600/0001-74, plataforma nfservico.com.br - mesma da IAÇU) - NFS-e tributada, escaneada (JPG/foto, tipicamente de cabeça para baixo). Reaproveita o parser de entidade do Iaçu (mesmos rótulos/estrutura), com 2 ajustes tolerantes: "|" (OCR de "Nº") colado no endereço do prestador, e nome/CREA do engenheiro colado na razão social do tomador. Caixa de cabeçalho via o MESMO recorte dedicado do Iaçu (_ocr_header_box_iacu, agora com suporte a ângulo de rotação); número/valores/discriminação com âncoras próprias (grade de valores sem o campo "Valor total das deduções" que o Iaçu tem). Código de serviço fixo "0702" (mapeado do CNAE 4391-6/00 impresso na nota - a nota traz "Item da lista de serviços: 0", que não é um código LC116 válido; decisão do usuário)
 LAYOUT_GUARULHOS = 'guarulhos_sp'  # Prefeitura Municipal de Guarulhos/SP (plataforma Ginfes, guarulhos.ginfes.com.br) - NFS-e tributada, escaneada (foto/CamScanner). Grade densa de células cinza (baixo contraste) faz a leitura padrão perder o Código de Verificação, o Local da Prestação e toda a grade "Cálculo do ISSQN devido no Município" - recuperados via `_ocr_recut_guarulhos` (3 recortes em zoom alto + binarização, mesmo racional do Camaçari). Serviço de construção civil (item 7.02) prestado em OUTRO município (campos "Local da Prestação" + "Natureza Operação: Tributação fora do município"/"ISS a reter: Não" na própria nota) - decisão do usuário: a incidência do ISSQN vai para o município da obra (Cuiabá/MT), não para o do prestador (Guarulhos), via `Nfse.municipio_incidencia_override`
 LAYOUT_CAMACARI_SISLOC = 'camacari_sisloc'  # Camaçari/BA via plataforma SISLOC (sisloc.com) + "NFS-e Easy" da Benefix (webenefix.com.br) - PDF DIGITAL (não escaneado), mas o gerador do PDF desenha rótulos e valores como blocos de texto separados; o `pdfminer.extract_text()` padrão despeja TODOS os valores concatenados num blob único no fim do documento, sem relação de proximidade com o rótulo. Corrigido reconstruindo o texto por COORDENADA de caractere (`_reconstruir_texto_por_coordenadas`: agrupa `LTChar` por linha/Y, ordena por X dentro da linha) em vez de usar a ordem de leitura padrão do pdfminer - técnica nova, para PDF digital com ordem de leitura quebrada (distinta de OCR/coluna-intercalada). Detectado pela marca da PLATAFORMA (SISLOC/Benefix), não pelo município, para não colidir com os Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2) nem futuras notas de outras plataformas no mesmo município. Município de prestação vem com código IBGE explícito na própria nota ("Cód. de Município IBGE: ..."). Item de tributação "9901" não é código LC116 válido (mesma convenção de Barreiras/PJB) - mapeado para "0000"
+LAYOUT_MONTE_SANTO = 'monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, só em texto livre "OBJETO DO CONTRATO"/"OBRA") - decisão do usuário: NÃO implementar `municipio_incidencia_override` aqui (diferente de Guarulhos, que tem campo estruturado com nome da cidade; aqui seria regex sobre texto livre, frágil) - incidência permanece no município do prestador (Monte Santo)
 
 
 # Etiquetas para Identificação de Entidades
@@ -326,6 +327,14 @@ class SPPdfExtractor:
             return LAYOUT_CAMACARI_3 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR # Ou um layout genérico da BA
+        # Localiza ANTES do check de "FEIRA DE SANTANA" abaixo: o emissor
+        # fixo Localiza tem uma agência ("AG CENTRO FEIRA DE SANTANA") cujo
+        # próprio endereço cita a cidade "FEIRA DE SANTANA" - o check da
+        # Prefeitura, sem exigir nenhum contexto além do nome da cidade,
+        # capturava essa fatura inteira (achado real: fatura ACFSA-237512,
+        # TEMIS PROJETOS -> perdia número/valores/tomador por completo).
+        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
+            return LAYOUT_LOCALIZA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
@@ -343,8 +352,6 @@ class SPPdfExtractor:
             return LAYOUT_ROSARIO_LIMEIRA
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
-        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
-            return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
             # Mesmo cabeçalho para o SP digital (texto embutido) e o SP
             # escaneado (JPG/foto -> OCR). Só o escaneado passa por OCR, e sua
@@ -370,6 +377,19 @@ class SPPdfExtractor:
             return LAYOUT_OSASCO_REPASSE
         if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
             return LAYOUT_CAMPINAS
+        # Monte Santo/BA ANTES do fallback amplo "Chave de Acesso" abaixo -
+        # esta nota (construída sobre o padrão nacional da NFS-e) também traz
+        # esse rótulo, e cairia erradamente no LAYOUT_NACIONAL sem esta marca
+        # municipal específica na frente.
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+MONTE\s+SANTO', t, re.IGNORECASE):
+            return LAYOUT_MONTE_SANTO
+        # Página de CONTINUAÇÃO do Monte Santo/BA (grade "VALOR TOTAL DA
+        # NOTA"/"TRIBUTAÇÃO FEDERAL", sem o cabeçalho da prefeitura, que só
+        # sai na 1ª página) - sem esta marca ela cai em LAYOUT_GENERICO e é
+        # descartada como "lixo" pelo filtro de páginas do parse_multiple,
+        # perdendo os valores da nota (só existem nesta página).
+        if re.search(r'Deduz\s+Materiais\s*\?', t, re.IGNORECASE) and re.search(r'Base\s+de\s+C[áa]culo\s+R\$', t, re.IGNORECASE):
+            return LAYOUT_MONTE_SANTO
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         # Iaçu/BA (plataforma nfservico.com.br) — específico do município (decidido
@@ -481,6 +501,14 @@ class SPPdfExtractor:
             return LAYOUT_CAMACARI_3 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR
+        # Localiza ANTES do check de "FEIRA DE SANTANA" abaixo: o emissor
+        # fixo Localiza tem uma agência ("AG CENTRO FEIRA DE SANTANA") cujo
+        # próprio endereço cita a cidade "FEIRA DE SANTANA" - o check da
+        # Prefeitura, sem exigir nenhum contexto além do nome da cidade,
+        # capturava essa fatura inteira (achado real: fatura ACFSA-237512,
+        # TEMIS PROJETOS -> perdia número/valores/tomador por completo).
+        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
+            return LAYOUT_LOCALIZA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
@@ -495,8 +523,6 @@ class SPPdfExtractor:
             return LAYOUT_ROSARIO_LIMEIRA
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
-        if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
-            return LAYOUT_LOCALIZA
         if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
             # Mesmo cabeçalho para o SP digital (texto embutido) e o SP
             # escaneado (JPG/foto -> OCR). Só o escaneado passa por OCR, e sua
@@ -522,6 +548,19 @@ class SPPdfExtractor:
             return LAYOUT_OSASCO_REPASSE
         if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
             return LAYOUT_CAMPINAS
+        # Monte Santo/BA ANTES do fallback amplo "Chave de Acesso" abaixo -
+        # esta nota (construída sobre o padrão nacional da NFS-e) também traz
+        # esse rótulo, e cairia erradamente no LAYOUT_NACIONAL sem esta marca
+        # municipal específica na frente.
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+MONTE\s+SANTO', t, re.IGNORECASE):
+            return LAYOUT_MONTE_SANTO
+        # Página de CONTINUAÇÃO do Monte Santo/BA (grade "VALOR TOTAL DA
+        # NOTA"/"TRIBUTAÇÃO FEDERAL", sem o cabeçalho da prefeitura, que só
+        # sai na 1ª página) - sem esta marca ela cai em LAYOUT_GENERICO e é
+        # descartada como "lixo" pelo filtro de páginas do parse_multiple,
+        # perdendo os valores da nota (só existem nesta página).
+        if re.search(r'Deduz\s+Materiais\s*\?', t, re.IGNORECASE) and re.search(r'Base\s+de\s+C[áa]culo\s+R\$', t, re.IGNORECASE):
+            return LAYOUT_MONTE_SANTO
         if re.search(r'DANFSe\s+v\d|Compet[eê]ncia\s+da\s+NFS-e|Data\s+de\s+Compet[eê]ncia|Chave\s+de\s+Acesso', t, re.IGNORECASE | re.DOTALL):
             return LAYOUT_NACIONAL
         if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+IA.{0,2}U\b', t, re.IGNORECASE) or re.search(r'nfservico\.com\.br\S*iacu', t, re.IGNORECASE):
@@ -583,6 +622,11 @@ class SPPdfExtractor:
             # separadas na reconstrução por coordenada (rótulo e data ficam
             # em bandas de Y levemente diferentes nesta grade).
             m = re.search(r'Compet[eê]ncia\s*:\s*[\s\S]{0,20}?(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_MONTE_SANTO:
+            # "Competência\n23/07/2026" — rótulo e data em linhas separadas
+            # (data completa, não mês/ano).
+            m = re.search(r'Compet[eê]ncia\s*\n+\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
         elif layout == LAYOUT_MATA_SAO_JOAO:
             # "Data do Fato Gerador\n25/05/2026" — a competência é o mês do fato gerador.
@@ -737,6 +781,14 @@ class SPPdfExtractor:
             m = re.search(r'Emiss[ãa]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_MONTE_SANTO:
+            # "Data e Hora da Emissão\n23/07/2026 às 10:28:18" — rótulo e
+            # valor em linhas separadas, com hora.
+            m = re.search(r'Data\s+e\s+Hora\s+da\s+Emiss[ãa]o\s*\n+\s*(\d{2}/\d{2}/\d{4})\s*[àa]s\s*(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
@@ -1000,6 +1052,11 @@ class SPPdfExtractor:
             # para não casar com "# RPS" (número do RPS, documento anterior
             # à nota, valor diferente).
             m = re.search(r'#\s*NFS-e\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_MONTE_SANTO:
+            # "Número da Nota\n65" — rótulo e valor em linhas separadas.
+            m = re.search(r'N[úu]mero\s+da\s+Nota\s*\n+\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
@@ -1379,6 +1436,20 @@ class SPPdfExtractor:
                 if disc:
                     return disc
 
+        if self.layout == LAYOUT_MONTE_SANTO:
+            # Tabela "DISCRIMINAÇÃO DOS SERVIÇOS": rótulos das colunas vêm
+            # primeiro ("Serviço/Descrição/Valor Unitário/Quantidade/
+            # Desconto"), depois os valores da 1ª linha do item, cada um numa
+            # banda separada por linha em branco. Ancorado no rótulo
+            # "Desconto" (última coluna) até "Total" (fecha a linha do item).
+            m = re.search(
+                r'Desconto\s*\n\s*\n\d+\s*\n\s*\n(.+?)\n\s*\n[\d.,]+\s*\n\s*\n[\d.,]+\s*\n\s*\n[\d.,]+\s*\n\s*\nTotal',
+                t, re.IGNORECASE)
+            if m:
+                disc = m.group(1).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_CAMACARI_AVULSA:
             # A descrição real do serviço é a linha do item, logo após o cabeçalho
             # da tabela ("...Preço Unitário, Preço Total"), no formato
@@ -1722,6 +1793,13 @@ class SPPdfExtractor:
             # de ISS). Mapeado para "0000".
             return "0000"
 
+        if self.layout == LAYOUT_MONTE_SANTO:
+            # "ITEM DA LISTA DE SERVIÇO\n\n07.02 - EXECUÇÃO, POR
+            # ADMINISTRAÇÃO..." — item LC116 no formato "NN.NN", 4 dígitos
+            # após remover o ponto.
+            m = re.search(r'ITEM\s+DA\s+LISTA\s+DE\s+SERVI[ÇC]O\s*\n+\s*(\d{2})\.(\d{2})', t, re.IGNORECASE)
+            if m: return m.group(1) + m.group(2)
+
         if self.layout == LAYOUT_BROTAS_MACAUBAS:
             # A nota imprime "Item da lista de serviços: 0 - Prestação de
             # serviços em geral" — não é um código LC116 real de 4 dígitos
@@ -1732,7 +1810,10 @@ class SPPdfExtractor:
             # real nº 70, revitalização de cobertura de estacionamento).
             return "0702"
 
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO, LAYOUT_LOCALIZA):
+            # LAYOUT_LOCALIZA faltava aqui (achado real, fatura ACFSA-237512):
+            # caía no default genérico "03115" em vez do item de locação de
+            # bens móveis, mesma convenção das demais faturas de locação.
             return "0601"
 
         if self.layout == LAYOUT_BARREIRAS:
@@ -1972,6 +2053,17 @@ class SPPdfExtractor:
                     if re.search(r'\d', cand.group(0)):
                         return cand.group(0).upper()
 
+        if self.layout == LAYOUT_MONTE_SANTO:
+            # "Código de Verificação Municipal\n0555 - 5851 - 6010" — mantido
+            # como impresso (com os hifens/espaços), é um código estruturado
+            # próprio da prefeitura, distinto da Chave de Acesso nacional
+            # (44 dígitos) que também aparece na nota.
+            m = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s+Municipal\s*\n+\s*([^\n]+)', t, re.IGNORECASE)
+            if m:
+                cod = m.group(1).strip()
+                if cod:
+                    return cod
+
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
             return self._extrair_codigo_autenticidade_brasilia()
@@ -2192,6 +2284,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_camacari_sisloc(is_prestador)
+
+        if self.layout == LAYOUT_MONTE_SANTO:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_monte_santo(is_prestador)
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             if is_intermediario:
@@ -2951,7 +3048,12 @@ class SPPdfExtractor:
                 uf = m_cep_prest.group(3).strip() if m_cep_prest else "BA"
                 cep = re.sub(r'\D', '', m_cep_prest.group(1)) if m_cep_prest else ""
                 logradouro, numero, bairro, complemento = _split_endereco_localiza(logradouro_raw)
-                mun_cod = _ibge_resolver.extract_and_validate(mun, uf)
+                # `city_hint=mun` é obrigatório aqui — sem ele, `extract_and_validate`
+                # não tenta o lookup por nome (só procura um código IBGE já
+                # embutido no texto), e cai no default de capital da UF em vez de
+                # resolver "FEIRA DE SANTANA"/"RECIFE"/etc. corretamente (achado
+                # real: filial Feira de Santana saía com o código de Salvador).
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf, city_hint=mun)
 
                 return Entidade(
                     cnpj_cpf=cnpj or "00000000000000",
@@ -3008,7 +3110,8 @@ class SPPdfExtractor:
                 cep = re.sub(r'\D', '', m_end.group(2)) if m_end else ""
                 mun = m_end.group(3).strip() if m_end else ""
                 uf = m_end.group(4).strip() if m_end else ""
-                mun_cod = _ibge_resolver.extract_and_validate(mun, uf) if mun else _ibge_resolver.default_code
+                # `city_hint=mun` pelo mesmo motivo do bloco do prestador acima.
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf, city_hint=mun) if mun else _ibge_resolver.default_code
 
                 return Entidade(
                     cnpj_cpf=cnpj or "00000000000000", razao_social=razao or "Não Identificado",
@@ -5253,6 +5356,80 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_monte_santo(self, is_prestador: bool) -> Optional[Entidade]:
+        """Extrai prestador/tomador da NFS-e de Monte Santo/BA (PDF digital).
+
+        O `pdfminer.extract_text()` despeja os RÓTULOS das entidades em
+        blocos separados dos VALORES (padrão "labels dumped, depois values
+        dumped", mesmo racional já visto em Guarulhos/Campinas) — não é
+        possível parear rótulo=valor na mesma linha. A ordem observada na
+        nota real nº 65 (PEAD NORDESTE -> DELTALINE) é fixa:
+
+        1. Rótulos da coluna esquerda do PRESTADOR (6: Código Mobiliário,
+           Razão Social, Logradouro, Bairro, Município, Inscrição Estadual)
+        2. Rótulos da coluna esquerda do TOMADOR (5, sem "Código Mobiliário")
+        3. Valores da coluna esquerda do PRESTADOR (5 linhas — Inscrição
+           Estadual sai em branco nesta nota, por isso só 5 e não 6)
+        4. Cabeçalho "PRESTADOR DO SERVIÇO"
+        5. Rótulos da coluna direita do PRESTADOR (Inscrição Municipal,
+           CNPJ/CPF, Número, Cep, UF) + seus valores
+        6. Cabeçalho "TOMADOR DO SERVIÇO"
+        7. Valores da coluna esquerda do TOMADOR (4 linhas, sem rótulos
+           repetidos desta vez)
+        8. Rótulos da coluna direita do TOMADOR (CNPJ/CPF, Número, Cep, UF)
+           + seus valores
+
+        Extração por âncoras posicionais fixas nessa ordem, ancorando cada
+        grupo no cabeçalho ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO") que
+        o segue, para não colidir com a ocorrência gêmea do mesmo rótulo do
+        lado oposto (ex.: "CNPJ/CPF" aparece uma vez para cada entidade)."""
+        t = self.raw_text
+
+        if is_prestador:
+            m = re.search(
+                r'\n\s*\n(\d+)\n(.+)\n(.+)\n(.+)\n(.+)\n\s*\nPRESTADOR\s+DO\s+SERVI[ÇC]O\s*\n'
+                r'Inscri[çc][ãa]o\s+Municipal\s*\nCNPJ/CPF\s*\nN[úu]mero\s*\nCep\s*\nUF\s*\n\s*\n'
+                r'(.+)\n(.+)\n(.+)\n(.+)\n(.+)',
+                t)
+            if not m:
+                return None
+            (_codigo_mobiliario, razao, logradouro, bairro, municipio,
+             inscricao, cnpj_raw, numero, cep_raw, uf) = m.groups()
+            municipio_default, uf_default = 'MONTE SANTO', 'BA'
+        else:
+            m = re.search(
+                r'TOMADOR\s+DO\s+SERVI[ÇC]O\s*\n\s*\n(.+)\n(.+)\n(.+)\n(.+)\n\s*\n'
+                r'CNPJ/CPF\s*\nN[úu]mero\s*\nCep\s*\nUF\s*\n\s*\n'
+                r'(.+)\n(.+)\n(.+)\n(.+)',
+                t)
+            if not m:
+                return None
+            razao, logradouro, bairro, municipio, cnpj_raw, numero, cep_raw, uf = m.groups()
+            inscricao = ''
+            municipio_default, uf_default = '', 'BA'
+
+        cnpj = re.sub(r'\D', '', cnpj_raw)
+        cep = re.sub(r'\D', '', cep_raw)
+        municipio = municipio.strip() or municipio_default
+        uf = uf.strip().upper() or uf_default
+
+        cod_mun = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio) if municipio else ''
+
+        return Entidade(
+            cnpj_cpf=cnpj or '00000000000000',
+            razao_social=razao.strip() or ('Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'),
+            inscricao_municipal=inscricao.strip() or None,
+            endereco=Endereco(
+                logradouro=logradouro.strip() or 'Não informado',
+                numero=numero.strip() or 'S/N',
+                bairro=bairro.strip() or 'Não informado',
+                codigo_municipio=cod_mun,
+                municipio=municipio,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -5785,6 +5962,69 @@ class SPPdfExtractor:
                 valor_liquido_nfse=valor_liquido_nfse,
                 desconto_incondicionado=desc_incond,
                 desconto_condicionado=desc_cond,
+            )
+
+        if self.layout == LAYOUT_MONTE_SANTO:
+            # Grade "labels dumped, depois values dumped" (mesmo padrão do
+            # bloco de entidades). "Valor Total da Nota"/"Valor Liquido da
+            # Nota" ficam colados ao próprio rótulo (mesma linha); os demais
+            # campos usam extração POSICIONAL pela ordem fixa de aparição.
+            m_serv = re.search(r'Valor\s+Total\s+da\s+Nota\s+R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            valor_servicos = self._parse_valor(m_serv.group(1)) if m_serv else 0.0
+
+            m_liq = re.search(r'Valor\s+L[íi]quido\s+da\s+Nota\s+R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            valor_liquido_nfse = self._parse_valor(m_liq.group(1)) if m_liq else valor_servicos
+
+            m_ded = re.search(r'Valor\s+Total\s+das\s+Dedu[çc][õo]es\s+R\$\s*\n\s*(.+)', t, re.IGNORECASE)
+            valor_deducoes = self._parse_valor(m_ded.group(1)) if m_ded else 0.0
+
+            m_grid1 = re.search(
+                r'Base\s+de\s+C[áa]culo\s+R\$\s*\n\s*\nAliquota\s*%\s*\n\s*\nValor\s+do\s+ISS\s+R\$\s*\n\s*\n'
+                r'Valor\s+Total\s+Retido\s+R\$\s*\n\s*\n([\d.,]+)\s*\n\s*\n([\d.,]+)\s*\n\s*\n([\d.,]+)\s*\n\s*\n([\d.,]+)',
+                t, re.IGNORECASE)
+            if m_grid1:
+                base_calculo = self._parse_valor(m_grid1.group(1))
+                aliquota = self._parse_valor(m_grid1.group(2)) / 100
+                valor_iss = self._parse_valor(m_grid1.group(3))
+            else:
+                base_calculo, aliquota, valor_iss = valor_servicos - valor_deducoes, 0.0, 0.0
+
+            m_grid2 = re.search(
+                r'IR\s+R\$\s*\n\s*\nPIS\s+R\$\s*\n\s*\n([\d.,]+)\s*\n\s*\n'
+                r'INSS\s+R\$\s*\n\s*\nCSLL\s+R\$\s*\n\s*\nCOFINS\s+R\$\s*\n\s*\nOutras\s+Reten[çc][õo]es\s+R\$\s*\n\s*\n'
+                r'([\d.,]+)\s*\n\s*\n([\d.,]+)\s*\n\s*\n([\d.,]+)\s*\n\s*\n([\d.,]+)\s*\n\s*\n([\d.,]+)',
+                t, re.IGNORECASE)
+            if m_grid2:
+                ir = self._parse_valor(m_grid2.group(1))
+                pis = self._parse_valor(m_grid2.group(2))
+                inss = self._parse_valor(m_grid2.group(3))
+                csll = self._parse_valor(m_grid2.group(4))
+                cofins = self._parse_valor(m_grid2.group(5))
+                outras = self._parse_valor(m_grid2.group(6))
+            else:
+                ir = pis = inss = csll = cofins = outras = 0.0
+
+            # ISS retido pelo TOMADOR quando "Responsável pelo Pagamento do
+            # imposto: Contratante, tomador do serviço" (visto na nota real).
+            iss_retido = bool(re.search(
+                r'Respons[áa]vel\s+pelo\s+Pagamento\s+do\s+imposto\s*\n+\s*Contratante',
+                t, re.IGNORECASE))
+
+            return Valores(
+                valor_servicos=valor_servicos,
+                valor_deducoes=valor_deducoes,
+                valor_pis=pis,
+                valor_cofins=cofins,
+                valor_inss=inss,
+                valor_ir=ir,
+                valor_csll=csll,
+                iss_retido=iss_retido,
+                valor_iss=valor_iss,
+                valor_iss_retido=valor_iss if iss_retido else 0.0,
+                outras_retencoes=outras,
+                base_calculo=base_calculo,
+                aliquota=aliquota,
+                valor_liquido_nfse=valor_liquido_nfse,
             )
 
         if self.layout == LAYOUT_BARREIRAS:
@@ -7801,6 +8041,12 @@ class SPPdfExtractor:
             # Simples Nacional". O campo "Reg. Especial Tributação:" vem vazio nesta
             # nota, então marcamos apenas o optante (regime especial fica ausente).
             optante_simples = True
+        elif re.search(r'Optante\s+pelo\s+Simples\s*\?\s*\n\s*Sim', self.raw_text, re.IGNORECASE):
+            # Layout Monte Santo/BA: rótulo próprio "Optante pelo Simples ?"
+            # seguido do valor "Sim" em linha separada (grade "labels dumped,
+            # depois values dumped" — não casa com os padrões acima, que
+            # exigem "OPTANTE"+"SIMPLES NACIONAL" adjacentes).
+            optante_simples = True
 
         incentivador = False
         if re.search(r'Incentivador\s+Cultural\s*[:\s\n]*Sim', self.raw_text, re.IGNORECASE):
@@ -7967,13 +8213,25 @@ class SPPdfExtractor:
             if re.search(r'_{20,}|={20,}|-{20,}', text):
                 return True
 
+            # Monte Santo/BA: a página de continuação (grade "VALOR TOTAL DA
+            # NOTA"/"TRIBUTAÇÃO FEDERAL", onde ficam os valores da nota) não
+            # tem número/CNPJ próprios, mas o rodapé genérico "Nota Fiscal de
+            # Serviços" bateria no padrão de início de nota mais abaixo,
+            # fatiando a nota em 2 blocos e perdendo os valores (que só
+            # existem nesta página) — tratada explicitamente como continuação.
+            if re.search(r'Deduz\s+Materiais\s*\?', text, re.IGNORECASE) and re.search(r'Base\s+de\s+C[áa]culo\s+R\$', text, re.IGNORECASE):
+                return False
+
             # Localiza: a fatura (pág. com "FATURA / DUPLICATA Nº:") normalmente
             # vem seguida de um boleto/Pix que repete "LOCALIZA RENT A CAR S/A"
-            # só como nome do beneficiário do pagamento — não é uma fatura nova.
+            # como nome do beneficiário do pagamento, e depois de um contrato
+            # de aluguel + resumo de carros utilizados (que repetem "Localiza
+            # Rent a Car S.A." — com PONTO, não barra, achado real na nota
+            # ACFSA-237512/TEMIS) — nenhuma dessas páginas é uma fatura nova.
             # Sem este caso, a heurística genérica de número diverge entre as
-            # duas páginas (a do boleto não tem "Nº:", então pega um dígito
-            # solto de outro campo, ex. uma data) e a mesma fatura vira 2 XMLs.
-            if is_localiza and re.search(r'LOCALIZA RENT A CAR S/A', text, re.IGNORECASE) \
+            # páginas (não têm "Nº:" próprio, então cada uma pega um dígito
+            # solto de outro campo) e a mesma fatura vira várias XMLs.
+            if is_localiza and re.search(r'LOCALIZA\s+RENT\s+A\s+CAR', text, re.IGNORECASE) \
                     and not re.search(r'FATURA\s*/\s*DUPLICATA\s*N[ºo]', text, re.IGNORECASE):
                 return False
 
@@ -8079,7 +8337,7 @@ class SPPdfExtractor:
         
         for text_block, page_idx in invoices_texts:
             if len(text_block.strip()) < 50: continue
-            
+
             sub_ext = SPPdfExtractor(self.pdf_path)
             sub_ext.raw_text = text_block
             # Propaga a origem (OCR vs texto embutido) para a detecção de layout
