@@ -11,6 +11,18 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
+## [Não lançado]
+
+### Corrigido
+
+- Monte Santo/BA: serviço de construção civil (item 07.02) prestado fora da
+  sede do prestador não estava incidindo o ISSQN no município correto da
+  obra (LC 116/2003 art. 3º III) — a nota traz "Local do Serviço: Fora do
+  Município" e a cidade da obra em texto livre ("OBRA: ..., <CIDADE>/<UF>"),
+  extraível de forma confiável pela âncora de fim de linha. `Nfse.
+  municipio_incidencia_override` agora também cobre esse layout (mesmo
+  padrão já usado no Guarulhos/SP).
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado

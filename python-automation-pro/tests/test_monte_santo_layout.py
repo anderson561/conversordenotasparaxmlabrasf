@@ -66,6 +66,13 @@ def test_extract_monte_santo_nfse_65(monkeypatch):
         assert nfse.discriminacao == "INSTALAÇÕES HIDRÁULICAS"
         assert nfse.optante_simples_nacional is True
 
+        # Construção civil (0702) prestada FORA da sede do prestador (LC116
+        # art.3º III): "Local do Serviço: Fora do Município" + linha de texto
+        # livre "OBRA: ..., CAMAÇARI/BA" -> incidência do ISSQN vai para o
+        # município da OBRA (Camaçari, 2905701), não para o de Monte Santo
+        # (endereço/cadastro do prestador, que permanece inalterado abaixo).
+        assert nfse.municipio_incidencia_override == "2905701"
+
         p = nfse.prestador
         assert p.cnpj_cpf == "54849932000132"
         assert p.razao_social == "PEAD NORDESTE LTDA"
