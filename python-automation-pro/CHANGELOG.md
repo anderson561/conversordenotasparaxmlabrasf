@@ -11,6 +11,18 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
+## [Não lançado]
+
+### Corrigido
+
+- PASSWORD/eNotas Gateway: layout passa a cobrir um 2º emitente na mesma
+  plataforma (INFOMIX Soluções em Tecnologia LTDA, Lauro de Freitas/BA,
+  antes caía em "layout não reconhecido", 0 XML gerado) — código do serviço
+  com nº de dígitos variável no "código interno" do gateway saía truncado, e
+  a razão social do tomador podia sair como o rótulo "E-MAIL" quando os
+  rótulos "NOME/RAZÃO SOCIAL" e "E-MAIL" vêm despejados juntos antes dos 2
+  valores.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado
