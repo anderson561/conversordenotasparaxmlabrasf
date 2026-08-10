@@ -13,6 +13,28 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Adicionado
+
+- Novo layout **Camaçari/BA via plataforma SISLOC** ("NFS-e Easy" da Benefix)
+  — PDF digital cujo gerador desenha rótulos e valores como blocos de texto
+  separados; `pdfminer.extract_text()` padrão despejava tudo concatenado
+  num blob único ao final do documento, sem relação com o rótulo. Corrigido
+  reconstruindo o texto por coordenada de caractere em vez da ordem de
+  leitura padrão.
+
+### Corrigido
+
+- Camaçari/BA (escaneado/OCR): número da nota e CNPJ do prestador saindo
+  incorretos em algumas notas (ex.: nº 20335, PADUA COMÉRCIO E REFORMA DE
+  PNEUS) — o recorte de cabeçalho podia não recuperar o número corretamente
+  em nenhuma das tentativas, e um CNPJ de prestador com dígito trocado
+  (checksum inválido) podia acabar herdando o CNPJ do TOMADOR pelo fallback
+  genérico. Corrigido via novo layout `LAYOUT_CAMACARI_3`, superset do
+  layout escaneado anterior (preservado intocado): número cai no fallback
+  do nome do arquivo quando o recorte falha, e um CNPJ de prestador sem
+  checksum válido é descartado para o sentinela + aviso em vez de herdar o
+  CNPJ de outra entidade do documento.
+
 ## [1.1.1] - 2026-08-07
 
 ### Corrigido
