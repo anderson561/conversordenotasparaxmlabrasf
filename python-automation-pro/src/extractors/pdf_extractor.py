@@ -12,7 +12,9 @@ Layouts detectados automaticamente:
 """
 
 # pyrefly: ignore[missing-import]
-from pdfminer.high_level import extract_text
+from pdfminer.high_level import extract_text, extract_pages
+# pyrefly: ignore[missing-import]
+from pdfminer.layout import LTChar
 import re
 from typing import Optional, List
 from ..models.nfse_models import Nfse, Entidade, Endereco, Valores
@@ -75,6 +77,7 @@ LAYOUT_CAMACARI_AVULSA = 'camacari_ba_avulsa'  # Camaçari/BA - NOTA FISCAL DE P
 LAYOUT_FF_LOCACAO = 'ff_locacao'  # F&F Comércio e Serviços de Telecomunicações de Segurança Eletrônica LTDA (Fatura de Locação de CFTV), escaneada. Detecção por CNPJ do emissor (13.398.812/0001-89), não pela frase "FATURA DE LOCAÇÃO" - o layout de 2 colunas do OCR quebra essa frase (intercalada com o nome da empresa). Campo "VALOR TOTAL DA FATURA" da nota-fonte traz um placeholder de template não substituído ("#venda_valor_total#") - valor real vem da tabela de itens (coluna "Valor Liquido")
 LAYOUT_BROTAS_MACAUBAS = 'brotas_macaubas_ba'  # Prefeitura de Brotas de Macaúbas/BA (CNPJ 13.797.600/0001-74, plataforma nfservico.com.br - mesma da IAÇU) - NFS-e tributada, escaneada (JPG/foto, tipicamente de cabeça para baixo). Reaproveita o parser de entidade do Iaçu (mesmos rótulos/estrutura), com 2 ajustes tolerantes: "|" (OCR de "Nº") colado no endereço do prestador, e nome/CREA do engenheiro colado na razão social do tomador. Caixa de cabeçalho via o MESMO recorte dedicado do Iaçu (_ocr_header_box_iacu, agora com suporte a ângulo de rotação); número/valores/discriminação com âncoras próprias (grade de valores sem o campo "Valor total das deduções" que o Iaçu tem). Código de serviço fixo "0702" (mapeado do CNAE 4391-6/00 impresso na nota - a nota traz "Item da lista de serviços: 0", que não é um código LC116 válido; decisão do usuário)
 LAYOUT_GUARULHOS = 'guarulhos_sp'  # Prefeitura Municipal de Guarulhos/SP (plataforma Ginfes, guarulhos.ginfes.com.br) - NFS-e tributada, escaneada (foto/CamScanner). Grade densa de células cinza (baixo contraste) faz a leitura padrão perder o Código de Verificação, o Local da Prestação e toda a grade "Cálculo do ISSQN devido no Município" - recuperados via `_ocr_recut_guarulhos` (3 recortes em zoom alto + binarização, mesmo racional do Camaçari). Serviço de construção civil (item 7.02) prestado em OUTRO município (campos "Local da Prestação" + "Natureza Operação: Tributação fora do município"/"ISS a reter: Não" na própria nota) - decisão do usuário: a incidência do ISSQN vai para o município da obra (Cuiabá/MT), não para o do prestador (Guarulhos), via `Nfse.municipio_incidencia_override`
+LAYOUT_CAMACARI_SISLOC = 'camacari_sisloc'  # Camaçari/BA via plataforma SISLOC (sisloc.com) + "NFS-e Easy" da Benefix (webenefix.com.br) - PDF DIGITAL (não escaneado), mas o gerador do PDF desenha rótulos e valores como blocos de texto separados; o `pdfminer.extract_text()` padrão despeja TODOS os valores concatenados num blob único no fim do documento, sem relação de proximidade com o rótulo. Corrigido reconstruindo o texto por COORDENADA de caractere (`_reconstruir_texto_por_coordenadas`: agrupa `LTChar` por linha/Y, ordena por X dentro da linha) em vez de usar a ordem de leitura padrão do pdfminer - técnica nova, para PDF digital com ordem de leitura quebrada (distinta de OCR/coluna-intercalada). Detectado pela marca da PLATAFORMA (SISLOC/Benefix), não pelo município, para não colidir com os Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2) nem futuras notas de outras plataformas no mesmo município. Município de prestação vem com código IBGE explícito na própria nota ("Cód. de Município IBGE: ..."). Item de tributação "9901" não é código LC116 válido (mesma convenção de Barreiras/PJB) - mapeado para "0000"
 
 
 # Etiquetas para Identificação de Entidades
@@ -135,6 +138,73 @@ class SPPdfExtractor:
         # cabeçalho do SP2) para renderizar a região na mesma orientação.
         self._ocr_rotation = 0
 
+    def _reconstruir_texto_por_coordenadas(self) -> str:
+        """Reconstrói o texto de uma página a partir da posição real de cada
+        caractere (`LTChar.x0/y0`), em vez de confiar na ordem de leitura que
+        `pdfminer.high_level.extract_text()` infere. Necessário para PDFs
+        digitais cujo gerador desenha rótulos e valores como blocos de texto
+        separados no fluxo interno do arquivo — o `extract_text()` padrão
+        despeja os valores todos concatenados num blob único, sem relação de
+        proximidade com o rótulo (achado real: DANFSe... não, Camaçari via
+        SISLOC/Benefix, nota nº 24052, FERIMPORTE SERVICE LTDA → DELTALINE
+        SERVICOS LTDA — número, razão social e todos os valores saíam
+        errados/zerados). Agrupa os caracteres em LINHAS por proximidade de Y
+        (tolerância de 2.5pt) e ordena cada linha por X — reconstrói a ordem
+        visual correta, igual à da imagem renderizada.
+
+        Restrita à página indicada por `self._pagina_hint` (1-based) quando
+        setado — em `parse_multiple()`, o bloco de texto de uma nota já vem
+        isolado por página; sem o hint, processa a página 0 (uso via
+        `parse()` direto num PDF de nota única, sem lote)."""
+        pagina = getattr(self, '_pagina_hint', None)
+        page_numbers = [pagina - 1] if pagina else [0]
+
+        chars = []
+
+        def _walk(obj):
+            if isinstance(obj, LTChar):
+                chars.append((obj.y0, obj.x0, obj.x1, obj.get_text()))
+            elif hasattr(obj, '__iter__'):
+                for child in obj:
+                    _walk(child)
+
+        for page in extract_pages(self.pdf_path, page_numbers=page_numbers):
+            _walk(page)
+
+        if not chars:
+            return ''
+
+        chars.sort(key=lambda c: -c[0])
+        linhas = []
+        y_atual = None
+        atual = []
+        for y0, x0, x1, ch in chars:
+            if y_atual is None or abs(y0 - y_atual) > 2.5:
+                if atual:
+                    linhas.append(atual)
+                y_atual = y0
+                atual = [(x0, x1, ch)]
+            else:
+                atual.append((x0, x1, ch))
+        if atual:
+            linhas.append(atual)
+
+        texto_linhas = []
+        for linha in linhas:
+            linha.sort(key=lambda c: c[0])
+            partes = []
+            x1_anterior = None
+            for x0, x1, ch in linha:
+                # Espaço explícito no fluxo original OU lacuna maior que a
+                # largura típica de um caractere (não é a mesma palavra).
+                if x1_anterior is not None and ch != ' ' and (x0 - x1_anterior) > 2.0:
+                    partes.append(' ')
+                partes.append(ch)
+                x1_anterior = x1
+            texto_linhas.append(''.join(partes))
+
+        return '\n'.join(texto_linhas)
+
     # ------------------------------------------------------------------
     # Extração de texto bruto
     # ------------------------------------------------------------------
@@ -181,6 +251,14 @@ class SPPdfExtractor:
         # como fallback para OCR severo em notas sem colisão municipal.
         if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
             return LAYOUT_NACIONAL
+        # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
+        # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
+        # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
+        # embaralha a ordem de leitura do texto digital (rótulos e valores em
+        # blocos separados), e o parser CPqD não serve pra ela. "SISLOC" e
+        # "NFS-e Easy"/"Benefix" são marcas exclusivas dessa plataforma.
+        if re.search(r'SISLOC|NFS-?e\s+Easy|webenefix', t, re.IGNORECASE):
+            return LAYOUT_CAMACARI_SISLOC
         # PJB Construção (Fatura de Locação de máquinas): detectada bem no TOPO
         # da cadeia porque o texto cita "SIMÕES FILHO", "CAMAÇARI" e "MONTE
         # GORDO" (cidade do emitente / do tomador) — se deixada para depois,
@@ -332,6 +410,14 @@ class SPPdfExtractor:
         # NFS-e" são do documento nacional padrão — check estreito e seguro.
         if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
             return LAYOUT_NACIONAL
+        # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
+        # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
+        # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
+        # embaralha a ordem de leitura do texto digital (rótulos e valores em
+        # blocos separados), e o parser CPqD não serve pra ela. "SISLOC" e
+        # "NFS-e Easy"/"Benefix" são marcas exclusivas dessa plataforma.
+        if re.search(r'SISLOC|NFS-?e\s+Easy|webenefix', t, re.IGNORECASE):
+            return LAYOUT_CAMACARI_SISLOC
         # PJB Construção (Fatura de Locação): no TOPO — o texto cita "SIMÕES
         # FILHO"/"CAMAÇARI"/"MONTE GORDO", que senão disparariam os layouts
         # municipais homônimos antes. Exige marca do emitente E marcador
@@ -481,6 +567,12 @@ class SPPdfExtractor:
         elif layout == LAYOUT_CAMACARI:
             m = re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_CAMACARI_SISLOC:
+            # "Competência:" e o valor ("31/07/2026") caem em linhas
+            # separadas na reconstrução por coordenada (rótulo e data ficam
+            # em bandas de Y levemente diferentes nesta grade).
+            m = re.search(r'Compet[eê]ncia\s*:\s*[\s\S]{0,20}?(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m: result = _parse_dmy(m.group(1)) or None
         elif layout == LAYOUT_MATA_SAO_JOAO:
             # "Data do Fato Gerador\n25/05/2026" — a competência é o mês do fato gerador.
             m = re.search(r'Data\s+do\s+Fato\s+Gerador\s*\n\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
@@ -625,6 +717,15 @@ class SPPdfExtractor:
             m = re.search(r'Data\s+e\s+Hora\s+da\s+Emiss[ãa]o\s*:\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            # "Emissão: 31/07/2026" — rótulo e data na mesma linha reconstruída
+            # por coordenada (diferente de "Competência:", que cai em linhas
+            # separadas nesta grade).
+            m = re.search(r'Emiss[ãa]o\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
                 if res: return res
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
@@ -880,6 +981,14 @@ class SPPdfExtractor:
             # "NÚMERO:\n\n788" — ancorado no rótulo próprio, evitando casar com
             # "CONTRATO: 702" (número do contrato, não da fatura).
             m = re.search(r'N[ÚU]MERO\s*:\s*[\n\s]*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            # "# NFS-e 24052" — texto já reconstruído por coordenada
+            # (ver `_reconstruir_texto_por_coordenadas`); ancorado no "#"
+            # para não casar com "# RPS" (número do RPS, documento anterior
+            # à nota, valor diferente).
+            m = re.search(r'#\s*NFS-e\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
@@ -1207,6 +1316,19 @@ class SPPdfExtractor:
             # ENTRE o rótulo "ART:" e o cabeçalho "DISCRIMINAÇÃO DOS SERVIÇOS"
             # (a grade de valores vem logo após o cabeçalho, sem a descrição).
             m = re.search(r'\bART:\s*\n\s*(.+?)\s*\n\s*DISCRIMINA[ÇC][ÃA]O', t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc:
+                    return disc
+
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            # Bloco entre o cabeçalho "DISCRIMINAÇÃO DOS SERVIÇOS" e o próximo
+            # rótulo da grade de tributação ("Código Tributação do
+            # Município:") — inclui a descrição real do serviço e a linha
+            # "Data de Vencimento:", ambas impressas sem quebra entre si.
+            m = re.search(
+                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS(.*?)C[óo]digo\s+Tributa[çc][ãa]o\s+do\s+Munic[íi]pio',
+                t, re.IGNORECASE | re.DOTALL)
             if m:
                 disc = re.sub(r'\s+', ' ', m.group(1)).strip()
                 if disc:
@@ -1547,6 +1669,14 @@ class SPPdfExtractor:
             # operação: código "0000" (não é serviço da lista da LC116).
             return "0000"
 
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            # A nota imprime "Código Tributação do Município: 9901" e
+            # "Código do Item Lista de Serviço (LC 116): 9901" — "9901" não é
+            # um código real da LC116 (mesma convenção não-padrão já vista em
+            # Barreiras/PJB para locação de bens móveis, item sem incidência
+            # de ISS). Mapeado para "0000".
+            return "0000"
+
         if self.layout == LAYOUT_BROTAS_MACAUBAS:
             # A nota imprime "Item da lista de serviços: 0 - Prestação de
             # serviços em geral" — não é um código LC116 real de 4 dígitos
@@ -1783,6 +1913,20 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).strip().upper()
 
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            # "Código de Verificação:\nSECRETARIA MUNICIPAL DE FINANÇAS\nUB9X49JPT"
+            # — na reconstrução por coordenada, uma linha inteira do
+            # cabeçalho ("SECRETARIA MUNICIPAL DE FINANÇAS", banda de Y
+            # intermediária) fica entre o rótulo e o valor. Varremos uma
+            # janela após o rótulo e pegamos o primeiro token alfanumérico
+            # que contenha ao menos um dígito (o cabeçalho é só texto).
+            m_lab = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*:', t, re.IGNORECASE)
+            if m_lab:
+                janela = t[m_lab.end():m_lab.end() + 150]
+                for cand in re.finditer(r'\b[A-Z0-9]{6,12}\b', janela):
+                    if re.search(r'\d', cand.group(0)):
+                        return cand.group(0).upper()
+
         # Brasília/DF: Extração específica do Código de Autenticidade (DPS)
         if self.layout == LAYOUT_BRASILIA:
             return self._extrair_codigo_autenticidade_brasilia()
@@ -1998,6 +2142,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_guarulhos(is_prestador)
+
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_camacari_sisloc(is_prestador)
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             if is_intermediario:
@@ -4833,6 +4982,76 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_camacari_sisloc(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da NFS-e de Camaçari/BA emitida via
+        SISLOC/NFS-e Easy (Benefix).
+
+        A reconstrução por coordenada (`_reconstruir_texto_por_coordenadas`)
+        recupera rótulo e valor na ordem visual correta, mas duas colunas
+        verticais de letras soltas ("PRESTADOR"/"TOMADO" escritas uma letra
+        por linha, rotacionadas na grade original) ficam intercaladas entre
+        os campos — não afetam a extração pois nenhum rótulo/regex bate
+        nelas. Delimitamos os dois blocos pela 1ª/2ª ocorrência de "Razão
+        Social:" (mesmo princípio já usado em Guarulhos)."""
+        t = self.raw_text
+        razoes = list(re.finditer(r'Ra[zs][ãa]o\s+Social\s*:', t, re.IGNORECASE))
+        m_disc = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        placeholder = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        if len(razoes) < 2:
+            return Entidade(
+                cnpj_cpf='00000000000000', razao_social=placeholder,
+                endereco=Endereco(logradouro='Não informado', numero='S/N', bairro='Não informado',
+                                   codigo_municipio='2905701', municipio='Não informado', uf='BA', cep='00000000'),
+            )
+
+        if is_prestador:
+            ini, fim = razoes[0].start(), razoes[1].start()
+        else:
+            ini, fim = razoes[1].start(), (m_disc.start() if m_disc else len(t))
+        bloco = t[ini:fim]
+
+        m_razao = re.search(r'Ra[zs][ãa]o\s+Social\s*:\s*([A-ZÀ-Ú][A-Za-zÀ-Úà-ú0-9 .\']+?)\s+Telefone\s*:', bloco, re.IGNORECASE)
+        razao = m_razao.group(1).strip(' .-') if m_razao else placeholder
+
+        m_cnpj = re.search(r'\b(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})\b', bloco)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        m_im = re.search(r'Inscri[çc][ãa]o\s+Municipal\s*:\s*(\d+)', bloco, re.IGNORECASE)
+        inscricao_municipal = m_im.group(1) if m_im else None
+
+        m_mun = re.search(r'Munic[íi]pio\s*:\s*([A-ZÀ-Ú][A-Za-zÀ-Úà-ú ]+?)\s+UF\s*:\s*([A-Z]{2})', bloco, re.IGNORECASE)
+        municipio = m_mun.group(1).strip() if m_mun else 'Não informado'
+        uf = m_mun.group(2).upper() if m_mun else 'BA'
+
+        logradouro, numero, bairro, cep = 'Não informado', 'S/N', 'Não informado', '00000000'
+        m_end = re.search(
+            r'Endere[çc]o\s*:\s*([A-ZÀ-Ú][A-Za-zÀ-Úà-ú0-9 .\']+?)\s*,\s*(\d+[A-Za-z]?)\s*,?\s*.*?-\s*'
+            r'([A-ZÀ-Úa-zà-ú0-9 ]+?)\s*CEP\s*:\s*(\d{2}\.?\d{3}-?\d{3})',
+            bloco, re.IGNORECASE)
+        if m_end:
+            logradouro = m_end.group(1).strip()
+            numero = m_end.group(2).strip()
+            bairro = m_end.group(3).strip()
+            cep = re.sub(r'\D', '', m_end.group(4))
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            inscricao_municipal=inscricao_municipal,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+        )
+
     @staticmethod
     def _parse_endereco_livre_osasco(raw: str) -> dict:
         """Quebra um endereço em linha única e formato livre (separado por
@@ -5314,6 +5533,58 @@ class SPPdfExtractor:
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
+
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            # Grade com 2 colunas lado a lado na mesma banda de Y (retenções
+            # federais à esquerda; valores do serviço à direita), mais uma
+            # coluna decorativa de letras soltas roda 90° ("RETENÇÕES
+            # FEDERAIS"/"VALORES") que a reconstrução por coordenada intercala
+            # entre os campos. O valor de INSS/Desc. Incondicionado cai
+            # deslocado para a banda de Y seguinte (mesmo efeito de
+            # deslocamento vertical, um nível abaixo do rótulo). "Valor do
+            # Serviço" e "Valor Líquido" ficam coladas ao próprio rótulo e são
+            # extraídos direto; os demais campos usam extração POSICIONAL (a
+            # ORDEM de aparição dos tokens "R$ ..." é fixa neste template —
+            # mesmo princípio já usado no layout Cuiabá), validada contra a
+            # nota real (FERIMPORTE SERVICE LTDA, NFS-e 24052, Camaçari/BA).
+            m_vs = re.search(r'Valor\s+do\s+Servi[çc]o\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            m_vl = re.search(r'Valor\s+L[íi]quido\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            valor_servicos = self._parse_valor(m_vs.group(1)) if m_vs else 0.0
+            valor_liquido_nfse = self._parse_valor(m_vl.group(1)) if m_vl else valor_servicos
+
+            m_aliq = re.search(r'Al[íi]quota\s*(\d{1,3}[.,]\d{2})\s*%', t, re.IGNORECASE)
+            aliquota = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
+
+            m_bloco = re.search(r'Nacional\s+NFS-e(.*?)Emitido\s+pela\s+SISLOC', t, re.IGNORECASE | re.DOTALL)
+            nums = re.findall(r'R\$\s*([\d.,]+)', m_bloco.group(1)) if m_bloco else []
+
+            if len(nums) == 14:
+                (pis, _vs_pos, desc_cond, cofins, deducoes, iss_retido_valor, inss,
+                 desc_incond, ir, base_calculo, _vl_pos, csll, outras, valor_iss) = (
+                    self._parse_valor(n) for n in nums
+                )
+            else:
+                pis = cofins = inss = ir = csll = outras = deducoes = 0.0
+                desc_incond = desc_cond = base_calculo = iss_retido_valor = valor_iss = 0.0
+
+            return Valores(
+                valor_servicos=valor_servicos,
+                valor_deducoes=deducoes,
+                valor_pis=pis,
+                valor_cofins=cofins,
+                valor_inss=inss,
+                valor_ir=ir,
+                valor_csll=csll,
+                iss_retido=iss_retido_valor > 0,
+                valor_iss=valor_iss,
+                valor_iss_retido=iss_retido_valor,
+                outras_retencoes=outras,
+                base_calculo=base_calculo or valor_servicos,
+                aliquota=aliquota,
+                valor_liquido_nfse=valor_liquido_nfse,
+                desconto_incondicionado=desc_incond,
+                desconto_condicionado=desc_cond,
+            )
 
         if self.layout == LAYOUT_BARREIRAS:
             # Grade "rótulos em bloco, depois valores em bloco" - vista em notas
@@ -7254,6 +7525,18 @@ class SPPdfExtractor:
         if len(self.raw_text.strip()) < 50: return None
 
         self.layout = self._detect_layout()
+
+        if self.layout == LAYOUT_CAMACARI_SISLOC:
+            # A ordem de leitura do `extract_text()` padrão está quebrada
+            # nesta plataforma (rótulos e valores em blocos separados no
+            # fluxo do PDF) — reconstrói o texto por coordenada de caractere
+            # antes de qualquer extração de campo. `self.layout` já está
+            # detectado (a marca "SISLOC"/"Benefix" sobrevive no texto
+            # quebrado), então é seguro trocar `raw_text` aqui.
+            texto_reconstruido = self._reconstruir_texto_por_coordenadas()
+            if texto_reconstruido.strip():
+                self.raw_text = texto_reconstruido
+
         numero = self._extrair_numero()
         codigo_verificacao = self._extrair_codigo_verificacao()
         data_emissao = self._extrair_data_emissao()
