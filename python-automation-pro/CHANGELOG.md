@@ -23,6 +23,20 @@ sessão, de todos os layouts/fixes entregues está em
   rótulos "NOME/RAZÃO SOCIAL" e "E-MAIL" vêm despejados juntos antes dos 2
   valores.
 
+## [Não lançado]
+
+### Corrigido
+
+- Salvador/BA: 4 bugs achados num review de uma nota real (nº 00006508) —
+  CNPJ do prestador/tomador com checksum inválido contaminava a Inscrição
+  Municipal com os próprios dígitos rejeitados; o número do endereço do
+  prestador saía colado ao complemento/bairro/cidade no campo `Numero`;
+  a grade Base de Cálculo/Alíquota/Valor do ISS saía zerada/errada quando o
+  rótulo "Alíquota (%)" vinha com um dígito de ruído de OCR embutido
+  (`"Alíquota (9%)"`); e o código de serviço caía no fallback genérico
+  `03115` quando o OCR lia "ltem" em vez de "Item". Nenhum exige layout
+  novo — correções aditivas no `LAYOUT_SALVADOR` existente.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado
