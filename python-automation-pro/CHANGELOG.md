@@ -38,6 +38,13 @@ sessão, de todos os layouts/fixes entregues está em
   colado ao logradouro sem vírgula ficava sem separar do lixo do split
   genérico. Nenhum exige layout novo — correções aditivas no
   `LAYOUT_SALVADOR` existente.
+- Salvador/BA: CNPJ do prestador/tomador com dígito errado NO MEIO do
+  número (não no dígito verificador) confirmava sentinela na importação
+  real do usuário (Domínio Sistemas rejeitava a nota inteira). Novo
+  recorte dedicado (`_ocr_recut_cnpj_invalido_salvador`, gated por
+  checksum reprovado) reprocessa em zoom alto só a linha de valores do
+  CNPJ e recupera o dígito certo quando possível, validando o resultado
+  antes de aceitar — nunca propaga um valor não validado.
 
 ## [1.3.0] - 2026-08-10
 

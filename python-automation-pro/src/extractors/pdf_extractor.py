@@ -7440,6 +7440,26 @@ class SPPdfExtractor:
                         if tomador_text.strip():
                             best_text = f"{tomador_text}\n{best_text}"
 
+                    # CNPJ bem-formado (pontuação intacta) mas com DÍGITO NO MEIO
+                    # errado — falha distinta das acima (formatação quebrada) e
+                    # do recut do tomador (que só dispara sem formatação válida
+                    # nenhuma). Achado real, nota 6508: OCR lê "34.288.699/0001-79"
+                    # (prestador) e "61.229.895/0001-90" (tomador), ambos com
+                    # dígito verificador CORRETO pra esses dígitos, mas REPROVAM o
+                    # checksum — conferido na imagem da própria página: os CNPJs
+                    # reais são "...688..." e "...885...", o OCR trocou um dígito
+                    # no MEIO do número mesmo com toda a pontuação certa. Gate por
+                    # evidência do defeito (checksum reprovado), não geometria.
+                    _cnpj_fmt_re = re.compile(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}')
+                    candidatos_cnpj = _cnpj_fmt_re.findall(best_text)
+                    if any(not self._validate_cnpj_cpf(c) for c in candidatos_cnpj):
+                        for idx, original in enumerate(candidatos_cnpj[:2]):
+                            if self._validate_cnpj_cpf(original):
+                                continue
+                            corrigido = self._ocr_recut_cnpj_invalido_salvador(page, idx, best_angle)
+                            if corrigido:
+                                best_text = best_text.replace(original, corrigido, 1)
+
                 # ARMAC (Fatura de Locação escaneada): a leitura padrão (3x, PSM
                 # automático) embaralha a grade multi-item e perde a linha
                 # "Valor total" e os blocos de entidade. Reprocessar a página
@@ -7705,6 +7725,61 @@ class SPPdfExtractor:
             return m.group(0) if m else ""
         except Exception:
             return ""
+
+    def _ocr_recut_cnpj_invalido_salvador(self, page, indice: int, angle: int = 0):
+        """Releitura dirigida da N-ésima ocorrência (0=prestador, 1=tomador) do
+        rótulo "CPF/CNPJ" da nota Salvador/BA, para o caso em que o candidato
+        do zoom padrão (3x) tem FORMATAÇÃO de CNPJ correta (pontuação intacta)
+        mas reprova o dígito verificador — achado real, nota 6508: o OCR troca
+        1 dígito NO MEIO do número ("699"→"688" no prestador, "895"→"885" no
+        tomador), confirmado errado ao ler a imagem original da página. Testado
+        e validado: um re-OCR de PÁGINA INTEIRA em zoom alto (8x) recupera o
+        prestador de forma diferente mas AINDA errada (troca dígito por letra,
+        "3d.288.688" em vez de "34.288.688") — só um recorte ESTREITO da linha
+        de valores (localizada dinamicamente via `image_to_data` no zoom 3, já
+        usado pra leitura padrão) reprocessada em zoom 8 dá o resultado certo
+        de forma estável. Devolve o texto do CNPJ formatado e JÁ VALIDADO
+        (checksum ok) para substituir o candidato original via `str.replace`,
+        ou `None` se não recuperar nada validável — nunca propaga um 2º
+        candidato inválido no lugar do 1º."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            if angle:
+                img_l = img_l.rotate(-angle, expand=True)
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+            ocorrencias = [i for i in range(len(data['text'])) if re.search(r'CNPJ', data['text'][i] or '', re.IGNORECASE)]
+            if indice >= len(ocorrencias):
+                return None
+            i = ocorrencias[indice]
+            y_top, h_label = data['top'][i], data['height'][i]
+
+            zoom_final = 8.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
+            if angle:
+                img_f = img_f.rotate(-angle, expand=True)
+            w_f, h_f = img_f.size
+            # Pula a linha do RÓTULO (0.9x sua altura) e cobre só a linha de
+            # valores logo abaixo (até 2.6x) — incluir o rótulo na mesma janela
+            # degradava a leitura do dígito nos testes (letra no lugar de "4").
+            y0 = max(0, int((y_top + h_label * 0.9) * escala))
+            y1 = min(h_f, int((y_top + h_label * 2.6) * escala))
+            crop = img_f.crop((0, y0, int(w_f * 0.45), y1))
+            txt = pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            m = re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
+            if m and self._validate_cnpj_cpf(m.group(0)):
+                return m.group(0)
+            return None
+        except Exception:
+            return None
 
     @staticmethod
     def _ocr_header_box_iacu(page, angle: int = 0) -> str:
