@@ -23,6 +23,29 @@ sessão, de todos os layouts/fixes entregues está em
   rótulos "NOME/RAZÃO SOCIAL" e "E-MAIL" vêm despejados juntos antes dos 2
   valores.
 
+## [Não lançado]
+
+### Corrigido
+
+- Salvador/BA: 4 bugs achados num review de uma nota real (nº 00006508) —
+  CNPJ do prestador/tomador com checksum inválido contaminava a Inscrição
+  Municipal com os próprios dígitos rejeitados; o número do endereço do
+  prestador saía colado ao complemento/bairro/cidade no campo `Numero`;
+  a grade Base de Cálculo/Alíquota/Valor do ISS saía zerada/errada quando o
+  rótulo "Alíquota (%)" vinha com um dígito de ruído de OCR embutido
+  (`"Alíquota (9%)"`); o código de serviço caía no fallback genérico
+  `03115` quando o OCR lia "ltem" em vez de "Item"; e "SN" (sem número)
+  colado ao logradouro sem vírgula ficava sem separar do lixo do split
+  genérico. Nenhum exige layout novo — correções aditivas no
+  `LAYOUT_SALVADOR` existente.
+- Salvador/BA: CNPJ do prestador/tomador com dígito errado NO MEIO do
+  número (não no dígito verificador) confirmava sentinela na importação
+  real do usuário (Domínio Sistemas rejeitava a nota inteira). Novo
+  recorte dedicado (`_ocr_recut_cnpj_invalido_salvador`, gated por
+  checksum reprovado) reprocessa em zoom alto só a linha de valores do
+  CNPJ e recupera o dígito certo quando possível, validando o resultado
+  antes de aceitar — nunca propaga um valor não validado.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado

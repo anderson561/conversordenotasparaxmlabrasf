@@ -1916,7 +1916,11 @@ class SPPdfExtractor:
             # "Item da Lista de Serviços:\n01714 - Advocacia." — a nota traz um
             # zero de preenchimento à esquerda do código LC 116 (17.14); removemos
             # para manter o padrão de 4 dígitos usado pelos demais layouts.
-            m = re.search(r'Item\s+da\s+Lista\s+de\s+Servi[çc]os\s*:?\s*\n?\s*0?(\d{3,4})', t, re.IGNORECASE)
+            # `[Il]tem` (não só "Item"): achado real, nota 6508 ("00105 -
+            # Licenciamento..."), o OCR leu "ltem" (l minúsculo no lugar do I)
+            # — sem essa tolerância, a regex nunca casava e caía no fallback
+            # genérico "03115" em vez do código real (0105).
+            m = re.search(r'[Il]tem\s+da\s+Lista\s+de\s+Servi[çc]os\s*:?\s*\n?\s*0?(\d{3,4})', t, re.IGNORECASE)
             if m:
                 return m.group(1)
 
@@ -3317,6 +3321,14 @@ class SPPdfExtractor:
         # esse candidato repetido a favor de outro CNPJ válido do MESMO
         # bloco; só aceita o repetido como último recurso, se não houver
         # nenhum outro.
+        # Todos os candidatos formatados como CNPJ perto do rótulo, válidos ou
+        # não — usado adiante para blindar a Inscrição Municipal contra um
+        # candidato de checksum REPROVADO (achado real: Salvador nota 6508,
+        # CNPJ do prestador e do tomador reprovam o dígito verificador — 1
+        # dígito corrompido no scan — e caem no sentinela abaixo; sem isso, o
+        # loop de Inscrição Municipal só filtrava o `cnpj` JÁ resolvido
+        # (sentinela), então o próprio CNPJ rejeitado vazava pra IM).
+        candidatos_cnpj_brutos = [re.sub(r'\D', '', m) for m in matches]
         cnpj_prestador_ja_extraido = None if is_prestador else getattr(self, '_cnpj_prestador_extraido', None)
         cnpj_fallback_repetido = None
         for m in matches:
@@ -3359,7 +3371,11 @@ class SPPdfExtractor:
             for d in digitos_contexto:
                 # `d in cnpj` descarta pedaços do próprio CNPJ: quando a pontuação
                 # cai, "48.310.477/0001" vira um blob de 12 dígitos que passaria por IM.
-                if d != cnpj and d not in cnpj:
+                # `candidatos_cnpj_brutos` cobre o caso em que o CNPJ perto do rótulo
+                # reprovou o checksum (cnpj já é o sentinela) — sem isso, o CNPJ
+                # rejeitado (que ainda é um candidato de dígitos válido no texto)
+                # vazava pra Inscrição Municipal.
+                if d != cnpj and d not in cnpj and not any(d == c or d in c for c in candidatos_cnpj_brutos):
                     insc = d
                     break
 
@@ -3707,10 +3723,41 @@ class SPPdfExtractor:
             # [bairro,] município (o penúltimo segmento é bairro só quando há 3+).
             m_end_sv = re.search(r'Endere[çc]o\s*:?\s*\n?\s*(.+?)(?=CEP\s*:|\n\s*E-mail|$)', bloco, re.IGNORECASE | re.DOTALL)
             if m_end_sv:
-                end_raw = re.sub(r'\s+', ' ', m_end_sv.group(1)).strip(' -,')
+                # `.` no strip: o OCR às vezes cola um ponto solto sobrando da
+                # palavra "Rua" cortada (achado real, nota 6508: "Endereço: .\nua
+                # Ewerton Visco 290").
+                end_raw = re.sub(r'\s+', ' ', m_end_sv.group(1)).strip(' -,.')
                 segs = [s.strip() for s in end_raw.split(' - ') if s.strip()]
                 if len(segs) >= 2:
-                    end_data['logradouro'] = segs[0]
+                    # O 1º segmento é "<logradouro> <número>[, <complemento>]"
+                    # (achado real, mesma nota: "ua Ewerton Visco 290 , COND
+                    # BOULEVARD SIDE EMPR SALA") — sem separar o número, o
+                    # campo `Numero` do XML saía com o complemento+bairro+
+                    # cidade inteiros (o bloco Salvador abaixo só corrigia
+                    # logradouro/bairro/município, nunca tocava `numero`).
+                    # Mesma técnica de separação já usada no LAYOUT_SAO_PAULO_2
+                    # (linhas ~3606-3647) para o mesmo formato de endereço.
+                    primeiro = segs[0]
+                    if ',' in primeiro:
+                        antes, depois = [p.strip(' .') for p in primeiro.split(',', 1)]
+                    else:
+                        antes, depois = primeiro, ''
+                    # Tolera "SN"/"S/N" (sem número) colado ao final do
+                    # logradouro, além de número real — achado real, mesma
+                    # nota, endereço do TOMADOR: "RUA ALA DAS DUNAS SN". Sem
+                    # isso, o `numero` ficava intocado com o lixo do split
+                    # genérico por vírgula de mais acima (a variante SN não
+                    # tem vírgula, então o `if m_num_sv` abaixo nunca disparava
+                    # e o `numero` nunca era sobrescrito).
+                    m_num_sv = re.match(r'^(.*\D)\s+(\d+[A-Za-z]?|S/?N)$', antes, re.IGNORECASE)
+                    if m_num_sv:
+                        end_data['logradouro'] = m_num_sv.group(1).strip(' .-')
+                        num_bruto = m_num_sv.group(2)
+                        end_data['numero'] = 'S/N' if re.fullmatch(r'S/?N', num_bruto, re.IGNORECASE) else num_bruto
+                    else:
+                        end_data['logradouro'] = antes.strip(' .-')
+                    if depois:
+                        end_data['complemento'] = depois
                     end_data['municipio'] = segs[-1]
                     if len(segs) >= 3:
                         end_data['bairro'] = segs[-2]
@@ -6390,18 +6437,39 @@ class SPPdfExtractor:
             # gravamos 0 nesses três campos em vez de inferir a partir do
             # Valor dos Serviços (decisão confirmada com o usuário).
             if re.search(r'RECOLHIDO\s+POR\s+QUOTA\s+PROFISSIONAL', t, re.IGNORECASE):
-                base, aliq, iss = 0.0, 0.0, 0.0
+                deducoes, base, aliq, iss = 0.0, 0.0, 0.0, 0.0
             else:
-                m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(R\$\)\D*?([\d\.,]+)', t, re.IGNORECASE)
-                base = self._parse_valor(m_base.group(1)) if m_base else val_serv
-                m_aliq = re.search(r'Al[ií]quota\s*\(%\)\D*?(\d{1,2},\d{1,2})', t, re.IGNORECASE)
-                aliq = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
-                m_iss = re.search(r'Valor\s+do\s+ISS\s*\(R\$\)\D*?([\d\.,]+)', t, re.IGNORECASE)
-                iss = self._parse_valor(m_iss.group(1)) if m_iss else 0.0
+                # As 3 regex antigas (rótulo + "primeiro número plausível
+                # depois") quebravam quando o PRÓPRIO rótulo saía com ruído de
+                # OCR contendo um dígito solto — achado real, nota 6508:
+                # "Alíquota (9%)" (o "9" é ruído dentro do rótulo, não é
+                # valor) fazia `Base de Cálculo\D*?([\d.,]+)` capturar esse
+                # "9" (o 1º dígito que aparece depois do rótulo, ainda dentro
+                # do cabeçalho da grade), `Alíquota\s*\(%\)` não casar mais
+                # (exige parênteses vazios) e `Valor do ISS\D*?([\d.,]+)`
+                # capturar o 1º valor da linha (Dedução) em vez do 4º (ISS).
+                # Corrigido casando a linha de 5 valores de uma vez só, na
+                # posição, mesma técnica já usada na grade INSS/PIS/COFINS
+                # acima e no LAYOUT_SAO_PAULO_2 (linhas ~6365-6387) — imune a
+                # ruído dentro do rótulo porque não lê dígito nenhum ali.
+                NUM5 = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+                m_grid5 = re.search(
+                    r'Valor\s+Total\s+das\s+Dedu[çc][õo]es.*?Base\s+de\s+C[áa]lculo.*?'
+                    r'Al[íi]quota.*?Valor\s+do\s+ISS.*?Cr[ée]dito.*?\(R\$\)\s*:?\s*\n\s*'
+                    + NUM5 + r'\s+' + NUM5 + r'\s+' + NUM5 + r'%?\s+' + NUM5 + r'\s+' + NUM5,
+                    t, re.IGNORECASE | re.DOTALL
+                )
+                if m_grid5:
+                    deducoes = self._parse_valor(m_grid5.group(1))
+                    base = self._parse_valor(m_grid5.group(2))
+                    aliq = self._parse_valor(m_grid5.group(3)) / 100
+                    iss = self._parse_valor(m_grid5.group(4))
+                else:
+                    deducoes, base, aliq, iss = 0.0, val_serv, 0.0, 0.0
 
             return Valores(
                 valor_servicos=val_serv,
-                valor_deducoes=0.0,
+                valor_deducoes=deducoes,
                 valor_pis=pis, valor_cofins=cofins, valor_inss=inss,
                 valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
                 base_calculo=base, aliquota=aliq, valor_iss=iss,
@@ -7372,6 +7440,26 @@ class SPPdfExtractor:
                         if tomador_text.strip():
                             best_text = f"{tomador_text}\n{best_text}"
 
+                    # CNPJ bem-formado (pontuação intacta) mas com DÍGITO NO MEIO
+                    # errado — falha distinta das acima (formatação quebrada) e
+                    # do recut do tomador (que só dispara sem formatação válida
+                    # nenhuma). Achado real, nota 6508: OCR lê "34.288.699/0001-79"
+                    # (prestador) e "61.229.895/0001-90" (tomador), ambos com
+                    # dígito verificador CORRETO pra esses dígitos, mas REPROVAM o
+                    # checksum — conferido na imagem da própria página: os CNPJs
+                    # reais são "...688..." e "...885...", o OCR trocou um dígito
+                    # no MEIO do número mesmo com toda a pontuação certa. Gate por
+                    # evidência do defeito (checksum reprovado), não geometria.
+                    _cnpj_fmt_re = re.compile(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}')
+                    candidatos_cnpj = _cnpj_fmt_re.findall(best_text)
+                    if any(not self._validate_cnpj_cpf(c) for c in candidatos_cnpj):
+                        for idx, original in enumerate(candidatos_cnpj[:2]):
+                            if self._validate_cnpj_cpf(original):
+                                continue
+                            corrigido = self._ocr_recut_cnpj_invalido_salvador(page, idx, best_angle)
+                            if corrigido:
+                                best_text = best_text.replace(original, corrigido, 1)
+
                 # ARMAC (Fatura de Locação escaneada): a leitura padrão (3x, PSM
                 # automático) embaralha a grade multi-item e perde a linha
                 # "Valor total" e os blocos de entidade. Reprocessar a página
@@ -7637,6 +7725,61 @@ class SPPdfExtractor:
             return m.group(0) if m else ""
         except Exception:
             return ""
+
+    def _ocr_recut_cnpj_invalido_salvador(self, page, indice: int, angle: int = 0):
+        """Releitura dirigida da N-ésima ocorrência (0=prestador, 1=tomador) do
+        rótulo "CPF/CNPJ" da nota Salvador/BA, para o caso em que o candidato
+        do zoom padrão (3x) tem FORMATAÇÃO de CNPJ correta (pontuação intacta)
+        mas reprova o dígito verificador — achado real, nota 6508: o OCR troca
+        1 dígito NO MEIO do número ("699"→"688" no prestador, "895"→"885" no
+        tomador), confirmado errado ao ler a imagem original da página. Testado
+        e validado: um re-OCR de PÁGINA INTEIRA em zoom alto (8x) recupera o
+        prestador de forma diferente mas AINDA errada (troca dígito por letra,
+        "3d.288.688" em vez de "34.288.688") — só um recorte ESTREITO da linha
+        de valores (localizada dinamicamente via `image_to_data` no zoom 3, já
+        usado pra leitura padrão) reprocessada em zoom 8 dá o resultado certo
+        de forma estável. Devolve o texto do CNPJ formatado e JÁ VALIDADO
+        (checksum ok) para substituir o candidato original via `str.replace`,
+        ou `None` se não recuperar nada validável — nunca propaga um 2º
+        candidato inválido no lugar do 1º."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            if angle:
+                img_l = img_l.rotate(-angle, expand=True)
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+            ocorrencias = [i for i in range(len(data['text'])) if re.search(r'CNPJ', data['text'][i] or '', re.IGNORECASE)]
+            if indice >= len(ocorrencias):
+                return None
+            i = ocorrencias[indice]
+            y_top, h_label = data['top'][i], data['height'][i]
+
+            zoom_final = 8.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
+            if angle:
+                img_f = img_f.rotate(-angle, expand=True)
+            w_f, h_f = img_f.size
+            # Pula a linha do RÓTULO (0.9x sua altura) e cobre só a linha de
+            # valores logo abaixo (até 2.6x) — incluir o rótulo na mesma janela
+            # degradava a leitura do dígito nos testes (letra no lugar de "4").
+            y0 = max(0, int((y_top + h_label * 0.9) * escala))
+            y1 = min(h_f, int((y_top + h_label * 2.6) * escala))
+            crop = img_f.crop((0, y0, int(w_f * 0.45), y1))
+            txt = pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            m = re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
+            if m and self._validate_cnpj_cpf(m.group(0)):
+                return m.group(0)
+            return None
+        except Exception:
+            return None
 
     @staticmethod
     def _ocr_header_box_iacu(page, angle: int = 0) -> str:
