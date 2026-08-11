@@ -33,9 +33,11 @@ sessão, de todos os layouts/fixes entregues está em
   prestador saía colado ao complemento/bairro/cidade no campo `Numero`;
   a grade Base de Cálculo/Alíquota/Valor do ISS saía zerada/errada quando o
   rótulo "Alíquota (%)" vinha com um dígito de ruído de OCR embutido
-  (`"Alíquota (9%)"`); e o código de serviço caía no fallback genérico
-  `03115` quando o OCR lia "ltem" em vez de "Item". Nenhum exige layout
-  novo — correções aditivas no `LAYOUT_SALVADOR` existente.
+  (`"Alíquota (9%)"`); o código de serviço caía no fallback genérico
+  `03115` quando o OCR lia "ltem" em vez de "Item"; e "SN" (sem número)
+  colado ao logradouro sem vírgula ficava sem separar do lixo do split
+  genérico. Nenhum exige layout novo — correções aditivas no
+  `LAYOUT_SALVADOR` existente.
 
 ## [1.3.0] - 2026-08-10
 
