@@ -3742,10 +3742,18 @@ class SPPdfExtractor:
                         antes, depois = [p.strip(' .') for p in primeiro.split(',', 1)]
                     else:
                         antes, depois = primeiro, ''
-                    m_num_sv = re.match(r'^(.*\D)\s+(\d+[A-Za-z]?)$', antes)
+                    # Tolera "SN"/"S/N" (sem número) colado ao final do
+                    # logradouro, além de número real — achado real, mesma
+                    # nota, endereço do TOMADOR: "RUA ALA DAS DUNAS SN". Sem
+                    # isso, o `numero` ficava intocado com o lixo do split
+                    # genérico por vírgula de mais acima (a variante SN não
+                    # tem vírgula, então o `if m_num_sv` abaixo nunca disparava
+                    # e o `numero` nunca era sobrescrito).
+                    m_num_sv = re.match(r'^(.*\D)\s+(\d+[A-Za-z]?|S/?N)$', antes, re.IGNORECASE)
                     if m_num_sv:
                         end_data['logradouro'] = m_num_sv.group(1).strip(' .-')
-                        end_data['numero'] = m_num_sv.group(2)
+                        num_bruto = m_num_sv.group(2)
+                        end_data['numero'] = 'S/N' if re.fullmatch(r'S/?N', num_bruto, re.IGNORECASE) else num_bruto
                     else:
                         end_data['logradouro'] = antes.strip(' .-')
                     if depois:
