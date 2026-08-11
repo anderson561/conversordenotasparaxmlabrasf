@@ -22,11 +22,6 @@ sessão, de todos os layouts/fixes entregues está em
   a razão social do tomador podia sair como o rótulo "E-MAIL" quando os
   rótulos "NOME/RAZÃO SOCIAL" e "E-MAIL" vêm despejados juntos antes dos 2
   valores.
-
-## [Não lançado]
-
-### Corrigido
-
 - Salvador/BA: 4 bugs achados num review de uma nota real (nº 00006508) —
   CNPJ do prestador/tomador com checksum inválido contaminava a Inscrição
   Municipal com os próprios dígitos rejeitados; o número do endereço do
@@ -45,6 +40,13 @@ sessão, de todos os layouts/fixes entregues está em
   checksum reprovado) reprocessa em zoom alto só a linha de valores do
   CNPJ e recupera o dígito certo quando possível, validando o resultado
   antes de aceitar — nunca propaga um valor não validado.
+- Lauro de Freitas/BA: `MunicipioIncidencia`/`Servico.CodigoMunicipio`
+  saíam com o município do prestador mesmo quando a nota indicava
+  explicitamente "LOCAL DA PRESTAÇÃO DO(S) SERVIÇO(S)" em outra cidade e
+  "Tributado fora do Município de Lauro de Freitas" (obra de construção
+  civil, LC 116/2003 art. 3º III) — o override de incidência já existia
+  mas só cobria o layout Guarulhos/SP. Estendido para também cobrir Lauro
+  de Freitas/BA, sem criar layout novo.
 
 ## [1.3.0] - 2026-08-10
 

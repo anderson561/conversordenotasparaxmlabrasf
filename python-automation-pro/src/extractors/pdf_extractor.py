@@ -8272,16 +8272,36 @@ class SPPdfExtractor:
         prestador). Guarulhos/SP: campos "Natureza Operação: Tributação
         fora do município" + "Local da Prestação" — decisão do usuário
         (nota real nº 3, obra em Cuiabá/MT)."""
-        if self.layout != LAYOUT_GUARULHOS:
-            return None
         t = self.raw_text
-        if not re.search(r'Tributa[çc][ãa]o\s+fora\s+do\s+munic[íi]pio', t, re.IGNORECASE):
-            return None
-        m = re.search(r'Local\s+da\s+Presta[çc][ãa]o\s*:\s*([A-Za-zÀ-Úà-ú]+)\s*-\s*([A-Z]{2})\b', t, re.IGNORECASE)
-        if not m:
-            return None
-        municipio, uf = m.group(1).strip(), m.group(2).upper()
-        return _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+        if self.layout == LAYOUT_GUARULHOS:
+            if not re.search(r'Tributa[çc][ãa]o\s+fora\s+do\s+munic[íi]pio', t, re.IGNORECASE):
+                return None
+            m = re.search(r'Local\s+da\s+Presta[çc][ãa]o\s*:\s*([A-Za-zÀ-Úà-ú]+)\s*-\s*([A-Z]{2})\b', t, re.IGNORECASE)
+            if not m:
+                return None
+            municipio, uf = m.group(1).strip(), m.group(2).upper()
+            return _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # Mesma regra da LC 116/2003 art. 3º III, com o texto próprio deste
+            # município (achado real 2026-08-11, nota 202645, obra em
+            # Salvador/BA): "Competência: ... - Tributado fora do Município de
+            # Lauro de Freitas - ..." confirma que a incidência não é a sede do
+            # prestador, e "LOCAL DA PRESTAÇÃO DO(S) SERVIÇO(S): <Cidade> - UF"
+            # traz o município correto — rótulo mais longo que o de Guarulhos
+            # ("DO(S) SERVIÇO(S)" entre "Prestação" e ":"), por isso um regex
+            # próprio em vez de reaproveitar o de cima.
+            if not re.search(r'Tributad[ao]\s+fora\s+do\s+Munic[íi]pio\s+de', t, re.IGNORECASE):
+                return None
+            m = re.search(
+                r'Local\s+da\s+Presta[çc][ãa]o[^:]*:\s*([A-Za-zÀ-Úà-ú]+)\s*-\s*([A-Z]{2})\b',
+                t, re.IGNORECASE)
+            if not m:
+                return None
+            municipio, uf = m.group(1).strip(), m.group(2).upper()
+            return _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return None
 
     def parse_multiple(self) -> List[Nfse]:
         """Extrai múltiplas notas do mesmo PDF, fatiando blocos de texto por heurística de início de nota."""
