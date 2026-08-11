@@ -88,6 +88,19 @@ def test_prestador_endereco_numero_separado_do_complemento(nfse):
     assert e.cep == "41820022"
 
 
+def test_tomador_endereco_sn_glued_ao_logradouro(nfse):
+    # "RUA ALA DAS DUNAS SN" (sem vírgula) — variante distinta da do
+    # prestador (que tem número real + vírgula): o "SN" (sem número) fica
+    # colado ao logradouro, sem separador nenhum. Sem tolerar isso, o campo
+    # `numero` ficava com o lixo do split genérico por vírgula (o bloco
+    # Salvador-específico só sobrescrevia `numero` quando achava um dígito).
+    e = nfse.tomador.endereco
+    assert e.logradouro == "RUA ALA DAS DUNAS"
+    assert e.numero == "S/N"
+    assert e.municipio == "Camaçari"
+    assert e.uf == "BA"
+
+
 def test_grade_base_aliquota_iss_imune_a_ruido_no_rotulo(nfse):
     v = nfse.valores
     assert v.valor_servicos == 301.00
