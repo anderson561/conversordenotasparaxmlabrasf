@@ -1252,8 +1252,32 @@ class SPPdfExtractor:
             # vai direto para o fallback honesto (nome do arquivo, que aqui
             # recupera corretamente "20335" de "... NF 20335 ...") ou o
             # placeholder + aviso — nunca fabricando um valor de outro campo.
-            for m_lab in re.finditer(r'mero\s+da\s+Nota', t, re.IGNORECASE):
-                janela = t[m_lab.end(): m_lab.end() + 80]
+            #
+            # Achado real (nota nº 285, pág.20, lote PH Gestão 07/2026): uma
+            # das 3 leituras do recorte perde o "úm" inteiro e degrada pra
+            # "nero da Nota" (em vez de "mero da Nota") — mas, diferente da
+            # nota 20335 acima, o número que vem colado é CONFIÁVEL: as
+            # OUTRAS 2 tentativas de recorte da mesma caixa também produzem
+            # um bloco próprio (separado por linha em branco) cuja 1ª linha é
+            # esse mesmo número SOLTO, sem rótulo nenhum — 3 leituras
+            # independentes concordando é o sinal de corroboração que falta
+            # no caso 20335 (lá nenhum outro bloco tem "20338" como 1ª linha
+            # — testado e confirmado que exigir apenas "o número repete em
+            # QUALQUER lugar do texto" é enganoso: nesta mesma nota, "09"
+            # repete por coincidência em timestamps HH:MM, e "014" só repete
+            # porque a própria janela de busca alcança o bloco onde ele
+            # aparece — por isso a exigência é mais estrita: outro bloco cuja
+            # PRÓPRIA 1ª linha, fora da janela já usada para achar o
+            # candidato, seja exatamente esse número). Por isso a âncora
+            # aceita "nero da Nota" (além de "mero da Nota"), mas só quando o
+            # candidato foi achado via essa variante degradada — a âncora
+            # "mero da Nota" original (mais confiável) continua aceitando de
+            # primeira, sem essa exigência extra — comportamento idêntico ao
+            # de antes para todas as notas já validadas.
+            for m_lab in re.finditer(r'([mn])ero\s+da\s+Nota', t, re.IGNORECASE):
+                variante_degradada = m_lab.group(1).lower() == 'n'
+                janela_ini, janela_fim = m_lab.end(), m_lab.end() + 80
+                janela = t[janela_ini:janela_fim]
                 janela = re.sub(r'P[áa]gina\s*\d+\s*/\s*\d+', ' ', janela, flags=re.IGNORECASE)
                 for m_num in re.finditer(r'\b(\d+)\b', janela):
                     num = m_num.group(1)
@@ -1261,6 +1285,14 @@ class SPPdfExtractor:
                         continue
                     if num in ('2024', '2025', '2026', '2027'):
                         continue
+                    if variante_degradada:
+                        corroborado = any(
+                            m_blk.group(1) == num
+                            for m_blk in re.finditer(r'(?:\A|\n[ \t]*\n)[ \t]*(\d+)\b', t)
+                            if not (janela_ini <= m_blk.start(1) < janela_fim)
+                        )
+                        if not corroborado:
+                            continue
                     return num
             if getattr(self, 'pdf_path', None):
                 import os
