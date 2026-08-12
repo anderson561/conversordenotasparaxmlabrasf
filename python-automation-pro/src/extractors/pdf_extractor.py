@@ -2130,13 +2130,23 @@ class SPPdfExtractor:
             # no OCR (ex.: "césigo de Verificação", "aésigo de Verificação"), mas a
             # palavra "Verificação" em si e o valor logo abaixo saem legíveis de
             # forma consistente (ver _ocr_header_box_salvador). Ancoramos só em
-            # "erificação" e exigimos que o candidato misture letras e dígitos —
-            # uma palavra só-letras que caia na janela (ex.: fragmento de rótulo
-            # como "ador") nunca é o código real.
-            m = re.search(r'erifica[çc][aã]o\s*:?[\s\S]{0,20}?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
+            # "erificação".
+            #
+            # O OCR também funde o fim da palavra "Salvador" (do título "PREFEITURA
+            # MUNICIPAL DO SALVADOR"/"Nota Salvador", impresso bem perto) ao valor
+            # real, sem separador nenhum às vezes — ex.: "ALVADORYRYSURMV" em vez
+            # de "YRYSURMV" (nota Cajado nº 73) ou, com um espaço de sobra,
+            # "alvador ETNE-WBUQ" em vez de "ETNE-WBUQ" (achado real 2026-08-12,
+            # nota 11629/SAFE SEGURANÇA ELETRÔNICA). Pular esse prefixo
+            # explicitamente (em vez de só exigir dígito no candidato — o código
+            # real pode ser TODO letras, como nos 2 exemplos acima, então esse
+            # guard antigo rejeitava o valor certo e caía no fallback genérico,
+            # que reconcatenava "ALVADOR" + o código real com o rótulo garblado
+            # "Código de Verificação").
+            m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
             if m:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
-                if len(candidato) >= 6 and re.search(r'\d', candidato) and re.search(r'[A-Z]', candidato):
+                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato != 'ALVADOR':
                     return candidato
 
         if self.layout == LAYOUT_CUIABA:
@@ -7453,7 +7463,17 @@ class SPPdfExtractor:
                     # extração genérica do tomador acha o CNPJ/razão corretos primeiro.
                     m_tom = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS(.*?)(?=DISCRIMINA|PRESTADOR|$)',
                                       best_text, re.IGNORECASE | re.DOTALL)
-                    if m_tom and not re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', m_tom.group(1)):
+                    # O gatilho precisa tolerar o MESMO espaço em volta do
+                    # hífen que a extração real já tolera ("0001 -86", achado
+                    # real 2026-08-12, nota 11629/SAFE SEGURANÇA ELETRÔNICA) —
+                    # sem isso, um CNPJ que já está bem-formado (só com esse
+                    # ruído de espaço) era julgado "malformado" e disparava
+                    # este recut sem necessidade. O recut então lia o CNPJ
+                    # ERRADO (checksum reprovado) e, por ser prependado, criava
+                    # um 2º "TOMADOR DE SERVIÇOS" que o fatiamento genérico
+                    # pegava primeiro — o CNPJ certo do bloco original nunca
+                    # era alcançado, caindo no sentinela.
+                    if m_tom and not re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', m_tom.group(1)):
                         tomador_text = self._ocr_tomador_salvador(page, best_angle)
                         if tomador_text.strip():
                             best_text = f"{tomador_text}\n{best_text}"
