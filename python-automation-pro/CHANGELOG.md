@@ -15,6 +15,18 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- Salvador/BA escaneado: tomador extraído com o CNPJ ERRADO (nota real
+  nº 00011629, SAFE - SEGURANÇA ELETRÔNICA LTDA → MANUELLA CARVALHO
+  MARTINS BAHIA) — o gatilho do recut `_ocr_tomador_salvador` era mais
+  estrito que a extração real (não tolerava o espaço antes do hífen que a
+  extração já tolera), disparando o recut sem necessidade; o recut lia o
+  CNPJ errado e, por ser prependado, criava um 2º bloco "TOMADOR DE
+  SERVIÇOS" que a extração genérica encontrava primeiro, caindo no
+  sentinela. Corrigido alinhando a tolerância do gatilho à da extração.
+  Na mesma nota, `CodigoVerificacao` saía `ALVADORETNEWBUQ` (fusão com o
+  fim de "Salvador" do título) em vez de `ETNEWBUQ` — o guard antigo
+  exigia um dígito no candidato, mas o código real pode ser só letras;
+  corrigido pulando o prefixo "(S)ALVADOR" explicitamente na regex.
 - PASSWORD/eNotas Gateway: layout passa a cobrir um 2º emitente na mesma
   plataforma (INFOMIX Soluções em Tecnologia LTDA, Lauro de Freitas/BA,
   antes caía em "layout não reconhecido", 0 XML gerado) — código do serviço
