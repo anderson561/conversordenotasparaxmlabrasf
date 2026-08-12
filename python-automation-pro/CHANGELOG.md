@@ -15,6 +15,26 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- NF-e de Serviço de Comunicação (`telecom_comunicacao`): 6 bugs achados
+  num review de uma nota real (nº 31696, F&F Comunicações/Grupo F&F →
+  Boutique Guarajuba/PH Gestão, R$558,40) — layout que não tinha teste
+  nenhum até então. (1) Colisão de detecção com `ff_locacao` (mesmo
+  emissor, documentos diferentes) — o título da fatura de comunicação
+  agora tem prioridade sobre o CNPJ do emissor. (2) CNPJ do prestador saía
+  igual ao do tomador quando o OCR degradava o separador do CNPJ da F&F
+  — corrigido tolerando o ruído e excluindo candidatos já rotulados
+  "CNPJ/CPF" (sempre do tomador). (3) Leitura padrão perdia a coluna
+  direita inteira do cabeçalho (número, data de emissão, referência,
+  vencimento, total) — número caía num fallback genérico perigoso que
+  pescava o número da Resolução ANATEL citada no rodapé; novo recorte
+  dedicado em zoom 6x resolve. (4) Total a pagar com rótulo colado sem
+  vírgula decimal causaria valor 100x maior — corrigido. (5) Endereço do
+  tomador vazava o do prestador quando o tomador não tinha "Rua/Av" no
+  próprio endereço; município também vazava o bloco anterior colado por
+  um regex que casava quebra de linha. (6) Nomes do prestador/tomador
+  saíam corrompidos pelo recorte de zoom alto (ruído de colunas fundidas)
+  quando esse recorte é prependado ao texto. Suíte 211→218 verdes; teste
+  novo `test_telecom_comunicacao_ff_layout.py`.
 - Salvador/BA escaneado: tomador extraído com o CNPJ ERRADO (nota real
   nº 00011629, SAFE - SEGURANÇA ELETRÔNICA LTDA → MANUELLA CARVALHO
   MARTINS BAHIA) — o gatilho do recut `_ocr_tomador_salvador` era mais
