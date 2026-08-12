@@ -47,6 +47,22 @@ sessão, de todos os layouts/fixes entregues está em
   civil, LC 116/2003 art. 3º III) — o override de incidência já existia
   mas só cobria o layout Guarulhos/SP. Estendido para também cobrir Lauro
   de Freitas/BA, sem criar layout novo.
+- São Paulo/SP escaneado (`sao_paulo_sp_scan`): número da nota saía errado
+  (`392` em vez de `05121900`, nota real FLASH TECNOLOGIA) quando o
+  cabeçalho acima da caixa "Número da Nota" tinha altura diferente da nota
+  usada para calibrar o recorte fixo por percentual — o recorte caía na
+  caixa vizinha ("Código de Verificação") e a whitelist de dígitos
+  "inventava" um número a partir das letras. `_ocr_header_box_sao_paulo`
+  agora localiza o rótulo "Número da Nota" dinamicamente antes de recortar,
+  imune à altura variável do cabeçalho (recorte fixo antigo mantido como
+  fallback).
+- Extração genérica de Data de Emissão (compartilhada por ~30 layouts):
+  quando o texto tem mais de um rótulo de data batendo, a hora saía zerada
+  (`00:00:00`) se um rótulo sem hora ("Emitido em") aparecesse antes de um
+  rótulo com hora completa ("Data e Hora de Emissão") na lista de
+  prioridade — mesma nota FLASH TECNOLOGIA (o aviso de substituição do RPS
+  bate em "Emitido em" sem hora). Agora prefere o primeiro candidato COM
+  hora entre os que casaram, em vez do primeiro da lista.
 
 ## [1.3.0] - 2026-08-10
 

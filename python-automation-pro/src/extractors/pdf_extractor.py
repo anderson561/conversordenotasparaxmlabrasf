@@ -957,14 +957,32 @@ class SPPdfExtractor:
                 patterns.append(rf'{label}\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{{2}}/\d{{2}}/\d{{4}})(?:\s+(\d{{2}}:\d{{2}}(?::\d{{2}})?))?')
             else:
                 patterns.append(rf'{label}.*?(?::|\s|\n)+(\d{{2}}/\d{{2}}/\d{{4}})(?:\s+(\d{{2}}:\d{{2}}(?::\d{{2}})?))?')
+        candidatos_data = []
         for pattern in patterns:
             m = re.search(pattern, t, re.IGNORECASE | re.DOTALL)
             if m:
                 data_str = m.group(1)
                 hora_str = m.group(2) if m.lastindex >= 2 else None
+                candidatos_data.append((data_str, hora_str))
+
+        # Entre os rótulos que casaram, prefere o primeiro que tenha HORA —
+        # um rótulo genérico ("Emitido em") pode casar antes de um mais
+        # específico ("Data e Hora de Emissão") mesmo quando o específico tem
+        # o timestamp completo e o genérico não (achado real 2026-08-12, nota
+        # São Paulo escaneada FLASH TECNOLOGIA: o aviso de substituição do RPS
+        # "...emitido em 06/07/2026" batia antes de "Data e Hora de
+        # Emissão\n06/07/2026 16:41:44" e zerava a hora para 00:00:00). Só cai
+        # no 1º candidato sem hora se NENHUM candidato tiver hora — preserva o
+        # comportamento de todo layout que só tem 1 padrão casando.
+        for data_str, hora_str in candidatos_data:
+            if hora_str:
                 resultado = _parse_dmy(data_str, hora_str)
                 if resultado: return resultado
-                
+        for data_str, hora_str in candidatos_data:
+            resultado = _parse_dmy(data_str, hora_str)
+            if resultado: return resultado
+
+
         # Fallback usando a Chave de Acesso Nacional (Mês/Ano) para casos de OCR severo
         m_chave = re.search(r'\b(?:\d\s*){44,52}\b', t)
         if m_chave:
@@ -7906,24 +7924,76 @@ class SPPdfExtractor:
         com PSM 6 + whitelist de dígitos. Retorna uma linha sintética limpa
         ("Número da Nota\\n<n>") para a branch de número casar sem depender do
         resto da caixa. Validado contra a nota real (BOM NEGOCIO nº 00331020,
-        JPG rotacionado 180°)."""
+        JPG rotacionado 180°).
+
+        A caixa "Número da Nota" é a 1ª de 3 mini-tabelas empilhadas (Número da
+        Nota / Data e Hora de Emissão / Código de Verificação) — a ALTURA do
+        cabeçalho acima dela (logo + título + "NOTA FISCAL ELETRÔNICA..." +
+        "RPS Nº...") varia de nota para nota (achado real 2026-08-12, nota
+        FLASH TECNOLOGIA nº 05121900: o recorte fixo por percentual, calibrado
+        na nota BOM NEGÓCIO, caía 1 caixa abaixo do esperado e lia "Código de
+        Verificação" (MKT3-B9ZH) em vez de "Número da Nota" — a whitelist de
+        dígitos "inventava" números a partir das letras, saindo "392"). Fix:
+        localiza a palavra "Número" dinamicamente via `image_to_data` (zoom
+        3x, restrito à metade direita/terço superior da página, onde a caixa
+        sempre fica) e recorta só a linha imediatamente abaixo dela, em zoom
+        alto — imune à altura variável do cabeçalho. Mantém o recorte fixo
+        antigo como FALLBACK (só usado se a localização dinâmica não achar o
+        rótulo), preservando o comportamento já validado se a nova técnica
+        falhar por algum motivo imprevisto."""
         try:
             import pymupdf
             import pytesseract
             from PIL import Image
             import io
 
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            def _ocr_digitos(crop_img):
+                txt = pytesseract.image_to_string(
+                    crop_img.convert('L'), lang='por',
+                    config='--psm 6 -c tessedit_char_whitelist=0123456789'
+                )
+                # A whitelist de dígitos força até ruído de borda de célula (a
+                # linha vertical do quadro, lida como "|"/"4") a virar dígito
+                # solto — pegar o MAIOR grupo contíguo (o número real) em vez
+                # de concatenar TUDO com `re.sub(r'\D', '', txt)` evita que
+                # esse dígito espúrio isolado se cole ao número de verdade.
+                grupos = re.findall(r'\d+', txt)
+                return max(grupos, key=len) if grupos else ''
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             if angle:
-                img = img.rotate(-angle, expand=True)
-            w, h = img.size
-            crop = img.crop((int(w * 0.67), int(h * 0.098), int(w * 0.98), int(h * 0.126))).convert('L')
-            num = pytesseract.image_to_string(
-                crop, lang='por',
-                config='--psm 6 -c tessedit_char_whitelist=0123456789'
-            )
-            num = re.sub(r'\D', '', num)
+                img_l = img_l.rotate(-angle, expand=True)
+            w_l, h_l = img_l.size
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+            candidatos = [
+                i for i in range(len(data['text']))
+                if re.search(r'N[uú]mero', data['text'][i] or '', re.IGNORECASE)
+                and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3
+            ]
+
+            zoom_final = 6.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
+            if angle:
+                img_f = img_f.rotate(-angle, expand=True)
+            w_f, h_f = img_f.size
+
+            if candidatos:
+                i = candidatos[0]
+                x_left, y_top, h_label = data['left'][i], data['top'][i], data['height'][i]
+                x0 = max(0, int(x_left * escala * 0.9))
+                y0 = max(0, int((y_top + h_label * 1.1) * escala))
+                y1 = min(h_f, int((y_top + h_label * 3.2) * escala))
+                num = _ocr_digitos(img_f.crop((x0, y0, w_f, y1)))
+                if num:
+                    return f"Número da Nota\n{num}\n"
+
+            # Fallback: recorte fixo por percentual (comportamento original).
+            crop = img_f.crop((int(w_f * 0.67), int(h_f * 0.098), int(w_f * 0.98), int(h_f * 0.126)))
+            num = _ocr_digitos(crop)
             return f"Número da Nota\n{num}\n" if num else ""
         except Exception:
             return ""
