@@ -15,6 +15,25 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- PASSWORD/eNotas Gateway: layout passa a cobrir um 3º emitente na mesma
+  plataforma (TÉSSERA HOSPITALITY LTDA, Lauro de Freitas/BA) — a 1ª nota
+  ESCANEADA desta plataforma (PASSWORD/INFOMIX, já validados, são
+  digitais). O scan funde a grade "DADOS DO TOMADOR" numa única linha por
+  rótulo (ilegível pela extração dedicada) e degrada a coluna direita do
+  cabeçalho; recortes dinâmicos em zoom mais alto recuperam número/
+  competência/código/data/CNPJ/IM/tomador. Corrigido também um bug de
+  propagação em lote: os recortes ficavam guardados em atributos ESCALARES
+  de instância, resetados no início de toda chamada a `_ocr_page` — em lotes
+  de várias páginas, o valor da nota TÉSSERA era apagado pelo processamento
+  das páginas seguintes antes de `parse_multiple()` conseguir propagá-lo
+  para o extrator dedicado (`sub_ext`) que de fato monta a Entidade,
+  cruzando CNPJ/razão social do prestador com o tomador. Passaram a ser
+  dicionários indexados por página. Também corrigidos: CNPJ do tomador com
+  separador final "." em vez de "-"; razão social do prestador priorizando
+  a linha com sufixo social (LTDA/S.A./...) sobre a heurística posicional
+  (que caía num fragmento solto do logo); Base de Cálculo reconstituída
+  (Serviços - Deduções) quando a fusão de coluna do OCR elimina esse
+  rótulo por completo.
 - Salvador/BA escaneado: tomador extraído com o CNPJ ERRADO (nota real
   nº 00011629, SAFE - SEGURANÇA ELETRÔNICA LTDA → MANUELLA CARVALHO
   MARTINS BAHIA) — o gatilho do recut `_ocr_tomador_salvador` era mais
