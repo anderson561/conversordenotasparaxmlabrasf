@@ -15,6 +15,18 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- DANFSe Nacional (`danfse_nacional`): razão social do prestador saindo
+  ERRADA — o próprio endereço dele (ex.: `RUA ITAIPU, S/N, MONTE GORDO
+  (MONTE GORDO) Camaçari - BA 42840-178`) em vez do nome (nota real nº 4,
+  Camaçari/BA, prestador MEI ANA PAULA RIBEIRO DA SILVA) — quando a linha
+  "Nome / Nome Empresarial" vem colada com o e-mail na mesma linha da
+  grade e o OCR corrompe o "@" em `" (O"` (espaço + parênteses + O) em
+  vez das corrupções já toleradas (`Q`/`O`/`.` colados sem espaço), a
+  limpeza de e-mail não reconhecia o padrão, descartava a linha inteira
+  como inválida, e o fallback linha-a-linha acabava aceitando a linha de
+  Endereço/Município/CEP (sem rótulo de ruído reconhecido) como razão
+  social. Corrigido tolerando `"(O"`/`"QO"` (com espaço opcional antes)
+  como forma corrompida do "@".
 - São Paulo/SP escaneado (`sao_paulo_sp_scan`): número da nota saindo
   ERRADO (ex.: `13`/`7668` em vez de `05114339`/`05210826`) quando o
   próprio rótulo "Número" sai corrompido em fragmentos no zoom de
