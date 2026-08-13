@@ -64,7 +64,7 @@ LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrôni
 LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
-LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # PASSWORD Sistemas Eletronicos (NFS-e eNotas Gateway, Lauro de Freitas/BA)
+LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # NFS-e eNotas Gateway (Lauro de Freitas/BA) - nome do layout mantido por retrocompatibilidade, mas cobre MÚLTIPLOS emitentes na mesma plataforma: PASSWORD Sistemas Eletronicos (CNPJ 04.021.023/0001-33) e INFOMIX Soluções em Tecnologia (CNPJ 29.869.622/0001-32) - cada um detectado pelo próprio CNPJ, nunca pela marca genérica "eNotas", para não colidir com futuros emitentes do mesmo provedor. Extração de entidades/valores é genérica o bastante para servir ambos sem ramos dedicados, exceto 2 diferenças pontuais na estrutura de texto (código do serviço com nº de dígitos variável após a barra; rótulos "NOME/RAZÃO SOCIAL"+"E-MAIL" do tomador podem vir despejados juntos antes dos 2 valores)
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
 LAYOUT_PJB_LOCACAO = 'pjb_locacao'  # PJB Construção Aluguel de Máq. e Ser. (CNPJ 08.885.357, Simões Filho/BA) - Fatura de Locação de bens móveis escaneada, sem incidência de ISS; prestador fixo, tomador do bloco DESTINATÁRIO
@@ -135,6 +135,20 @@ class SPPdfExtractor:
         # (LAYOUT_SAO_PAULO_2) compartilham o mesmo cabeçalho, mas só o segundo
         # passa por OCR.
         self.from_ocr = False
+        # Recortes dedicados do PASSWORD/eNotas Gateway ESCANEADO (ver
+        # `_ocr_page`), indexados por página (0-indexed, mesma convenção de
+        # `_ocr_page`) — não por um único escalar. `parse_multiple()` fatia o
+        # lote em blocos e extrai cada nota num `SPPdfExtractor` NOVO
+        # (`sub_ext`), que nunca chama `_ocr_page` e por isso nunca teria
+        # esses recortes; sem o dicionário por página, um escalar só
+        # guardaria o resultado da ÚLTIMA página OCRizada do PDF inteiro
+        # (achado real, nota TÉSSERA HOSPITALITY, pág.4 de um lote de 33
+        # páginas — o escalar acabava sempre None quando `sub_ext.parse()`
+        # rodava, pois as páginas 5-33 resetavam e nunca repopulavam).
+        # `parse_multiple()` propaga o valor da página certa para `sub_ext`
+        # como atributo escalar antes de chamar `sub_ext.parse()`.
+        self._password_enotas_tomador_recut_por_pagina = {}
+        self._password_enotas_prestador_im_recut_por_pagina = {}
         # Ângulo (0/90/180/270) escolhido pelo _ocr_page ao corrigir a rotação
         # de fotos/scans — reaproveitado por recortes dedicados (ex.: caixa de
         # cabeçalho do SP2) para renderizar a região na mesma orientação.
@@ -280,7 +294,18 @@ class SPPdfExtractor:
         # razão social), conforme decidido — não casar por marca genérica do
         # gateway "eNotas" para evitar colisão com futuras notas de outros
         # emitentes que usem o mesmo provedor.
-        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR', t, re.IGNORECASE):
+        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR|'
+                     r'29\.?869\.?622[./]?0001-?32|INFOMIX\s+SOLU|'
+                     r'03\.?814\.?827[./]?0001-?27|T[ÉE]SSERA\s+HOSPITALITY', t, re.IGNORECASE):
+            # INFOMIX SOLUÇÕES EM TECNOLOGIA LTDA — 2º emissor (também de Lauro
+            # de Freitas/BA) na MESMA plataforma eNotas Gateway do PASSWORD.
+            # TÉSSERA HOSPITALITY LTDA — 3º emissor, mesma plataforma, mesma
+            # Lauro de Freitas/BA (achado real, nota RPS 988, pág.4 do lote
+            # Guarajuba Suítes 07/2026) — mas escaneada (sem texto embutido),
+            # ao contrário das 2 anteriores (digitais); ver branches OCR
+            # dedicados abaixo. Detecção por CNPJ próprio (não pela marca
+            # genérica "eNotas"), mesmo racional já documentado para não
+            # colidir com futuros emitentes na mesma plataforma.
             return LAYOUT_PASSWORD_ENOTAS
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
@@ -454,7 +479,18 @@ class SPPdfExtractor:
             return LAYOUT_PJB_LOCACAO
         if re.search(r'NOTA\s+DE\s+COBRAN[ÇC]A', t, re.IGNORECASE) and re.search(r'18\.?294\.?792', t):
             return LAYOUT_SULSEG_COBRANCA
-        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR', t, re.IGNORECASE):
+        if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR|'
+                     r'29\.?869\.?622[./]?0001-?32|INFOMIX\s+SOLU|'
+                     r'03\.?814\.?827[./]?0001-?27|T[ÉE]SSERA\s+HOSPITALITY', t, re.IGNORECASE):
+            # INFOMIX SOLUÇÕES EM TECNOLOGIA LTDA — 2º emissor (também de Lauro
+            # de Freitas/BA) na MESMA plataforma eNotas Gateway do PASSWORD.
+            # TÉSSERA HOSPITALITY LTDA — 3º emissor, mesma plataforma, mesma
+            # Lauro de Freitas/BA (achado real, nota RPS 988, pág.4 do lote
+            # Guarajuba Suítes 07/2026) — mas escaneada (sem texto embutido),
+            # ao contrário das 2 anteriores (digitais); ver branches OCR
+            # dedicados abaixo. Detecção por CNPJ próprio (não pela marca
+            # genérica "eNotas"), mesmo racional já documentado para não
+            # colidir com futuros emitentes na mesma plataforma.
             return LAYOUT_PASSWORD_ENOTAS
         if re.search(r'00\.111\.704|00111704|VIDAL\s+LOCA|LOCONTAINERS', t, re.IGNORECASE):
             return LAYOUT_LOCONTAINERS
@@ -880,6 +916,26 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1))
                 if res: return res
 
+        if self.layout == LAYOUT_PASSWORD_ENOTAS:
+            # O título ("...emitido em: 10/06/2026") traz a data de emissão
+            # de forma estável; o bloco "DATA DE EMISSÃO\n\n<data> <hora>"
+            # mais abaixo tem a HORA completa. Achado real (nota TÉSSERA
+            # HOSPITALITY, escaneada, pág.4 do lote Guarajuba Suítes
+            # 07/2026 — 1ª nota ESCANEADA desta plataforma): no OCR, a DATA
+            # desse 2º bloco sai corrompida pela fusão de coluna do
+            # cabeçalho ("9107/2026" em vez de "01/07/2026"), mas a HORA
+            # sobrevive intacta ("10:49:59"). Por isso preferimos a data do
+            # TÍTULO (não sofre essa fusão) + a hora do bloco "DATA DE
+            # EMISSÃO" quando capturável — nas 2 notas digitais já
+            # validadas (PASSWORD/INFOMIX) as duas datas são idênticas, o
+            # resultado não muda.
+            m_titulo = re.search(r'emitido\s+em\s*:?\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m_titulo:
+                m_hora = re.search(r'DATA\s+DE\s+EMISS[ÃA]O[\s\S]{0,40}?(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+                hora_str = m_hora.group(1) if m_hora else None
+                res = _parse_dmy(m_titulo.group(1), hora_str)
+                if res: return res
+
         if self.layout == LAYOUT_LOCALIZA:
             m = re.search(r'DATA DE EMISS[AÃ]O:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -945,14 +1001,32 @@ class SPPdfExtractor:
                 patterns.append(rf'{label}\s*(?:Incri[cç][aã]o|Inscri[cç][aã]o|[:\s\n])*(\d{{2}}/\d{{2}}/\d{{4}})(?:\s+(\d{{2}}:\d{{2}}(?::\d{{2}})?))?')
             else:
                 patterns.append(rf'{label}.*?(?::|\s|\n)+(\d{{2}}/\d{{2}}/\d{{4}})(?:\s+(\d{{2}}:\d{{2}}(?::\d{{2}})?))?')
+        candidatos_data = []
         for pattern in patterns:
             m = re.search(pattern, t, re.IGNORECASE | re.DOTALL)
             if m:
                 data_str = m.group(1)
                 hora_str = m.group(2) if m.lastindex >= 2 else None
+                candidatos_data.append((data_str, hora_str))
+
+        # Entre os rótulos que casaram, prefere o primeiro que tenha HORA —
+        # um rótulo genérico ("Emitido em") pode casar antes de um mais
+        # específico ("Data e Hora de Emissão") mesmo quando o específico tem
+        # o timestamp completo e o genérico não (achado real 2026-08-12, nota
+        # São Paulo escaneada FLASH TECNOLOGIA: o aviso de substituição do RPS
+        # "...emitido em 06/07/2026" batia antes de "Data e Hora de
+        # Emissão\n06/07/2026 16:41:44" e zerava a hora para 00:00:00). Só cai
+        # no 1º candidato sem hora se NENHUM candidato tiver hora — preserva o
+        # comportamento de todo layout que só tem 1 padrão casando.
+        for data_str, hora_str in candidatos_data:
+            if hora_str:
                 resultado = _parse_dmy(data_str, hora_str)
                 if resultado: return resultado
-                
+        for data_str, hora_str in candidatos_data:
+            resultado = _parse_dmy(data_str, hora_str)
+            if resultado: return resultado
+
+
         # Fallback usando a Chave de Acesso Nacional (Mês/Ano) para casos de OCR severo
         m_chave = re.search(r'\b(?:\d\s*){44,52}\b', t)
         if m_chave:
@@ -1062,9 +1136,24 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
             # "NÚMERO DA NOTA\n\n202600000038558" — ancorado no rótulo próprio
             # para não casar com o "RPS 38591" do cabeçalho nem com a inscrição
-            # municipal (14 dígitos) mais abaixo.
-            m = re.search(r'N[ÚU]MERO\s+DA\s+NOTA\s*[\n\s]*(\d+)', t, re.IGNORECASE)
-            if m: return m.group(1).strip()
+            # municipal (13 dígitos) mais abaixo. Achado real (nota TÉSSERA
+            # HOSPITALITY, RPS 988, pág.4 do lote Guarajuba Suítes 07/2026,
+            # 1ª nota ESCANEADA desta plataforma — as 2 anteriores eram
+            # digitais): no OCR (zoom padrão), o cabeçalho em 2 colunas sai
+            # fundido na mesma linha ("...EMPKM 15 202600000001829") — o
+            # valor não fica mais adjacente ao rótulo, tem o fim do endereço
+            # do prestador entre os dois. Por isso buscamos numa JANELA após
+            # o rótulo (não só adjacente) o 1º grupo de **≥14 dígitos**
+            # (distingue do nº do endereço/CEP/competência, todos mais
+            # curtos, e da Inscrição Municipal, de 13) — nas notas digitais
+            # já validadas o valor continua sendo o 1º candidato dentro da
+            # janela (comportamento idêntico, zero regressão).
+            m_lab = re.search(r'N[ÚU]MERO\s+DA\s+NOTA', t, re.IGNORECASE)
+            if m_lab:
+                janela = t[m_lab.end(): m_lab.end() + 200]
+                m_num = re.search(r'\b(\d{14,})\b', janela)
+                if m_num:
+                    return m_num.group(1).strip()
 
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             # "Número da Nota [ruído]\n\n00000018" — ancorado no rótulo próprio;
@@ -1904,17 +1993,27 @@ class SPPdfExtractor:
             # "Item da Lista de Serviços:\n01714 - Advocacia." — a nota traz um
             # zero de preenchimento à esquerda do código LC 116 (17.14); removemos
             # para manter o padrão de 4 dígitos usado pelos demais layouts.
-            m = re.search(r'Item\s+da\s+Lista\s+de\s+Servi[çc]os\s*:?\s*\n?\s*0?(\d{3,4})', t, re.IGNORECASE)
+            # `[Il]tem` (não só "Item"): achado real, nota 6508 ("00105 -
+            # Licenciamento..."), o OCR leu "ltem" (l minúsculo no lugar do I)
+            # — sem essa tolerância, a regex nunca casava e caía no fallback
+            # genérico "03115" em vez do código real (0105).
+            m = re.search(r'[Il]tem\s+da\s+Lista\s+de\s+Servi[çc]os\s*:?\s*\n?\s*0?(\d{3,4})', t, re.IGNORECASE)
             if m:
                 return m.group(1)
 
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
             # "CÓDIGO DO SERVIÇO\n\n15.03 / 1503 - Locação e manutenção..." — a
-            # nota traz o código LC116 em dois formatos (com e sem ponto); usamos
-            # os 4 dígitos sem ponto (1503) para manter o padrão dos demais layouts.
-            m = re.search(r'(\d{2})\.(\d{2})\s*/\s*(\d{4})\s*-', t)
+            # nota traz o código LC116 em dois formatos: "NN.NN" (item real da
+            # lista) e um "código interno" do gateway após a barra, que NÃO tem
+            # largura fixa (achado real, nota INFOMIX: "01.07 / 107 -", só 3
+            # dígitos, sem o zero à esquerda — o antigo `\d{4}` rígido não
+            # casava e caía no fallback genérico truncado "0001"). Usamos o
+            # próprio item "NN.NN" (grupos 1+2, sem ponto) em vez do código
+            # interno — mais robusto e, nas notas PASSWORD já validadas, dá o
+            # mesmo resultado (15.03 -> 1503 == o código interno "1503").
+            m = re.search(r'(\d{2})\.(\d{2})\s*/\s*\d{3,4}\s*-', t)
             if m:
-                return m.group(3)
+                return m.group(1) + m.group(2)
 
         if self.layout == LAYOUT_LAURO_FREITAS:
             # "ITEM DA LISTA DE SERVIÇOS:\n\n( Lei Municipal 1572/2015 )\n\n110201 -
@@ -1984,9 +2083,25 @@ class SPPdfExtractor:
             # código de verificação (formato XXXX-XXXX) vem no FIM da linha do
             # RPS. O padrão genérico casaria "RPS Nº" → "RPSN"; aqui ancoramos
             # em "emitido em <data>" e pegamos o token XXXX-XXXX seguinte.
-            m = re.search(r'emitido\s+em\s+\d{2}/\d{2}/\d{4}\s+([A-Z0-9]{4}-[A-Z0-9]{4})', t, re.IGNORECASE)
-            if not m:
-                m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', t)
+            #
+            # Achado real (nota FLASH TECNOLOGIA nº 05210826, RPS 3663196,
+            # pasta "0001-80" 07/2026): o OCR pode inserir um espaço espúrio
+            # DENTRO do próprio código ("1 LU3-QLER" em vez de "1LU3-QLER"),
+            # quebrando o casamento rígido `{4}-{4}` sem espaço — o regex
+            # antigo falhava por completo e caía no fallback genérico da
+            # função (mais abaixo), que reconcatenava o watermark
+            # "20260724u32223020000118" com um fragmento do rótulo "RPS Nº"
+            # ("RPSN"). Captura uma janela de até 15 caracteres após a data,
+            # remove qualquer espaço interno e SÓ ENTÃO casa o formato
+            # XXXX-XXXX — tolera o espaço sem afetar notas já limpas (nada
+            # a remover nelas).
+            m_janela = re.search(r'emitido\s+em\s+\d{2}/\d{2}/\d{4}\s+(.{0,15})', t, re.IGNORECASE)
+            if m_janela:
+                compactado = re.sub(r'\s+', '', m_janela.group(1))
+                m_cod = re.search(r'([A-Z0-9]{4}-[A-Z0-9]{4})', compactado, re.IGNORECASE)
+                if m_cod:
+                    return m_cod.group(1).upper()
+            m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', t)
             if m:
                 return m.group(1).upper()
 
@@ -2090,13 +2205,23 @@ class SPPdfExtractor:
             # no OCR (ex.: "césigo de Verificação", "aésigo de Verificação"), mas a
             # palavra "Verificação" em si e o valor logo abaixo saem legíveis de
             # forma consistente (ver _ocr_header_box_salvador). Ancoramos só em
-            # "erificação" e exigimos que o candidato misture letras e dígitos —
-            # uma palavra só-letras que caia na janela (ex.: fragmento de rótulo
-            # como "ador") nunca é o código real.
-            m = re.search(r'erifica[çc][aã]o\s*:?[\s\S]{0,20}?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
+            # "erificação".
+            #
+            # O OCR também funde o fim da palavra "Salvador" (do título "PREFEITURA
+            # MUNICIPAL DO SALVADOR"/"Nota Salvador", impresso bem perto) ao valor
+            # real, sem separador nenhum às vezes — ex.: "ALVADORYRYSURMV" em vez
+            # de "YRYSURMV" (nota Cajado nº 73) ou, com um espaço de sobra,
+            # "alvador ETNE-WBUQ" em vez de "ETNE-WBUQ" (achado real 2026-08-12,
+            # nota 11629/SAFE SEGURANÇA ELETRÔNICA). Pular esse prefixo
+            # explicitamente (em vez de só exigir dígito no candidato — o código
+            # real pode ser TODO letras, como nos 2 exemplos acima, então esse
+            # guard antigo rejeitava o valor certo e caía no fallback genérico,
+            # que reconcatenava "ALVADOR" + o código real com o rótulo garblado
+            # "Código de Verificação").
+            m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
             if m:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
-                if len(candidato) >= 6 and re.search(r'\d', candidato) and re.search(r'[A-Z]', candidato):
+                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato != 'ALVADOR':
                     return candidato
 
         if self.layout == LAYOUT_CUIABA:
@@ -3299,6 +3424,14 @@ class SPPdfExtractor:
         # esse candidato repetido a favor de outro CNPJ válido do MESMO
         # bloco; só aceita o repetido como último recurso, se não houver
         # nenhum outro.
+        # Todos os candidatos formatados como CNPJ perto do rótulo, válidos ou
+        # não — usado adiante para blindar a Inscrição Municipal contra um
+        # candidato de checksum REPROVADO (achado real: Salvador nota 6508,
+        # CNPJ do prestador e do tomador reprovam o dígito verificador — 1
+        # dígito corrompido no scan — e caem no sentinela abaixo; sem isso, o
+        # loop de Inscrição Municipal só filtrava o `cnpj` JÁ resolvido
+        # (sentinela), então o próprio CNPJ rejeitado vazava pra IM).
+        candidatos_cnpj_brutos = [re.sub(r'\D', '', m) for m in matches]
         cnpj_prestador_ja_extraido = None if is_prestador else getattr(self, '_cnpj_prestador_extraido', None)
         cnpj_fallback_repetido = None
         for m in matches:
@@ -3341,7 +3474,11 @@ class SPPdfExtractor:
             for d in digitos_contexto:
                 # `d in cnpj` descarta pedaços do próprio CNPJ: quando a pontuação
                 # cai, "48.310.477/0001" vira um blob de 12 dígitos que passaria por IM.
-                if d != cnpj and d not in cnpj:
+                # `candidatos_cnpj_brutos` cobre o caso em que o CNPJ perto do rótulo
+                # reprovou o checksum (cnpj já é o sentinela) — sem isso, o CNPJ
+                # rejeitado (que ainda é um candidato de dígitos válido no texto)
+                # vazava pra Inscrição Municipal.
+                if d != cnpj and d not in cnpj and not any(d == c or d in c for c in candidatos_cnpj_brutos):
                     insc = d
                     break
 
@@ -3689,10 +3826,41 @@ class SPPdfExtractor:
             # [bairro,] município (o penúltimo segmento é bairro só quando há 3+).
             m_end_sv = re.search(r'Endere[çc]o\s*:?\s*\n?\s*(.+?)(?=CEP\s*:|\n\s*E-mail|$)', bloco, re.IGNORECASE | re.DOTALL)
             if m_end_sv:
-                end_raw = re.sub(r'\s+', ' ', m_end_sv.group(1)).strip(' -,')
+                # `.` no strip: o OCR às vezes cola um ponto solto sobrando da
+                # palavra "Rua" cortada (achado real, nota 6508: "Endereço: .\nua
+                # Ewerton Visco 290").
+                end_raw = re.sub(r'\s+', ' ', m_end_sv.group(1)).strip(' -,.')
                 segs = [s.strip() for s in end_raw.split(' - ') if s.strip()]
                 if len(segs) >= 2:
-                    end_data['logradouro'] = segs[0]
+                    # O 1º segmento é "<logradouro> <número>[, <complemento>]"
+                    # (achado real, mesma nota: "ua Ewerton Visco 290 , COND
+                    # BOULEVARD SIDE EMPR SALA") — sem separar o número, o
+                    # campo `Numero` do XML saía com o complemento+bairro+
+                    # cidade inteiros (o bloco Salvador abaixo só corrigia
+                    # logradouro/bairro/município, nunca tocava `numero`).
+                    # Mesma técnica de separação já usada no LAYOUT_SAO_PAULO_2
+                    # (linhas ~3606-3647) para o mesmo formato de endereço.
+                    primeiro = segs[0]
+                    if ',' in primeiro:
+                        antes, depois = [p.strip(' .') for p in primeiro.split(',', 1)]
+                    else:
+                        antes, depois = primeiro, ''
+                    # Tolera "SN"/"S/N" (sem número) colado ao final do
+                    # logradouro, além de número real — achado real, mesma
+                    # nota, endereço do TOMADOR: "RUA ALA DAS DUNAS SN". Sem
+                    # isso, o `numero` ficava intocado com o lixo do split
+                    # genérico por vírgula de mais acima (a variante SN não
+                    # tem vírgula, então o `if m_num_sv` abaixo nunca disparava
+                    # e o `numero` nunca era sobrescrito).
+                    m_num_sv = re.match(r'^(.*\D)\s+(\d+[A-Za-z]?|S/?N)$', antes, re.IGNORECASE)
+                    if m_num_sv:
+                        end_data['logradouro'] = m_num_sv.group(1).strip(' .-')
+                        num_bruto = m_num_sv.group(2)
+                        end_data['numero'] = 'S/N' if re.fullmatch(r'S/?N', num_bruto, re.IGNORECASE) else num_bruto
+                    else:
+                        end_data['logradouro'] = antes.strip(' .-')
+                    if depois:
+                        end_data['complemento'] = depois
                     end_data['municipio'] = segs[-1]
                     if len(segs) >= 3:
                         end_data['bairro'] = segs[-2]
@@ -4213,20 +4381,49 @@ class SPPdfExtractor:
             m_cnpj = re.search(r'CNPJ\s*:?\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', b, re.IGNORECASE)
             cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
             m_im = re.search(r'INSCRI[ÇC][ÃA]O\s+MUNICIPAL\s*:?\s*(\d+)', b, re.IGNORECASE)
-            insc = m_im.group(1) if m_im else None
+            # Achado real (nota TÉSSERA HOSPITALITY, escaneada): o recorte de
+            # cabeçalho dedicado (`_ocr_recut_header_password_enotas`) lê os
+            # blocos fora de ordem física (PSM automático) e pode devolver a
+            # etiqueta "DADOS DO TOMADOR" ANTES da própria IM do prestador —
+            # nesse caso `bloco_prest` (tudo antes de "DADOS DO TOMADOR") não
+            # alcança a IM mesmo já limpa no recorte. Por isso ela é extraída
+            # separadamente em `_ocr_page` e guardada num atributo próprio,
+            # usado como fallback quando a busca no bloco falha.
+            insc = m_im.group(1) if m_im else getattr(self, '_password_enotas_prestador_im_recut', None)
             m_email = re.search(r'EMAIL\s*:?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', b, re.IGNORECASE)
             email = m_email.group(1) if m_email else None
             m_tel = re.search(r'TELEFONE\s*:?\s*(\d+)', b, re.IGNORECASE)
             telefone = m_tel.group(1) if m_tel else None
 
-            # Razão social: primeira linha de conteúdo após o cabeçalho "emitido em".
+            # Razão social: linha com sufixo de razão social (LTDA/S.A./
+            # EIRELI/ME/EPP) tem prioridade — achado real (nota TÉSSERA
+            # HOSPITALITY, escaneada): o recorte de cabeçalho dedicado
+            # (`_ocr_recut_header_password_enotas`) lê os blocos fora de
+            # ordem física e insere um fragmento solto ("HOSPITALITY",
+            # sub-legenda do logo) bem na linha que segue "emitido em: ...",
+            # antes da razão social real ("TESSERA HOSPITALITY LTDA") — a
+            # heurística posicional pega esse fragmento errado. Cai nela só
+            # se nenhuma linha com sufixo social for encontrada, preservando
+            # o comportamento das 2 notas digitais já validadas (PASSWORD/
+            # INFOMIX, cuja razão social não tem quebra de linha antes do
+            # sufixo nesse recorte inexistente).
+            # Classe de caracteres restrita a espaço/tab (não `\s`, que
+            # também casa quebra de linha) — sem isso, um fragmento solto
+            # em linha isolada ANTES do nome real (ex.: "HOSPITALITY",
+            # sub-legenda do logo) que também começa com letra maiúscula
+            # fazia o regex "vazar" por várias linhas em branco até achar
+            # o sufixo social bem mais abaixo, juntando os dois num só
+            # valor (achado real, mesma nota).
+            m_raz_suffix = re.search(
+                r'\n[ \t]*([A-ZÀ-Ú][A-ZÀ-Ú0-9À-Ú. &/-]*?(?:LTDA\.?|S\.?/?A\.?|EIRELI|EPP|ME))[ \t]*\n', b)
             m_raz = re.search(r'emitido\s+em\s*:?\s*\d{2}/\d{2}/\d{4}\s*\n+\s*(.+)', b, re.IGNORECASE)
-            razao = m_raz.group(1).strip() if m_raz else 'Prestador Não Identificado'
+            m_raz_match = m_raz_suffix or m_raz
+            razao = m_raz_match.group(1).strip() if m_raz_match else 'Prestador Não Identificado'
 
-            # Endereço: linha logo após a razão social.
+            # Endereço: linha logo após a razão social (qualquer que tenha casado).
             endereco_raw = 'Não informado'
-            if m_raz:
-                resto = b[m_raz.end():]
+            if m_raz_match:
+                resto = b[m_raz_match.end():]
                 m_end = re.search(r'\s*([^\n]+)', resto)
                 if m_end:
                     endereco_raw = m_end.group(1).strip()
@@ -4268,18 +4465,92 @@ class SPPdfExtractor:
             m = re.search(rotulo + r'\s*\n+\s*([^\n]+)', b, re.IGNORECASE)
             return m.group(1).strip() if m else None
 
-        razao = _campo(r'NOME\s*/\s*RAZ[ÃA]O\s+SOCIAL') or 'Tomador Não Identificado'
-        endereco_raw = _campo(r'ENDERE[ÇC]O') or 'Não informado'
+        # Achado real (nota TÉSSERA HOSPITALITY, escaneada, pág.4 do lote
+        # Guarajuba Suítes 07/2026 — 1ª nota ESCANEADA desta plataforma): o
+        # zoom padrão funde as colunas da grade numa única linha por
+        # rótulo ("| NOME / RAZÃO SOCIAL | E-MAIL | TELEFONE"), então NEM
+        # o rótulo fica sozinho na própria linha, invalidando toda a
+        # extração por `_campo` (que exige rótulo\nvalor). Um recorte
+        # dedicado em zoom mais alto (`_ocr_recut_tomador_password_enotas`,
+        # acionado em `_ocr_page` e guardado em atributo próprio — nunca
+        # prependado ao texto base, ver comentário lá) devolve a mesma
+        # grade só um pouco mais legível, ainda em linhas
+        # rótulos-todos-juntos / valores-todos-juntos (não rótulo\nvalor).
+        # Quando disponível, usamos esse recorte como fonte E com regexes
+        # de GRADE (valor1 | valor2 | valor3 na mesma linha, sem exigir
+        # adjacência ao próprio rótulo) — tentado primeiro; cai nos
+        # formatos já validados (`_campo` linha-a-linha) se não casar,
+        # preservando o comportamento das 2 notas digitais já validadas
+        # (PASSWORD/INFOMIX, que nunca setam esse atributo).
+        recut_tom = getattr(self, '_password_enotas_tomador_recut', None)
+        if recut_tom:
+            b = recut_tom
+
+        razao = None
+        m_raz_grade = re.search(
+            r'\n\s*[\'"|]*\s*([A-ZÀ-Ú][A-ZÀ-Ú0-9À-Ú.\s&/-]*?(?:LTDA\.?|S\.?/?A\.?|EIRELI|EPP|ME))\s*\|',
+            b)
+        if m_raz_grade:
+            razao = m_raz_grade.group(1).strip()
+
+        # Achado real (nota INFOMIX): às vezes os rótulos "NOME/RAZÃO SOCIAL" e
+        # "E-MAIL" vêm DESPEJADOS JUNTOS antes de seus 2 valores (em vez do
+        # padrão comum, rótulo imediatamente seguido do próprio valor, já
+        # validado nas notas PASSWORD) — sem tratar isso, `_campo` capturava o
+        # valor do rótulo seguinte ("E-MAIL") como se fosse a razão social.
+        # Tenta esse formato PRIMEIRO (mais específico); cai no genérico se
+        # não casar, preservando o comportamento das notas já validadas.
+        if not razao:
+            m_raz_dump = re.search(r'NOME\s*/\s*RAZ[ÃA]O\s+SOCIAL\s*\n+\s*E-?MAIL\s*\n+\s*([^\n]+)', b, re.IGNORECASE)
+            razao = (m_raz_dump.group(1).strip() if m_raz_dump else None) \
+                or _campo(r'NOME\s*/\s*RAZ[ÃA]O\s+SOCIAL') or 'Tomador Não Identificado'
+
+        # Endereço/Bairro/CEP em GRADE: "<endereço> | <bairro> | <cep>" numa
+        # única linha (colunas "ENDEREÇO | BAIRRO / DISTRITO | CEP" ficam
+        # juntas como cabeçalho, sem quebra de linha antes de cada valor).
+        m_end_grade = re.search(
+            r'\n[^\n|]*?([A-ZÀ-Ú][^|\n]*?)\s*\|\s*([^|\n]+?)\s*\|\s*(\d{5}-?\d{3}|\d{8})\s*\|?', b)
+        if m_end_grade:
+            endereco_raw = m_end_grade.group(1).strip()
+            bairro = m_end_grade.group(2).strip()
+            cep = re.sub(r'\D', '', m_end_grade.group(3))
+        else:
+            endereco_raw = _campo(r'ENDERE[ÇC]O') or 'Não informado'
+            bairro = _campo(r'BAIRRO\s*/\s*DISTRITO') or _campo(r'BAIRRO') or 'Não informado'
+            m_cep = re.search(r'\bCEP\s*\n+\s*(\d{5}-?\d{3}|\d{8})', b, re.IGNORECASE)
+            cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else '00000000'
+
         m_email = re.search(r'E-?MAIL\s*\n+\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', b, re.IGNORECASE)
         email = m_email.group(1) if m_email else None
-        bairro = _campo(r'BAIRRO\s*/\s*DISTRITO') or _campo(r'BAIRRO') or 'Não informado'
-        municipio = _campo(r'MUNIC[ÍI]PIO') or 'Não informado'
-        m_uf = re.search(r'\bUF\s*\n+\s*([A-Z]{2})\b', b, re.IGNORECASE)
-        uf = m_uf.group(1).strip() if m_uf else 'BA'
-        m_cep = re.search(r'\bCEP\s*\n+\s*(\d{5}-?\d{3}|\d{8})', b, re.IGNORECASE)
-        cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else '00000000'
-        m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', b)
-        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        # Município/UF em GRADE: "<município> <UF> <país> | ..." numa linha
+        # só (sem quebra antes de cada valor, mesmo racional do endereço).
+        # Tolera um fragmento solto de até 3 letras minúsculas entre
+        # município e UF (achado real, nota TÉSSERA HOSPITALITY: "Camaçari
+        # o BA Brasil" — ruído de OCR insere um "o" entre os dois,
+        # quebrando a adjacência direta e fazendo esse próprio fragmento
+        # ser capturado como se fosse o município).
+        m_mun_grade = re.search(r'\n([A-Za-zÀ-ú]{2,})(?:\s+[a-z]{1,3})?\s+([A-Z]{2})\s+[A-Za-zÀ-ú]+\s*\|', b)
+        if m_mun_grade:
+            municipio = m_mun_grade.group(1).strip()
+            uf = m_mun_grade.group(2).strip()
+        else:
+            municipio = _campo(r'MUNIC[ÍI]PIO') or 'Não informado'
+            m_uf = re.search(r'\bUF\s*\n+\s*([A-Z]{2})\b', b, re.IGNORECASE)
+            uf = m_uf.group(1).strip() if m_uf else 'BA'
+
+        # CNPJ: tolera separador espaço/ausente no lugar do ponto (achado
+        # real, nota TÉSSERA HOSPITALITY: "25311 856/0001-09" em vez de
+        # "25.311.856/0001-09" — a fusão de coluna do OCR troca 1 dos 2
+        # primeiros pontos por espaço ou o remove por completo) e também o
+        # separador final "-" trocado por "." (mesma nota, recorte
+        # dedicado do tomador: "0001.09" em vez de "0001-09"). Mais
+        # tolerante que o padrão digital ("\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}"
+        # estrito) — sem risco de regressão nas 2 notas digitais já
+        # validadas (cujo CNPJ já usa ponto/hífen, que também casam nas
+        # classes abaixo).
+        m_cnpj = re.search(r'(\d{2})[.\s]?(\d{3})[.\s]?(\d{3})/(\d{4})[-.\s]?(\d{2})', b)
+        cnpj = ''.join(m_cnpj.groups()) if m_cnpj else '00000000000000'
 
         logradouro, numero, complemento = _split_endereco(endereco_raw)
         mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
@@ -6363,18 +6634,39 @@ class SPPdfExtractor:
             # gravamos 0 nesses três campos em vez de inferir a partir do
             # Valor dos Serviços (decisão confirmada com o usuário).
             if re.search(r'RECOLHIDO\s+POR\s+QUOTA\s+PROFISSIONAL', t, re.IGNORECASE):
-                base, aliq, iss = 0.0, 0.0, 0.0
+                deducoes, base, aliq, iss = 0.0, 0.0, 0.0, 0.0
             else:
-                m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(R\$\)\D*?([\d\.,]+)', t, re.IGNORECASE)
-                base = self._parse_valor(m_base.group(1)) if m_base else val_serv
-                m_aliq = re.search(r'Al[ií]quota\s*\(%\)\D*?(\d{1,2},\d{1,2})', t, re.IGNORECASE)
-                aliq = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
-                m_iss = re.search(r'Valor\s+do\s+ISS\s*\(R\$\)\D*?([\d\.,]+)', t, re.IGNORECASE)
-                iss = self._parse_valor(m_iss.group(1)) if m_iss else 0.0
+                # As 3 regex antigas (rótulo + "primeiro número plausível
+                # depois") quebravam quando o PRÓPRIO rótulo saía com ruído de
+                # OCR contendo um dígito solto — achado real, nota 6508:
+                # "Alíquota (9%)" (o "9" é ruído dentro do rótulo, não é
+                # valor) fazia `Base de Cálculo\D*?([\d.,]+)` capturar esse
+                # "9" (o 1º dígito que aparece depois do rótulo, ainda dentro
+                # do cabeçalho da grade), `Alíquota\s*\(%\)` não casar mais
+                # (exige parênteses vazios) e `Valor do ISS\D*?([\d.,]+)`
+                # capturar o 1º valor da linha (Dedução) em vez do 4º (ISS).
+                # Corrigido casando a linha de 5 valores de uma vez só, na
+                # posição, mesma técnica já usada na grade INSS/PIS/COFINS
+                # acima e no LAYOUT_SAO_PAULO_2 (linhas ~6365-6387) — imune a
+                # ruído dentro do rótulo porque não lê dígito nenhum ali.
+                NUM5 = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+                m_grid5 = re.search(
+                    r'Valor\s+Total\s+das\s+Dedu[çc][õo]es.*?Base\s+de\s+C[áa]lculo.*?'
+                    r'Al[íi]quota.*?Valor\s+do\s+ISS.*?Cr[ée]dito.*?\(R\$\)\s*:?\s*\n\s*'
+                    + NUM5 + r'\s+' + NUM5 + r'\s+' + NUM5 + r'%?\s+' + NUM5 + r'\s+' + NUM5,
+                    t, re.IGNORECASE | re.DOTALL
+                )
+                if m_grid5:
+                    deducoes = self._parse_valor(m_grid5.group(1))
+                    base = self._parse_valor(m_grid5.group(2))
+                    aliq = self._parse_valor(m_grid5.group(3)) / 100
+                    iss = self._parse_valor(m_grid5.group(4))
+                else:
+                    deducoes, base, aliq, iss = 0.0, val_serv, 0.0, 0.0
 
             return Valores(
                 valor_servicos=val_serv,
-                valor_deducoes=0.0,
+                valor_deducoes=deducoes,
                 valor_pis=pis, valor_cofins=cofins, valor_inss=inss,
                 valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
                 base_calculo=base, aliquota=aliq, valor_iss=iss,
@@ -6578,20 +6870,40 @@ class SPPdfExtractor:
             )
 
         if self.layout == LAYOUT_PASSWORD_ENOTAS:
-            # NFS-e tributada (ISS 3%, Simples Nacional). Cada valor tem rótulo
-            # próprio com o valor na linha seguinte. O "VALOR DO ISS" é
-            # renderizado como "-" (não destacado, recolhido via DAS do Simples),
-            # então espelhamos a face: base e alíquota preenchidas, ISS = 0,00.
+            # NFS-e tributada (ISS 3%, Simples Nacional). Nas notas digitais
+            # já validadas (PASSWORD/INFOMIX) cada valor tem rótulo próprio
+            # com o valor na linha SEGUINTE. Achado real (nota TÉSSERA
+            # HOSPITALITY, escaneada, pág.4 do lote Guarajuba Suítes
+            # 07/2026 — 1ª nota ESCANEADA desta plataforma): no impresso
+            # (e por isso no OCR) rótulo e valor ficam na MESMA linha
+            # ("VALOR DOS SERVIÇOS: R$ 2964,77") — a exigência de `\n+`
+            # entre os dois não casava, zerando todos os valores. `\s*`
+            # (já usado antes do "R$") também casa quebra de linha, então
+            # tolera os dois formatos sem mudar o resultado nas notas
+            # digitais. O "VALOR DO ISS" é renderizado como "-" (não
+            # destacado, recolhido via DAS do Simples), então espelhamos a
+            # face: base e alíquota preenchidas, ISS = 0,00.
             def _val_apos(rotulo: str) -> float:
-                m = re.search(rotulo + r'\s*:?\s*\n+\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+                m = re.search(rotulo + r'\s*:?\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
                 return self._parse_valor(m.group(1)) if m else 0.0
 
             val_serv = _val_apos(r'VALOR\s+DOS\s+SERVI[ÇC]OS')
-            base = _val_apos(r'BASE\s+DE\s+C[ÁA]LCULO')
             deducoes = _val_apos(r'\(-\)\s*DEDU[ÇC][ÕO]ES')
             liquido = _val_apos(r'VALOR\s+L[ÍI]QUIDO')
 
-            m_aliq = re.search(r'AL[ÍI]QUOTA\s*:?\s*\n+\s*(\d{1,2},\d{1,2})\s*%', t, re.IGNORECASE)
+            # Achado real (nota TÉSSERA HOSPITALITY, escaneada): a grade de
+            # valores tem 2 colunas por linha ("RETENÇÕES FEDERAIS" +
+            # "BASE DE CÁLCULO"), e a leitura padrão (zoom 3x) às vezes
+            # elimina por completo o rótulo da coluna DIREITA, deixando só
+            # o valor solto colado ao da esquerda ("RETENÇÕES FEDERAIS:
+            # R$ 0,00 R$ 2964,77" — sem "BASE DE CÁLCULO" nenhum). Sem
+            # rótulo, nenhum regex alcança o valor. Quando isso ocorre,
+            # reconstituímos pela própria conta do ISS (Base = Serviços -
+            # Deduções), fiel ao valor real impresso na nota.
+            m_base = re.search(r'BASE\s+DE\s+C[ÁA]LCULO\s*:?\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            base = self._parse_valor(m_base.group(1)) if m_base else max(val_serv - deducoes, 0.0)
+
+            m_aliq = re.search(r'AL[ÍI]QUOTA\s*:?\s*(\d{1,2},\d{1,2})\s*%', t, re.IGNORECASE)
             aliquota = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
 
             return Valores(
@@ -7340,10 +7652,103 @@ class SPPdfExtractor:
                     # extração genérica do tomador acha o CNPJ/razão corretos primeiro.
                     m_tom = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS(.*?)(?=DISCRIMINA|PRESTADOR|$)',
                                       best_text, re.IGNORECASE | re.DOTALL)
-                    if m_tom and not re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', m_tom.group(1)):
+                    # O gatilho precisa tolerar o MESMO espaço em volta do
+                    # hífen que a extração real já tolera ("0001 -86", achado
+                    # real 2026-08-12, nota 11629/SAFE SEGURANÇA ELETRÔNICA) —
+                    # sem isso, um CNPJ que já está bem-formado (só com esse
+                    # ruído de espaço) era julgado "malformado" e disparava
+                    # este recut sem necessidade. O recut então lia o CNPJ
+                    # ERRADO (checksum reprovado) e, por ser prependado, criava
+                    # um 2º "TOMADOR DE SERVIÇOS" que o fatiamento genérico
+                    # pegava primeiro — o CNPJ certo do bloco original nunca
+                    # era alcançado, caindo no sentinela.
+                    if m_tom and not re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', m_tom.group(1)):
                         tomador_text = self._ocr_tomador_salvador(page, best_angle)
                         if tomador_text.strip():
                             best_text = f"{tomador_text}\n{best_text}"
+
+                    # CNPJ bem-formado (pontuação intacta) mas com DÍGITO NO MEIO
+                    # errado — falha distinta das acima (formatação quebrada) e
+                    # do recut do tomador (que só dispara sem formatação válida
+                    # nenhuma). Achado real, nota 6508: OCR lê "34.288.699/0001-79"
+                    # (prestador) e "61.229.895/0001-90" (tomador), ambos com
+                    # dígito verificador CORRETO pra esses dígitos, mas REPROVAM o
+                    # checksum — conferido na imagem da própria página: os CNPJs
+                    # reais são "...688..." e "...885...", o OCR trocou um dígito
+                    # no MEIO do número mesmo com toda a pontuação certa. Gate por
+                    # evidência do defeito (checksum reprovado), não geometria.
+                    _cnpj_fmt_re = re.compile(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}')
+                    candidatos_cnpj = _cnpj_fmt_re.findall(best_text)
+                    if any(not self._validate_cnpj_cpf(c) for c in candidatos_cnpj):
+                        for idx, original in enumerate(candidatos_cnpj[:2]):
+                            if self._validate_cnpj_cpf(original):
+                                continue
+                            corrigido = self._ocr_recut_cnpj_invalido_salvador(page, idx, best_angle)
+                            if corrigido:
+                                best_text = best_text.replace(original, corrigido, 1)
+
+                # PASSWORD/eNotas Gateway (Lauro de Freitas/BA) ESCANEADO: achado
+                # real, nota TÉSSERA HOSPITALITY (RPS 988, pág.4 do lote Guarajuba
+                # Suítes 07/2026) — 1ª nota ESCANEADA desta plataforma (PASSWORD e
+                # INFOMIX, os 2 emitentes já validados, são digitais). A leitura
+                # padrão (zoom 3x) funde as colunas da grade "DADOS DO TOMADOR"
+                # (NOME/RAZÃO SOCIAL | E-MAIL | TELEFONE, depois ENDEREÇO | BAIRRO
+                # | CEP, depois MUNICÍPIO | UF | PAÍS | CPF/CNPJ) numa única linha
+                # por rótulo — ilegível pela extração dedicada, que espera
+                # rótulo-em-cima/valor-embaixo sem fusão de coluna. Recorte
+                # dedicado (localizado dinamicamente entre "TOMADOR" e
+                # "DISCRIMINAÇÃO"/"PRESTACAO", zoom 8 + PSM 6) prependado.
+                if re.search(r'04\.?021\.?023[./]?0001-?33|29\.?869\.?622[./]?0001-?32|'
+                             r'03\.?814\.?827[./]?0001-?27|T[ÉE]SSERA\s+HOSPITALITY|'
+                             r'PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR|INFOMIX\s+SOLU',
+                             best_text, re.IGNORECASE):
+                    # Recorte do TOPO da página (28% da altura, zoom 8x, PSM
+                    # automático) recupera limpos Número da Nota/Competência/
+                    # Código de Verificação/Data de Emissão/CNPJ e Inscrição
+                    # Municipal do PRESTADOR, que saem corrompidos ou ausentes
+                    # na leitura padrão (zoom 3x) desta nota escaneada — a
+                    # fusão de coluna do cabeçalho degrada justamente esses
+                    # campos da coluna direita. Prependado com segurança: as
+                    # extrações de número/código/data operam no texto INTEIRO
+                    # (não dependem de onde a "DADOS DO TOMADOR" desta nota
+                    # aparece). A Inscrição Municipal do prestador É sensível
+                    # a essa posição (é lida só dentro do bloco ANTES de
+                    # "DADOS DO TOMADOR"), e o PSM automático deste recorte
+                    # lê os blocos fora de ordem física (a etiqueta "DADOS DO
+                    # TOMADOR" pode aparecer ANTES da própria IM do
+                    # prestador nesta leitura) — por isso a IM é extraída
+                    # aqui e guardada num atributo próprio, não deixada só
+                    # por conta do prepend.
+                    header_pw = self._ocr_recut_header_password_enotas(page)
+                    if header_pw.strip():
+                        # O PSM automático deste recorte lê os blocos fora de
+                        # ordem física e devolve sua PRÓPRIA ocorrência (falsa)
+                        # da etiqueta "DADOS DO TOMADOR" — a mesma usada em
+                        # `_extrair_entidade_password_enotas` para separar o
+                        # bloco do prestador do bloco do tomador. Sem remover
+                        # essa etiqueta antes de prependar, `bloco_prest`
+                        # (tudo antes da 1ª ocorrência) ficava truncado logo
+                        # no título do documento, esvaziando CNPJ/razão/
+                        # endereço do prestador (achado real, nota TÉSSERA
+                        # HOSPITALITY).
+                        header_pw_sem_rotulo = re.sub(r'DADOS\s+DO\s+TOMADOR', '', header_pw, flags=re.IGNORECASE)
+                        best_text = f"{header_pw_sem_rotulo}\n{best_text}"
+                        m_im_pw = re.search(r'INSCRI[ÇC][ÃA]O\s+MUNICIPAL\s*:?\s*(\d+)', header_pw, re.IGNORECASE)
+                        if m_im_pw:
+                            self._password_enotas_prestador_im_recut_por_pagina[page_num] = m_im_pw.group(1)
+
+                    # NÃO prependado a `best_text`: o recorte também começa
+                    # com o rótulo "DADOS DO TOMADOR", e prependá-lo faria
+                    # `m_tom.start()` (usado para separar o bloco do
+                    # PRESTADOR do bloco do TOMADOR em
+                    # `_extrair_entidade_password_enotas`) casar já no
+                    # início do texto combinado — esvaziando o bloco do
+                    # prestador. Guardado por página, consumido só pela
+                    # extração dedicada do tomador (ver comentário no
+                    # `__init__` sobre por que não pode ser um escalar).
+                    tomador_pw = self._ocr_recut_tomador_password_enotas(page)
+                    if tomador_pw.strip():
+                        self._password_enotas_tomador_recut_por_pagina[page_num] = tomador_pw
 
                 # ARMAC (Fatura de Locação escaneada): a leitura padrão (3x, PSM
                 # automático) embaralha a grade multi-item e perde a linha
@@ -7612,6 +8017,138 @@ class SPPdfExtractor:
             return ""
 
     @staticmethod
+    def _ocr_recut_header_password_enotas(page) -> str:
+        """Re-OCR do TOPO da página (28% da altura, zoom 8x, PSM automático)
+        do layout PASSWORD/eNotas Gateway ESCANEADO. Achado real (nota
+        TÉSSERA HOSPITALITY, RPS 988, pág.4 do lote Guarajuba Suítes
+        07/2026 — 1ª nota ESCANEADA desta plataforma): a leitura padrão
+        (zoom 3x, página inteira) funde a coluna direita do cabeçalho
+        (Número da Nota/Competência/Código de Verificação/Data de
+        Emissão) com o bloco de endereço do prestador à esquerda,
+        corrompendo ou eliminando o Código de Verificação, a Data de
+        Emissão e a Inscrição Municipal do prestador. Testado e validado
+        contra a imagem real da página: este recorte (28%/zoom8/PSM
+        automático) é o único, entre vários zoom/PSM/altura testados, que
+        recupera TODOS de uma vez — Código "04F8C91BB", Data "01/07/2026
+        10:49:59", IM "0010034437011" — sem exigir 2 recortes separados."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            rect = page.rect
+            clip = pymupdf.Rect(rect.x0, rect.y0, rect.x1, rect.y0 + rect.height * 0.28)
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 3')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_tomador_password_enotas(page) -> str:
+        """Recorta e reprocessa em zoom alto (8x, PSM 6) o bloco "DADOS DO
+        TOMADOR" do layout PASSWORD/eNotas Gateway ESCANEADO. Achado real
+        (nota TÉSSERA HOSPITALITY, RPS 988, pág.4 do lote Guarajuba Suítes
+        07/2026 — 1ª nota ESCANEADA desta plataforma; PASSWORD e INFOMIX,
+        os 2 emitentes já validados, são digitais): a leitura padrão
+        (zoom 3x) funde as colunas da grade ("NOME/RAZÃO SOCIAL | E-MAIL |
+        TELEFONE", depois "ENDEREÇO | BAIRRO | CEP", depois "MUNICÍPIO |
+        UF | PAÍS | CPF/CNPJ") numa única linha por rótulo, ilegível pela
+        extração genérica (que espera rótulo-em-cima/valor-embaixo, sem
+        fusão de coluna). Localiza a região dinamicamente entre os
+        rótulos "TOMADOR" e "DISCRIMINAÇÃO"/"PRESTACAO" via
+        `image_to_data` no zoom 3 (já computado pela leitura padrão) e
+        reprocessa só essa faixa em zoom 8 + PSM 6 (bloco único) — testado
+        e validado: zoom 8 recupera CNPJ/município/bairro/CEP limpos,
+        zoom 6 recupera a razão social limpa, mas nenhum zoom único
+        recupera TUDO; zoom 8 é o que erra menos campos ao todo."""
+        try:
+            import pymupdf
+            import pytesseract
+            from pytesseract import Output
+            from PIL import Image
+            import io
+
+            pix_lo = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0))
+            img_lo = Image.open(io.BytesIO(pix_lo.tobytes("png")))
+            data = pytesseract.image_to_data(img_lo, lang='por', output_type=Output.DICT)
+
+            top_y = bottom_y = None
+            for i, palavra in enumerate(data['text']):
+                p = palavra.strip().upper()
+                if top_y is None and p == 'TOMADOR':
+                    top_y = data['top'][i]
+                elif top_y is not None and bottom_y is None and p in (
+                        'DISCRIMINAÇÃO', 'DISCRIMINACAO', 'PRESTACAO', 'PRESTAÇÃO'):
+                    bottom_y = data['top'][i]
+            if top_y is None or bottom_y is None or bottom_y <= top_y:
+                return ""
+
+            rect = page.rect
+            clip = pymupdf.Rect(rect.x0, rect.y0 + top_y / 3.0, rect.x1, rect.y0 + bottom_y / 3.0)
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    def _ocr_recut_cnpj_invalido_salvador(self, page, indice: int, angle: int = 0):
+        """Releitura dirigida da N-ésima ocorrência (0=prestador, 1=tomador) do
+        rótulo "CPF/CNPJ" da nota Salvador/BA, para o caso em que o candidato
+        do zoom padrão (3x) tem FORMATAÇÃO de CNPJ correta (pontuação intacta)
+        mas reprova o dígito verificador — achado real, nota 6508: o OCR troca
+        1 dígito NO MEIO do número ("699"→"688" no prestador, "895"→"885" no
+        tomador), confirmado errado ao ler a imagem original da página. Testado
+        e validado: um re-OCR de PÁGINA INTEIRA em zoom alto (8x) recupera o
+        prestador de forma diferente mas AINDA errada (troca dígito por letra,
+        "3d.288.688" em vez de "34.288.688") — só um recorte ESTREITO da linha
+        de valores (localizada dinamicamente via `image_to_data` no zoom 3, já
+        usado pra leitura padrão) reprocessada em zoom 8 dá o resultado certo
+        de forma estável. Devolve o texto do CNPJ formatado e JÁ VALIDADO
+        (checksum ok) para substituir o candidato original via `str.replace`,
+        ou `None` se não recuperar nada validável — nunca propaga um 2º
+        candidato inválido no lugar do 1º."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            if angle:
+                img_l = img_l.rotate(-angle, expand=True)
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+            ocorrencias = [i for i in range(len(data['text'])) if re.search(r'CNPJ', data['text'][i] or '', re.IGNORECASE)]
+            if indice >= len(ocorrencias):
+                return None
+            i = ocorrencias[indice]
+            y_top, h_label = data['top'][i], data['height'][i]
+
+            zoom_final = 8.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
+            if angle:
+                img_f = img_f.rotate(-angle, expand=True)
+            w_f, h_f = img_f.size
+            # Pula a linha do RÓTULO (0.9x sua altura) e cobre só a linha de
+            # valores logo abaixo (até 2.6x) — incluir o rótulo na mesma janela
+            # degradava a leitura do dígito nos testes (letra no lugar de "4").
+            y0 = max(0, int((y_top + h_label * 0.9) * escala))
+            y1 = min(h_f, int((y_top + h_label * 2.6) * escala))
+            crop = img_f.crop((0, y0, int(w_f * 0.45), y1))
+            txt = pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            m = re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
+            if m and self._validate_cnpj_cpf(m.group(0)):
+                return m.group(0)
+            return None
+        except Exception:
+            return None
+
+    @staticmethod
     def _ocr_header_box_iacu(page, angle: int = 0) -> str:
         """Recorta e reprocessa em zoom alto (5x) o canto superior direito da
         NFS-e de Iaçu/BA (plataforma nfservico.com.br): a caixa "Número da nota"
@@ -7736,24 +8273,107 @@ class SPPdfExtractor:
         com PSM 6 + whitelist de dígitos. Retorna uma linha sintética limpa
         ("Número da Nota\\n<n>") para a branch de número casar sem depender do
         resto da caixa. Validado contra a nota real (BOM NEGOCIO nº 00331020,
-        JPG rotacionado 180°)."""
+        JPG rotacionado 180°).
+
+        A caixa "Número da Nota" é a 1ª de 3 mini-tabelas empilhadas (Número da
+        Nota / Data e Hora de Emissão / Código de Verificação) — a ALTURA do
+        cabeçalho acima dela (logo + título + "NOTA FISCAL ELETRÔNICA..." +
+        "RPS Nº...") varia de nota para nota (achado real 2026-08-12, nota
+        FLASH TECNOLOGIA nº 05121900: o recorte fixo por percentual, calibrado
+        na nota BOM NEGÓCIO, caía 1 caixa abaixo do esperado e lia "Código de
+        Verificação" (MKT3-B9ZH) em vez de "Número da Nota" — a whitelist de
+        dígitos "inventava" números a partir das letras, saindo "392"). Fix:
+        localiza a palavra "Número" dinamicamente via `image_to_data` (zoom
+        3x, restrito à metade direita/terço superior da página, onde a caixa
+        sempre fica) e recorta só a linha imediatamente abaixo dela, em zoom
+        alto — imune à altura variável do cabeçalho. Mantém o recorte fixo
+        antigo como FALLBACK (só usado se a localização dinâmica não achar o
+        rótulo), preservando o comportamento já validado se a nova técnica
+        falhar por algum motivo imprevisto."""
         try:
             import pymupdf
             import pytesseract
             from PIL import Image
             import io
 
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            def _ocr_digitos(crop_img):
+                txt = pytesseract.image_to_string(
+                    crop_img.convert('L'), lang='por',
+                    config='--psm 6 -c tessedit_char_whitelist=0123456789'
+                )
+                # A whitelist de dígitos força até ruído de borda de célula (a
+                # linha vertical do quadro, lida como "|"/"4") a virar dígito
+                # solto — pegar o MAIOR grupo contíguo (o número real) em vez
+                # de concatenar TUDO com `re.sub(r'\D', '', txt)` evita que
+                # esse dígito espúrio isolado se cole ao número de verdade.
+                grupos = re.findall(r'\d+', txt)
+                return max(grupos, key=len) if grupos else ''
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             if angle:
-                img = img.rotate(-angle, expand=True)
-            w, h = img.size
-            crop = img.crop((int(w * 0.67), int(h * 0.098), int(w * 0.98), int(h * 0.126))).convert('L')
-            num = pytesseract.image_to_string(
-                crop, lang='por',
-                config='--psm 6 -c tessedit_char_whitelist=0123456789'
+                img_l = img_l.rotate(-angle, expand=True)
+            w_l, h_l = img_l.size
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+            candidatos = [
+                i for i in range(len(data['text']))
+                if re.search(r'N[uú]mero', data['text'][i] or '', re.IGNORECASE)
+                and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3
+            ]
+
+            zoom_final = 6.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
+            if angle:
+                img_f = img_f.rotate(-angle, expand=True)
+            w_f, h_f = img_f.size
+
+            if candidatos:
+                i = candidatos[0]
+                x_left, y_top, h_label = data['left'][i], data['top'][i], data['height'][i]
+                x0 = max(0, int(x_left * escala * 0.9))
+                y0 = max(0, int((y_top + h_label * 1.1) * escala))
+                y1 = min(h_f, int((y_top + h_label * 3.2) * escala))
+                num = _ocr_digitos(img_f.crop((x0, y0, w_f, y1)))
+                if num:
+                    return f"Número da Nota\n{num}\n"
+
+            # Achado real (nota FLASH TECNOLOGIA nº 05114339, RPS 3566572,
+            # pasta "0001-80" 07/2026): no zoom de localização (3x) o
+            # próprio rótulo "Número" pode saltar OCR corrompido em
+            # fragmentos que não casam a palavra inteira (ex.: "N?" +
+            # "daN" em tokens separados) — `candidatos` fica vazio mesmo
+            # com o valor bem legível ao lado ("05114339", único token
+            # puramente numérico da região, fonte maior/em negrito).
+            # Localiza o valor DIRETO pela própria assinatura (dígitos,
+            # comprimento >= 6, topo da região — a caixa "Número da Nota"
+            # é sempre a 1ª das 3 empilhadas) em vez de depender do
+            # rótulo, evitando cair no recorte fixo abaixo (calibrado numa
+            # nota específica — pode acertar a caixa ERRADA, "Código de
+            # Verificação", noutra com cabeçalho de altura diferente).
+            candidatos_valor = sorted(
+                (i for i in range(len(data['text']))
+                 if re.fullmatch(r'\d{6,}', (data['text'][i] or '').strip())
+                 and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3),
+                key=lambda i: data['top'][i]
             )
-            num = re.sub(r'\D', '', num)
+            if candidatos_valor:
+                i = candidatos_valor[0]
+                x_left, y_top = data['left'][i], data['top'][i]
+                w_val, h_val = data['width'][i], data['height'][i]
+                x0 = max(0, int(x_left * escala * 0.9))
+                y0 = max(0, int(y_top * escala * 0.9))
+                x1 = min(w_f, int((x_left + w_val) * escala * 1.1))
+                y1 = min(h_f, int((y_top + h_val) * escala * 1.1))
+                num = _ocr_digitos(img_f.crop((x0, y0, x1, y1)))
+                if num:
+                    return f"Número da Nota\n{num}\n"
+
+            # Fallback: recorte fixo por percentual (comportamento original).
+            crop = img_f.crop((int(w_f * 0.67), int(h_f * 0.098), int(w_f * 0.98), int(h_f * 0.126)))
+            num = _ocr_digitos(crop)
             return f"Número da Nota\n{num}\n" if num else ""
         except Exception:
             return ""
@@ -8101,7 +8721,9 @@ class SPPdfExtractor:
         município para sobrepor a incidência padrão (que seria a do
         prestador). Guarulhos/SP: campos "Natureza Operação: Tributação
         fora do município" + "Local da Prestação" — decisão do usuário
-        (nota real nº 3, obra em Cuiabá/MT). Monte Santo/BA: campo "Local do
+        (nota real nº 3, obra em Cuiabá/MT). Lauro de Freitas/BA: mesma
+        regra, rótulo "LOCAL DA PRESTAÇÃO DO(S) SERVIÇO(S)" (achado real,
+        nota 202645, obra em Salvador/BA). Monte Santo/BA: campo "Local do
         Serviço: Fora do Município" + linha de texto livre "OBRA: ...,
         <CIDADE>/<UF>" (achado real, nota nº 65, obra em Camaçari/BA)."""
         t = self.raw_text
@@ -8125,6 +8747,25 @@ class SPPdfExtractor:
             if not re.search(r'Local\s+do\s+Servi[çc]o\s*\n+\s*Fora\s+do\s+Munic[íi]pio', t, re.IGNORECASE):
                 return None
             m = re.search(r'OBRA\s*:\s*.+,\s*([A-Za-zÀ-Úà-ú\s]+?)\s*/\s*([A-Z]{2})\s*(?:\n|$)', t, re.IGNORECASE)
+            if not m:
+                return None
+            municipio, uf = m.group(1).strip(), m.group(2).upper()
+            return _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # Mesma regra da LC 116/2003 art. 3º III, com o texto próprio deste
+            # município (achado real 2026-08-11, nota 202645, obra em
+            # Salvador/BA): "Competência: ... - Tributado fora do Município de
+            # Lauro de Freitas - ..." confirma que a incidência não é a sede do
+            # prestador, e "LOCAL DA PRESTAÇÃO DO(S) SERVIÇO(S): <Cidade> - UF"
+            # traz o município correto — rótulo mais longo que o de Guarulhos
+            # ("DO(S) SERVIÇO(S)" entre "Prestação" e ":"), por isso um regex
+            # próprio em vez de reaproveitar o de cima.
+            if not re.search(r'Tributad[ao]\s+fora\s+do\s+Munic[íi]pio\s+de', t, re.IGNORECASE):
+                return None
+            m = re.search(
+                r'Local\s+da\s+Presta[çc][ãa]o[^:]*:\s*([A-Za-zÀ-Úà-ú]+)\s*-\s*([A-Z]{2})\b',
+                t, re.IGNORECASE)
             if not m:
                 return None
             municipio, uf = m.group(1).strip(), m.group(2).upper()
@@ -8367,6 +9008,18 @@ class SPPdfExtractor:
             # precisam reabrir e renderizar a página real (ex.:
             # `_recuperar_cnpj_tomador_camacari`).
             sub_ext._pagina_hint = page_idx
+
+            # Propaga os recortes dedicados do PASSWORD/eNotas Gateway
+            # ESCANEADO (ver `__init__`/`_ocr_page`) da página de origem
+            # deste bloco para o `sub_ext` — só ele roda a extração de
+            # entidade (`_extrair_entidade_password_enotas`), mas nunca
+            # chama `_ocr_page`, então nunca preencheria esses recortes por
+            # conta própria. `page_idx` é 1-based (ver `enumerate(..., 1)`
+            # acima); `_ocr_page`/os dicionários usam 0-based.
+            sub_ext._password_enotas_tomador_recut = \
+                self._password_enotas_tomador_recut_por_pagina.get(page_idx - 1)
+            sub_ext._password_enotas_prestador_im_recut = \
+                self._password_enotas_prestador_im_recut_por_pagina.get(page_idx - 1)
 
             try:
                 nfse = sub_ext.parse()

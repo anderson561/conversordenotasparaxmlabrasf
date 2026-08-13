@@ -47,7 +47,12 @@ def test_extract_salvador_scan_tomador(monkeypatch):
         tm = nfse.tomador
         assert tm.cnpj_cpf == "03051741000190"
         assert tm.razao_social == "SAO PEDRO CONSTRUTORA LTDA"
-        assert tm.endereco.logradouro.startswith("AVE PRAIA DE PAJUSSARA 554")
+        # Número separado do logradouro (fix 2026-08-10, nota 6508): antes o
+        # número ficava colado no logradouro e o complemento vazava pro campo
+        # "numero" do XML — agora ambos saem nos campos certos.
+        assert tm.endereco.logradouro == "AVE PRAIA DE PAJUSSARA"
+        assert tm.endereco.numero == "554"
+        assert tm.endereco.complemento == "QUADRA 28 LOTE 09 VILAS DO ATLANTICO"
         assert tm.endereco.municipio == "Lauro de Freitas"
         assert tm.endereco.codigo_municipio == "2919207"
         assert tm.endereco.uf == "BA"
