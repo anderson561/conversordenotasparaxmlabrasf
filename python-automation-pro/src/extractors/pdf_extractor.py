@@ -79,7 +79,7 @@ LAYOUT_FF_LOCACAO = 'ff_locacao'  # F&F Comércio e Serviços de Telecomunicaç�
 LAYOUT_BROTAS_MACAUBAS = 'brotas_macaubas_ba'  # Prefeitura de Brotas de Macaúbas/BA (CNPJ 13.797.600/0001-74, plataforma nfservico.com.br - mesma da IAÇU) - NFS-e tributada, escaneada (JPG/foto, tipicamente de cabeça para baixo). Reaproveita o parser de entidade do Iaçu (mesmos rótulos/estrutura), com 2 ajustes tolerantes: "|" (OCR de "Nº") colado no endereço do prestador, e nome/CREA do engenheiro colado na razão social do tomador. Caixa de cabeçalho via o MESMO recorte dedicado do Iaçu (_ocr_header_box_iacu, agora com suporte a ângulo de rotação); número/valores/discriminação com âncoras próprias (grade de valores sem o campo "Valor total das deduções" que o Iaçu tem). Código de serviço fixo "0702" (mapeado do CNAE 4391-6/00 impresso na nota - a nota traz "Item da lista de serviços: 0", que não é um código LC116 válido; decisão do usuário)
 LAYOUT_GUARULHOS = 'guarulhos_sp'  # Prefeitura Municipal de Guarulhos/SP (plataforma Ginfes, guarulhos.ginfes.com.br) - NFS-e tributada, escaneada (foto/CamScanner). Grade densa de células cinza (baixo contraste) faz a leitura padrão perder o Código de Verificação, o Local da Prestação e toda a grade "Cálculo do ISSQN devido no Município" - recuperados via `_ocr_recut_guarulhos` (3 recortes em zoom alto + binarização, mesmo racional do Camaçari). Serviço de construção civil (item 7.02) prestado em OUTRO município (campos "Local da Prestação" + "Natureza Operação: Tributação fora do município"/"ISS a reter: Não" na própria nota) - decisão do usuário: a incidência do ISSQN vai para o município da obra (Cuiabá/MT), não para o do prestador (Guarulhos), via `Nfse.municipio_incidencia_override`
 LAYOUT_CAMACARI_SISLOC = 'camacari_sisloc'  # Camaçari/BA via plataforma SISLOC (sisloc.com) + "NFS-e Easy" da Benefix (webenefix.com.br) - PDF DIGITAL (não escaneado), mas o gerador do PDF desenha rótulos e valores como blocos de texto separados; o `pdfminer.extract_text()` padrão despeja TODOS os valores concatenados num blob único no fim do documento, sem relação de proximidade com o rótulo. Corrigido reconstruindo o texto por COORDENADA de caractere (`_reconstruir_texto_por_coordenadas`: agrupa `LTChar` por linha/Y, ordena por X dentro da linha) em vez de usar a ordem de leitura padrão do pdfminer - técnica nova, para PDF digital com ordem de leitura quebrada (distinta de OCR/coluna-intercalada). Detectado pela marca da PLATAFORMA (SISLOC/Benefix), não pelo município, para não colidir com os Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2) nem futuras notas de outras plataformas no mesmo município. Município de prestação vem com código IBGE explícito na própria nota ("Cód. de Município IBGE: ..."). Item de tributação "9901" não é código LC116 válido (mesma convenção de Barreiras/PJB) - mapeado para "0000"
-LAYOUT_MONTE_SANTO = 'monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, só em texto livre "OBJETO DO CONTRATO"/"OBRA") - decisão do usuário: NÃO implementar `municipio_incidencia_override` aqui (diferente de Guarulhos, que tem campo estruturado com nome da cidade; aqui seria regex sobre texto livre, frágil) - incidência permanece no município do prestador (Monte Santo)
+LAYOUT_MONTE_SANTO = 'monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, em texto livre "OBJETO DO CONTRATO"/"OBRA: ..., <CIDADE>/<UF>") - `municipio_incidencia_override` implementado (revisão 2026-08-10): a linha "OBRA:" sempre termina no formato ", <CIDADE>/<UF>", âncora confiável o suficiente; incidência do ISSQN vai para o município da obra quando presente, senão permanece no do prestador (Monte Santo)
 
 
 # Etiquetas para Identificação de Entidades
@@ -8721,12 +8721,32 @@ class SPPdfExtractor:
         município para sobrepor a incidência padrão (que seria a do
         prestador). Guarulhos/SP: campos "Natureza Operação: Tributação
         fora do município" + "Local da Prestação" — decisão do usuário
-        (nota real nº 3, obra em Cuiabá/MT)."""
+        (nota real nº 3, obra em Cuiabá/MT). Lauro de Freitas/BA: mesma
+        regra, rótulo "LOCAL DA PRESTAÇÃO DO(S) SERVIÇO(S)" (achado real,
+        nota 202645, obra em Salvador/BA). Monte Santo/BA: campo "Local do
+        Serviço: Fora do Município" + linha de texto livre "OBRA: ...,
+        <CIDADE>/<UF>" (achado real, nota nº 65, obra em Camaçari/BA)."""
         t = self.raw_text
         if self.layout == LAYOUT_GUARULHOS:
             if not re.search(r'Tributa[çc][ãa]o\s+fora\s+do\s+munic[íi]pio', t, re.IGNORECASE):
                 return None
             m = re.search(r'Local\s+da\s+Presta[çc][ãa]o\s*:\s*([A-Za-zÀ-Úà-ú]+)\s*-\s*([A-Z]{2})\b', t, re.IGNORECASE)
+            if not m:
+                return None
+            municipio, uf = m.group(1).strip(), m.group(2).upper()
+            return _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        if self.layout == LAYOUT_MONTE_SANTO:
+            # Serviço de construção civil (item 07.02) prestado FORA da sede do
+            # prestador — a nota traz "Local do Serviço\nFora do Município" e,
+            # em texto livre, uma linha "OBRA: <descrição>, <CIDADE>/<UF>"
+            # (achado real: nota nº 65, "OBRA: DESVIO REDE DE ESGOTO DA CETREL,
+            # CAMAÇARI/BA" — serviço prestado em Camaçari, não em Monte Santo).
+            # Âncora no ÚLTIMO "," antes de "/<UF>" no fim da linha (não no
+            # primeiro) para tolerar vírgulas dentro da própria descrição da obra.
+            if not re.search(r'Local\s+do\s+Servi[çc]o\s*\n+\s*Fora\s+do\s+Munic[íi]pio', t, re.IGNORECASE):
+                return None
+            m = re.search(r'OBRA\s*:\s*.+,\s*([A-Za-zÀ-Úà-ú\s]+?)\s*/\s*([A-Z]{2})\s*(?:\n|$)', t, re.IGNORECASE)
             if not m:
                 return None
             municipio, uf = m.group(1).strip(), m.group(2).upper()
