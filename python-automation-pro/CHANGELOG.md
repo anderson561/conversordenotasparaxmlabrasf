@@ -15,6 +15,17 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- São Paulo/SP escaneado (`sao_paulo_sp_scan`): número da nota saindo
+  ERRADO (ex.: `13`/`7668` em vez de `05114339`/`05210826`) quando o
+  próprio rótulo "Número" sai corrompido em fragmentos no zoom de
+  localização (3x) e o recorte dedicado cai no fallback fixo por
+  percentual, que pode acertar a caixa errada ("Código de Verificação").
+  Corrigido buscando o valor direto pela própria assinatura (token
+  puramente numérico, ≥6 dígitos, no topo da região) quando o rótulo não
+  é localizado. Corrigido também o código de verificação saindo como lixo
+  concatenado (ex.: `20260724U32223020000118RPSN`) quando o OCR insere um
+  espaço espúrio dentro do próprio código (`"1 LU3-QLER"` em vez de
+  `"1LU3-QLER"`), quebrando o regex rígido sem tolerância a espaço.
 - PASSWORD/eNotas Gateway: layout passa a cobrir um 3º emitente na mesma
   plataforma (TÉSSERA HOSPITALITY LTDA, Lauro de Freitas/BA) — a 1ª nota
   ESCANEADA desta plataforma (PASSWORD/INFOMIX, já validados, são

@@ -2083,9 +2083,25 @@ class SPPdfExtractor:
             # código de verificação (formato XXXX-XXXX) vem no FIM da linha do
             # RPS. O padrão genérico casaria "RPS Nº" → "RPSN"; aqui ancoramos
             # em "emitido em <data>" e pegamos o token XXXX-XXXX seguinte.
-            m = re.search(r'emitido\s+em\s+\d{2}/\d{2}/\d{4}\s+([A-Z0-9]{4}-[A-Z0-9]{4})', t, re.IGNORECASE)
-            if not m:
-                m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', t)
+            #
+            # Achado real (nota FLASH TECNOLOGIA nº 05210826, RPS 3663196,
+            # pasta "0001-80" 07/2026): o OCR pode inserir um espaço espúrio
+            # DENTRO do próprio código ("1 LU3-QLER" em vez de "1LU3-QLER"),
+            # quebrando o casamento rígido `{4}-{4}` sem espaço — o regex
+            # antigo falhava por completo e caía no fallback genérico da
+            # função (mais abaixo), que reconcatenava o watermark
+            # "20260724u32223020000118" com um fragmento do rótulo "RPS Nº"
+            # ("RPSN"). Captura uma janela de até 15 caracteres após a data,
+            # remove qualquer espaço interno e SÓ ENTÃO casa o formato
+            # XXXX-XXXX — tolera o espaço sem afetar notas já limpas (nada
+            # a remover nelas).
+            m_janela = re.search(r'emitido\s+em\s+\d{2}/\d{2}/\d{4}\s+(.{0,15})', t, re.IGNORECASE)
+            if m_janela:
+                compactado = re.sub(r'\s+', '', m_janela.group(1))
+                m_cod = re.search(r'([A-Z0-9]{4}-[A-Z0-9]{4})', compactado, re.IGNORECASE)
+                if m_cod:
+                    return m_cod.group(1).upper()
+            m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', t)
             if m:
                 return m.group(1).upper()
 
@@ -8321,6 +8337,37 @@ class SPPdfExtractor:
                 y0 = max(0, int((y_top + h_label * 1.1) * escala))
                 y1 = min(h_f, int((y_top + h_label * 3.2) * escala))
                 num = _ocr_digitos(img_f.crop((x0, y0, w_f, y1)))
+                if num:
+                    return f"Número da Nota\n{num}\n"
+
+            # Achado real (nota FLASH TECNOLOGIA nº 05114339, RPS 3566572,
+            # pasta "0001-80" 07/2026): no zoom de localização (3x) o
+            # próprio rótulo "Número" pode saltar OCR corrompido em
+            # fragmentos que não casam a palavra inteira (ex.: "N?" +
+            # "daN" em tokens separados) — `candidatos` fica vazio mesmo
+            # com o valor bem legível ao lado ("05114339", único token
+            # puramente numérico da região, fonte maior/em negrito).
+            # Localiza o valor DIRETO pela própria assinatura (dígitos,
+            # comprimento >= 6, topo da região — a caixa "Número da Nota"
+            # é sempre a 1ª das 3 empilhadas) em vez de depender do
+            # rótulo, evitando cair no recorte fixo abaixo (calibrado numa
+            # nota específica — pode acertar a caixa ERRADA, "Código de
+            # Verificação", noutra com cabeçalho de altura diferente).
+            candidatos_valor = sorted(
+                (i for i in range(len(data['text']))
+                 if re.fullmatch(r'\d{6,}', (data['text'][i] or '').strip())
+                 and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3),
+                key=lambda i: data['top'][i]
+            )
+            if candidatos_valor:
+                i = candidatos_valor[0]
+                x_left, y_top = data['left'][i], data['top'][i]
+                w_val, h_val = data['width'][i], data['height'][i]
+                x0 = max(0, int(x_left * escala * 0.9))
+                y0 = max(0, int(y_top * escala * 0.9))
+                x1 = min(w_f, int((x_left + w_val) * escala * 1.1))
+                y1 = min(h_f, int((y_top + h_val) * escala * 1.1))
+                num = _ocr_digitos(img_f.crop((x0, y0, x1, y1)))
                 if num:
                     return f"Número da Nota\n{num}\n"
 
