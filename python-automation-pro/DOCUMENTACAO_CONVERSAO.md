@@ -10,6 +10,8 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 
 > **Nota sobre OCR:** o texto pós-OCR (e às vezes até o de PDF com texto embutido) diverge do que parece "óbvio" na imagem — troca de caracteres, glifos ilegíveis, colunas intercaladas. As regras por layout são propositalmente tolerantes a esses ruídos.
 
+> **Nota de escopo:** os 44 layouts acima são todos de **NFS-e (nota de SERVIÇO)**. Um documento de **PRODUTO/mercadoria** (NF-e Modelo 55, DANFE Estadual, tributado por ICMS) é estruturalmente diferente e tem seção própria: [DANFE Estadual — NF-e de Produto (Modelo 55)](#danfe-estadual--nf-e-de-produto-modelo-55--xml-nf-e-400).
+
 ### Prefeituras / NFS-e municipal
 
 ### 1. Cuiabá/MT — `cuiaba_issnet`
@@ -413,6 +415,26 @@ Geração de XML ABRASF 2.01 diretamente a partir dos dados digitados na GUI, **
 ```
 CONTRATO_LOCACAO_<ANO>.xml
 ```
+
+---
+
+## DANFE Estadual — NF-e de Produto (Modelo 55) → XML NF-e 4.00
+
+Documento fiscal de **PRODUTO/mercadoria** (tributado por ICMS/IPI), estruturalmente diferente de qualquer NFS-e de serviço da lista acima (não tem "discriminação"/"código de serviço" únicos — tem tabela de N itens com NCM/CFOP, grade de ICMS e bloco "TRANSPORTADOR/VOLUMES TRANSPORTADOS"). Extraído para um modelo próprio (`NfeProduto`, em `src/models/nfe_produto_models.py`) e transformado por `NfeProdutoTransformer` (`src/transformers/nfe_produto_transformer.py`) num XML **NF-e 4.00** real — com a chave de acesso, ICMS e demais valores **extraídos do próprio documento**, não fabricados.
+
+**Detecção** (`LAYOUT_DANFE_PRODUTO`, checada no TOPO de `_detect_layout`/`_detect_layout_page`, antes de qualquer marca de NFS-e): estrutural, não gated a nenhum emitente específico — exige a combinação "DANFE" + "Documento Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA", assinatura padronizada nacionalmente (SEFAZ/CONFAZ) para todo Modelo 55. Achado real que motivou este layout: uma nota de compra de café (GRAN COFFEE COM. LOC. E SERVICOS S.A. → SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA, nº 52.136, R$ 595,00) caía inteira em `LAYOUT_LOCALIZA`, porque o rótulo genérico "FATURA/DUPLICATA" (presente em QUALQUER DANFE) colidia com a marca da locadora Localiza — saía com tomador não identificado, valor zerado e o prestador hardcoded errado ("LOCALIZA RENT A CAR S/A").
+
+**Campos extraídos:**
+- Cabeçalho: número, série, tipo de operação (0-entrada/1-saída), chave de acesso (44 dígitos, REAL — não recalculada), protocolo de autorização (+ data/hora), natureza da operação, data de emissão, data/hora de entrada-saída.
+- Emitente: razão social + endereço do letterhead livre (bloco impresso entre o canhoto/recibo e o box "DANFE" — texto livre, não uma grade de rótulos, pois o padrão SEFAZ não estrutura essa parte); CNPJ/Inscrição Estadual de rótulos isolados na grade.
+- Destinatário: grade padronizada "DESTINATÁRIO/REMETENTE" (rótulos nacionais: NOME/RAZÃO SOCIAL, CNPJ/CPF, ENDEREÇO, BAIRRO/DISTRITO, MUNICÍPIO, CEP, UF).
+- Itens (lista, N linhas): código, descrição, NCM, CST, CFOP, unidade, quantidade, valor unitário, valor total, base de cálculo/valor/alíquota do ICMS.
+- Transportador/volumes (opcional): razão social, CNPJ/IE, frete por conta, peso bruto/líquido, quantidade de volumes.
+- Valores totais: base/valor ICMS (+ ICMS ST), frete, seguro, desconto, outras despesas, IPI, valor total dos produtos, valor total da nota.
+
+**Quirk de ordem na grade "CÁLCULO DE IMPOSTO"** (achado real): o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de 5 rótulos) tem o próprio VALOR deslocado para o FIM do 2º bloco de 6 valores (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) — mesma família geral de "labels dumped, depois values dumped" já vista em várias NFS-e, faceta nova aqui.
+
+**Diferença importante em relação ao `NfeTransformer` (workaround legado):** o `NfeTransformer` existente (usado quando a nota-fonte É uma NFS-e de serviço, mas o ERP só aceita import de NF-e) **calcula** uma chave de acesso fake e zera ICMS/PIS/COFINS — é uma disfarce, não uma extração real. O `NfeProdutoTransformer` só é usado quando o documento-fonte É genuinamente um DANFE Modelo 55 (detecção automática via `isinstance(nfse_obj, NfeProduto)` em `src/main.py`); nesse caso a chave de acesso e os valores de ICMS são os REAIS do documento. Ambos os caminhos convivem sob a mesma opção "NF-e (DANFE Estadual - Modelo 55)" da GUI — o tipo do objeto extraído decide automaticamente qual transformer roda, não a escolha manual do usuário.
 
 ---
 

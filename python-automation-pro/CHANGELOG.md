@@ -42,6 +42,30 @@ sessão, de todos os layouts/fixes entregues está em
   `KNOWN_CITIES`, confirmado via fonte oficial. Suíte 227→**229 verdes**;
   teste novo `test_sao_jose_sc_layout.py`.
 
+- **DANFE Estadual — NF-e de Produto (Modelo 55)** (`LAYOUT_DANFE_PRODUTO`,
+  novo modelo `NfeProduto` + `NfeProdutoTransformer`): 1º documento de
+  PRODUTO/mercadoria (tributado por ICMS/IPI) tratado pelo conversor,
+  estruturalmente diferente de qualquer NFS-e de serviço (tabela de N itens
+  com NCM/CFOP, grade de ICMS, bloco de transportador). Achado a partir de
+  uma nota real de compra de café (GRAN COFFEE COM. LOC. E SERVICOS S.A. →
+  SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA, nº 52.136, R$
+  595,00): caía inteira em `LAYOUT_LOCALIZA` porque o rótulo genérico
+  "FATURA/DUPLICATA" (presente em qualquer DANFE) colidia com a marca da
+  locadora Localiza, saindo com tomador não identificado, valor zerado e o
+  prestador hardcoded errado ("LOCALIZA RENT A CAR S/A"). Detecção
+  ESTRUTURAL (não gated a nenhum emitente — decisão do usuário, pois notas
+  de compra vêm de fornecedores variados), checada no topo de
+  `_detect_layout`/`_detect_layout_page`: exige "DANFE" + "Documento
+  Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA", assinatura
+  padronizada nacionalmente (SEFAZ/CONFAZ) para todo Modelo 55. Gera XML
+  NF-e 4.00 com a chave de acesso e os valores de ICMS **reais** do
+  documento (diferente do `NfeTransformer` legado, que só é usado quando a
+  nota-fonte é uma NFS-e de serviço e calcula uma chave/zera ICMS como
+  *workaround*) — `src/main.py` escolhe o transformer certo automaticamente
+  pelo tipo do objeto extraído, sob a mesma opção "NF-e (DANFE Estadual -
+  Modelo 55)" da GUI. Suíte 229→**231 verdes**; teste novo
+  `test_danfe_produto_layout.py`.
+
 ### Corrigido
 
 - `parse_multiple`: um bloco de PREÂMBULO (canhoto/recibo do destinatário)

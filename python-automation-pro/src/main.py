@@ -1,9 +1,22 @@
 from .extractors.pdf_extractor import SPPdfExtractor
 from .transformers.abrasf_transformer import Abrasf201Transformer
 from .transformers.nfe_transformer import NfeTransformer
+from .transformers.nfe_produto_transformer import NfeProdutoTransformer
 from .transformers.contrato_transformer import ContratoLocacaoTransformer
 from .models.contrato_locacao_model import ContratoLocacao
+from .models.nfe_produto_models import NfeProduto
 import os
+
+
+def _pick_transformer(nfse_obj, output_format: str):
+    """Escolhe o transformer pelo TIPO real do objeto extraído, não só pelo
+    dropdown escolhido: um `NfeProduto` (DANFE Estadual genuíno, ver
+    LAYOUT_DANFE_PRODUTO) sempre usa o transformer de produto real, mesmo que
+    o usuário tenha deixado o dropdown em "abrasf" - não há XML ABRASF de
+    serviço possível para um documento de mercadoria."""
+    if isinstance(nfse_obj, NfeProduto):
+        return NfeProdutoTransformer()
+    return Abrasf201Transformer() if output_format == "abrasf" else NfeTransformer()
 
 
 def parse_page_spec(spec: str) -> list:
@@ -61,14 +74,14 @@ def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "ab
             raise ValueError("Nenhuma nota encontrada nas páginas selecionadas.")
 
     print(f"[*] Transformando para {output_format.upper()}...")
-    transformer = Abrasf201Transformer() if output_format == "abrasf" else NfeTransformer()
     os.makedirs(os.path.dirname(output_xml_path), exist_ok=True)
-    
+
     base_dir = os.path.dirname(output_xml_path)
     base_name = os.path.basename(output_xml_path)
     name_no_ext = base_name.rsplit('.', 1)[0]
 
     for nfse in nfse_list:
+        transformer = _pick_transformer(nfse, output_format)
         xml_content = transformer.transform(nfse)
         pag_origem = getattr(nfse, 'pagina_origem', None)
         pag_str = f"_Pagina_{pag_origem}" if pag_origem else ""
@@ -103,7 +116,6 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
     total_files = len(files_to_process)
     print(f"[*] Total de {total_files} arquivos PDF para processar.")
 
-    transformer = Abrasf201Transformer() if output_format == "abrasf" else NfeTransformer()
     success_count = 0
     fail_count = 0
     skip_count = 0
@@ -134,6 +146,7 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
                 pag_str = f"_Pagina_{pag_origem}" if pag_origem else ""
                 xml_name = f"{base_filename}{pag_str}_NF_{num_nota}.xml"
                 output_xml_path = os.path.join(output_dir, xml_name)
+                transformer = _pick_transformer(nfse_data, output_format)
                 xml_content = transformer.transform(nfse_data)
                 with open(output_xml_path, "w", encoding="utf-8") as f:
                     f.write(xml_content)
