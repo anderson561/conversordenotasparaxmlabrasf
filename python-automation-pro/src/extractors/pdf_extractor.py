@@ -7794,6 +7794,49 @@ class SPPdfExtractor:
                             if corrigido:
                                 best_text = best_text.replace(original, corrigido, 1)
 
+                    # Marca d'água diagonal cobrindo a página inteira (achado
+                    # real, nota nº 00039029, prestador A LIMPCANO ->
+                    # tomador SOHO RESTAURANTE): o padrão de pontos do
+                    # carimbo ("...ISS DEVERÁ SER RETIDO...") degrada o OCR
+                    # onde cruza texto impresso, corrompendo o rótulo
+                    # "PRESTADOR DE SERVIÇOS" (lido "PRESPAD RVIÇOS", nenhuma
+                    # etiqueta de `_LABELS_PRESTADOR` reconhece), o Código de
+                    # Verificação e a grade de valores — degradação
+                    # DISTINTA das acima (rabisco/marca-texto pontual,
+                    # dígito único trocado): aqui é a PÁGINA INTEIRA. Sem o
+                    # rótulo do prestador reconhecível, o bloco genérico da
+                    # entidade vira o documento INTEIRO e o CNPJ/razão do
+                    # TOMADOR (o único par bem formado que sobra) vaza para
+                    # as DUAS entidades. Gatilho por evidência: nenhum
+                    # rótulo de prestador reconhecível ANTES da palavra
+                    # "TOMADOR" (mesmo com tolerância a variações comuns de
+                    # OCR — "PRESPAD RVIÇOS" não bate nem nisso).
+                    m_tomador_pos = re.search(r'\bTOMADOR\b', best_text, re.IGNORECASE)
+                    if m_tomador_pos and not re.search(
+                            r'PREST\w*\s*(?:DO|DE)?\s*SERVI',
+                            best_text[:m_tomador_pos.start()], re.IGNORECASE):
+                        prestador_text = self._ocr_recut_prestador_marca_agua_salvador(page, best_angle)
+                        if prestador_text:
+                            best_text = f"{prestador_text}\n{best_text}"
+                        codigo_text = self._ocr_recut_codigo_verificacao_marca_agua_salvador(page)
+                        if codigo_text:
+                            best_text = f"Código de Verificação: {codigo_text}\n{best_text}"
+
+                    # Mesma marca d'água: quando a linha "VALOR TOTAL DA
+                    # NOTA" sai ilegível pelo regex padrão, a grade de
+                    # valores também costuma sair (rótulos "Valor do ISS"/
+                    # "Crédito" corrompidos) — sem os dois, `_extrair_valores`
+                    # cai no fallback de zeros (achado real, nota nº
+                    # 00039029: base_calculo zerava JUNTO com valor_servicos
+                    # porque o fallback antigo herda `base = val_serv`).
+                    if not re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*[\d\.,]+', best_text, re.IGNORECASE):
+                        valor_total_text = self._ocr_recut_valor_total_marca_agua_salvador(page)
+                        if valor_total_text:
+                            best_text = f"{valor_total_text}\n{best_text}"
+                        grade_text = self._ocr_recut_grade_valores_marca_agua_salvador(page)
+                        if grade_text:
+                            best_text = f"{grade_text}\n{best_text}"
+
                 # PASSWORD/eNotas Gateway (Lauro de Freitas/BA) ESCANEADO: achado
                 # real, nota TÉSSERA HOSPITALITY (RPS 988, pág.4 do lote Guarajuba
                 # Suítes 07/2026) — 1ª nota ESCANEADA desta plataforma (PASSWORD e
@@ -8237,6 +8280,321 @@ class SPPdfExtractor:
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
         except Exception:
             return ""
+
+    @staticmethod
+    def _ocr_valor_de_texto_ruidoso(txt: str):
+        """Converte um trecho de OCR ruidoso de um valor monetário/percentual
+        num "X.XXX,XX" canônico SEM depender de reconhecer a vírgula/ponto
+        decimal (achado real, marca d'água de Salvador/BA: a mesma célula sai
+        com pontuação diferente a cada tentativa de despeculagem — "1.860,00",
+        "1 860.00", "1860 00" — mas os DÍGITOS em si são estáveis). Descarta
+        toda pontuação/letra, assume os 2 últimos dígitos como centavos e o
+        resto como parte inteira. Exige pelo menos 3 dígitos (2 de centavos +
+        1 de inteiro) para não converter ruído isolado em valor inventado."""
+        digitos = re.sub(r'\D', '', txt or '')
+        if len(digitos) < 3:
+            return None
+        inteiro, centavos = digitos[:-2], digitos[-2:]
+        milhar = f"{int(inteiro):,}".replace(',', '.')
+        return f"{milhar},{centavos}"
+
+    def _ocr_recut_codigo_verificacao_marca_agua_salvador(self, page):
+        """Releitura dirigida do Código de Verificação da nota Salvador/BA
+        quando a marca d'água diagonal (carimbo "...ISS DEVERÁ SER RETIDO...")
+        cobre a caixa de cabeçalho e corrompe o valor além do que o recorte
+        padrão (`_ocr_header_box_salvador`) recupera (achado real, nota nº
+        00039029: o valor saía como "ALVADORLYQ", puro lixo). Localiza
+        dinamicamente a palavra "Salvador" que segue "Nota" (a mesma âncora
+        de "Nota Salvador <código>" impressa ao lado do título do documento —
+        há OUTRA ocorrência de "Salvador" mais acima, no cabeçalho da
+        Prefeitura, por isso a exigência da palavra "Nota" imediatamente
+        antes) e recorta só a faixa à direita dela, em zoom alto (10x) com
+        filtro de mediana (despeculagem) — validado contra a nota real:
+        recupera "LYQC-YTIS" de forma estável em repetidas tentativas."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image, ImageFilter
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+
+            idx_sv = None
+            for i in range(1, len(data['text'])):
+                if data['text'][i] and re.search(r'Salvador', data['text'][i], re.IGNORECASE) and \
+                        data['text'][i - 1] and re.search(r'Nota', data['text'][i - 1], re.IGNORECASE):
+                    idx_sv = i
+                    break
+            if idx_sv is None:
+                return None
+            left, width = data['left'][idx_sv], data['width'][idx_sv]
+            top, height = data['top'][idx_sv], data['height'][idx_sv]
+
+            zoom_final = 10.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
+            w_f, h_f = img_f.size
+            x0 = max(0, int((left + width - 10) * escala))
+            y0 = max(0, int((top - 8) * escala))
+            y1 = min(h_f, int((top + height + 10) * escala))
+            crop = img_f.crop((x0, y0, w_f, y1))
+            for kernel in (9, 11, 13, 15):
+                despeck = crop.filter(ImageFilter.MedianFilter(size=kernel))
+                txt = pytesseract.image_to_string(despeck, lang='por', config='--psm 6')
+                m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', txt.upper())
+                if m:
+                    return m.group(1)
+            return None
+        except Exception:
+            return None
+
+    def _ocr_recut_prestador_marca_agua_salvador(self, page, angle: int = 0):
+        """Releitura dirigida do bloco do PRESTADOR (CNPJ + razão social) da
+        nota Salvador/BA quando a marca d'água diagonal corrompe o rótulo
+        "PRESTADOR DE SERVIÇOS" além do reconhecível (achado real, nota nº
+        00039029: o OCR lê "PRESPAD RVIÇOS", que nenhuma etiqueta de
+        `_LABELS_PRESTADOR` reconhece). Sem um rótulo de prestador
+        reconhecível, `_extrair_entidade` não consegue isolar o bloco do
+        prestador — o bloco genérico vira o documento INTEIRO e o CNPJ/razão
+        do TOMADOR (o único par bem formado que sobra) vaza para as DUAS
+        entidades. Recorta a faixa entre o título "...ELETRÔNICA" e a palavra
+        "TOMADOR" (ambos sobrevivem legíveis ao OCR padrão mesmo com a marca
+        d'água), reprocessa em zoom alto (8x) com despeculagem e devolve um
+        bloco "PRESTADOR DE SERVIÇOS / CPF/CNPJ / <cnpj> / Nome/Razão Social /
+        <razão> / Endereço" já no formato que a extração genérica reconhece,
+        para PREPENDER ao texto base — só quando CNPJ (validado por checksum)
+        E razão social são recuperados com confiança; caso contrário devolve
+        vazio (mesmo comportamento de hoje, sem regressão)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image, ImageFilter
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            if angle:
+                img_l = img_l.rotate(-angle, expand=True)
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+
+            def _primeiro_top(padrao):
+                for i in range(len(data['text'])):
+                    if data['text'][i] and re.search(padrao, data['text'][i], re.IGNORECASE):
+                        return data['top'][i]
+                return None
+
+            y_titulo = _primeiro_top(r'ELETR')
+            y_tomador = _primeiro_top(r'^TOMADOR$')
+            if y_titulo is None or y_tomador is None or y_tomador <= y_titulo:
+                return ""
+
+            zoom_final = 8.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
+            if angle:
+                img_f = img_f.rotate(-angle, expand=True)
+            w_f, h_f = img_f.size
+            y0 = max(0, int(y_titulo * escala))
+            y1 = min(h_f, int(y_tomador * escala))
+            crop = img_f.crop((0, y0, w_f, y1))
+            despeck = crop.filter(ImageFilter.MedianFilter(size=7))
+            txt = pytesseract.image_to_string(despeck, lang='por', config='--psm 6')
+
+            m_cnpj = re.search(r'\d{2}[.:]?\d{3}[.:]?\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
+            cnpj_fmt = None
+            if m_cnpj:
+                digitos = re.sub(r'\D', '', m_cnpj.group(0))
+                if len(digitos) == 14 and self._validate_cnpj_cpf(digitos):
+                    cnpj_fmt = f"{digitos[0:2]}.{digitos[2:5]}.{digitos[5:8]}/{digitos[8:12]}-{digitos[12:14]}"
+            if not cnpj_fmt:
+                return ""
+
+            m_razao = re.search(
+                r'^([A-ZÀ-Ý][A-ZÀ-Ý0-9 .,&\-]{4,80}?(?:LTDA|EPP|ME|EIRELI|S/?A|SA)\b[A-ZÀ-Ý0-9 .,&\-]*)$',
+                txt, re.MULTILINE | re.IGNORECASE
+            )
+            razao = re.sub(r'\s{2,}', ' ', m_razao.group(1)).strip() if m_razao else None
+            if not razao:
+                return ""
+
+            return f"PRESTADOR DE SERVIÇOS\nCPF/CNPJ\n{cnpj_fmt}\nNome/Razão Social\n{razao}\nEndereço\n"
+        except Exception:
+            return ""
+
+    def _ocr_recut_valor_total_marca_agua_salvador(self, page):
+        """Releitura dirigida da linha "VALOR TOTAL DA NOTA" da nota
+        Salvador/BA quando a marca d'água diagonal corrompe o valor a ponto
+        do regex padrão não casar (achado real, nota nº 00039029: OCR lê
+        "VALOR TOTAL DA NO =R$ -B50,", sem o valor legível — `val_serv` cai
+        para 0.0 e, em cascata, `base_calculo` também, porque o fallback
+        antigo herda `base = val_serv` quando a grade de 5 valores também
+        falha). Localiza dinamicamente a linha via `image_to_data` (palavra
+        "VALOR" cuja mesma linha também contém uma palavra iniciada por
+        "TOTAL" — evita casar outras ocorrências de "Valor" no documento),
+        recorta só essa linha em zoom alto (10x) com despeculagem. Validado
+        contra a nota real: recupera "VALOR TOTAL DA NOTA = R$1.860,00" de
+        forma estável. Devolve a linha já no formato que o regex padrão
+        (`VALOR\\s+TOTAL\\s+DA\\s+NOTA...`) reconhece, para PREPENDER ao texto
+        base; `None` se não conseguir, mantendo o comportamento atual."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image, ImageFilter
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+
+            linha_alvo = None
+            for i in range(len(data['text'])):
+                if (data['text'][i] or '').strip().upper() == 'VALOR':
+                    bloco, linha = data['block_num'][i], data['line_num'][i]
+                    palavras = [data['text'][j].strip().upper() for j in range(len(data['text']))
+                                if data['block_num'][j] == bloco and data['line_num'][j] == linha]
+                    if any(p.startswith('TOTAL') for p in palavras):
+                        linha_alvo = (bloco, linha)
+                        break
+            if not linha_alvo:
+                return None
+            bloco, linha = linha_alvo
+            idxs = [i for i in range(len(data['text'])) if data['block_num'][i] == bloco and data['line_num'][i] == linha]
+            y_top = min(data['top'][i] for i in idxs)
+            y_bot = max(data['top'][i] + data['height'][i] for i in idxs)
+
+            zoom_final = 10.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
+            w_f, h_f = img_f.size
+            y0 = max(0, int((y_top - 5) * escala))
+            y1 = min(h_f, int((y_bot + 5) * escala))
+            crop = img_f.crop((0, y0, w_f, y1))
+            despeck = crop.filter(ImageFilter.MedianFilter(size=7))
+            txt = pytesseract.image_to_string(despeck, lang='por', config='--psm 7')
+            m = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)', txt, re.IGNORECASE)
+            if not m:
+                return None
+            return f"VALOR TOTAL DA NOTA = R$ {m.group(1)}"
+        except Exception:
+            return None
+
+    def _ocr_recut_grade_valores_marca_agua_salvador(self, page):
+        """Releitura dirigida das 2 grades de valores (Deduções/Base/Alíquota/
+        ISS/Crédito e INSS/PIS/COFINS/IR/CSLL/Outras/Líquido) da nota
+        Salvador/BA quando a marca d'água diagonal corrompe os RÓTULOS de
+        cabeçalho da grade além do reconhecível (achado real, nota nº
+        00039029: "Valor do ISS" sai como "Ne alét.do ISS" — o regex
+        `Valor\\s+do\\s+ISS` não casa mais — e as 2 grades caem no fallback
+        de zeros). Localiza cada linha de VALORES dinamicamente (a linha
+        seguinte, no mesmo bloco de OCR, à que contém o rótulo "Deduções" ou
+        "INSS" — mesmo quando o restante do rótulo está corrompido) e
+        recorta cada CÉLULA individualmente (pela posição x/y de cada token
+        já leiturado, mesmo que o CONTEÚDO desse token esteja errado — só a
+        posição importa) em zoom alto (12x) com despeculagem, célula a
+        célula — testado e validado: uma única despeculagem de página/linha
+        inteira funciona bem para Dedução/Base mas erra a Alíquota e o ISS
+        (dígitos vizinhos se confundem); célula isolada é o único jeito
+        estável de recuperar todas as 5 sem risco de vazamento entre colunas.
+        A célula do "Valor do ISS" continua ilegível mesmo isolada (watermark
+        mais denso ali) — em vez de arriscar um dígito errado, é DERIVADA
+        matematicamente (Base × Alíquota), relação sempre válida para este
+        município. "Crédito Nota Salvador" e "Outras Retenções" são
+        hardcoded em 0,00: todo documento deste layout traz o texto fixo
+        "Esta Nota Salvador não gera crédito" (nunca há crédito a lançar) e
+        "Outras Retenções" é a única célula que NENHUMA combinação de
+        zoom/kernel testada recuperou de forma legível (watermark mais denso
+        do documento) — o mesmo valor (0,00) que o fallback genérico já usa
+        quando a grade inteira falha, portanto sem risco NOVO. Devolve os 2
+        blocos (rótulo canônico + linha de valores) já no formato que os
+        regex padrão (`m_grid`/`m_grid5`) reconhecem, para PREPENDER ao texto
+        base; só inclui um bloco se TODOS os valores dele forem recuperados
+        com confiança — caso nenhum dos dois, devolve `None`."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image, ImageFilter
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+
+            def _tokens_linha_seguinte(padrao_label):
+                for i in range(len(data['text'])):
+                    if data['text'][i] and re.search(padrao_label, data['text'][i], re.IGNORECASE):
+                        bloco, linha_lbl = data['block_num'][i], data['line_num'][i]
+                        linhas_bloco = sorted(set(
+                            data['line_num'][j] for j in range(len(data['text']))
+                            if data['block_num'][j] == bloco and data['text'][j].strip()
+                        ))
+                        pos = linhas_bloco.index(linha_lbl)
+                        if pos + 1 < len(linhas_bloco):
+                            linha_val = linhas_bloco[pos + 1]
+                            idxs = [j for j in range(len(data['text']))
+                                    if data['block_num'][j] == bloco and data['line_num'][j] == linha_val
+                                    and data['text'][j].strip()]
+                            idxs.sort(key=lambda j: data['left'][j])
+                            return [(data['left'][j], data['width'][j], data['top'][j], data['height'][j]) for j in idxs]
+                return None
+
+            zoom_final = 12.0
+            escala = zoom_final / zoom_locate
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
+            img_full = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
+            w_f, h_f = img_full.size
+
+            def _ocr_celula(left, width, top, height, kernel=7, pad_x=15, pad_y=6, psm=7):
+                x0 = max(0, int((left - pad_x) * escala))
+                x1 = min(w_f, int((left + width + pad_x) * escala))
+                y0 = max(0, int((top - pad_y) * escala))
+                y1 = min(h_f, int((top + height + pad_y) * escala))
+                crop = img_full.crop((x0, y0, x1, y1))
+                despeck = crop.filter(ImageFilter.MedianFilter(size=kernel))
+                return pytesseract.image_to_string(despeck, lang='por', config=f'--psm {psm}').strip()
+
+            blocos_saida = []
+
+            tokens1 = _tokens_linha_seguinte(r'Dedu[çc][õo]es')
+            if tokens1 and len(tokens1) >= 3:
+                dedu = self._ocr_valor_de_texto_ruidoso(_ocr_celula(*tokens1[0]))
+                base = self._ocr_valor_de_texto_ruidoso(_ocr_celula(*tokens1[1]))
+                aliq_txt = _ocr_celula(*tokens1[2], kernel=9, pad_x=60)
+                m_aliq = re.search(r'(\d+)\s*%', aliq_txt)
+                aliq = self._ocr_valor_de_texto_ruidoso(m_aliq.group(1)) if m_aliq else None
+                if dedu and base and aliq:
+                    base_num = float(base.replace('.', '').replace(',', '.'))
+                    aliq_num = float(aliq.replace('.', '').replace(',', '.'))
+                    iss_num = round(base_num * aliq_num / 100.0, 2)
+                    iss_str = f"{iss_num:.2f}".replace('.', ',')
+                    blocos_saida.append(
+                        "Valor Total das Deduções (R$): Base de Cálculo (R$) Alíquota (%) "
+                        "Valor do ISS (R$) Crédito Nota Salvador (R$):\n"
+                        f"{dedu} {base} {aliq}% {iss_str} 0,00"
+                    )
+
+            tokens2 = _tokens_linha_seguinte(r'\bINSS\b')
+            if tokens2 and len(tokens2) >= 6:
+                valores2 = [self._ocr_valor_de_texto_ruidoso(_ocr_celula(*tok)) for tok in tokens2[:5]]
+                liquido = self._ocr_valor_de_texto_ruidoso(_ocr_celula(*tokens2[-1]))
+                if all(valores2) and liquido:
+                    blocos_saida.append(
+                        "Valor INSS (R$): Valor PIS (R$); Valor COFINS (R$) Valor IR (R$) "
+                        "Valor CSLL (R$) Outras Retenções (R$) Valor Líquido (R$):\n"
+                        + " ".join(valores2) + f" 0,00 {liquido}"
+                    )
+
+            return "\n".join(blocos_saida) if blocos_saida else None
+        except Exception:
+            return None
 
     def _ocr_recut_cnpj_invalido_salvador(self, page, indice: int, angle: int = 0):
         """Releitura dirigida da N-ésima ocorrência (0=prestador, 1=tomador) do

@@ -15,6 +15,27 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- Salvador/BA (`salvador_ba`): Código de Verificação, CNPJ/razão social do
+  PRESTADOR e grade de valores saindo todos ERRADOS/zerados numa nota real
+  (nº 00039029, A LIMPCANO DESENTUPIMENTO E SUCÇÃO DE FOSSAS LTDA - EPP →
+  SOHO RESTAURANTE LTDA) — causa nova para este layout: uma marca d'água
+  diagonal (carimbo "...ISS DEVERÁ SER RETIDO...") cobrindo a página
+  INTEIRA, cujo padrão de pontos (halftone) degrada o OCR onde cruza texto
+  impresso. Isso corrompia o rótulo "PRESTADOR DE SERVIÇOS" (lido "PRESPAD
+  RVIÇOS", irreconhecível), fazendo o bloco genérico da entidade virar o
+  documento INTEIRO e o CNPJ/razão do TOMADOR (o único par bem formado que
+  sobrava) vazar para as DUAS entidades; e corrompia os rótulos da grade de
+  valores ("Valor do ISS" → "Ne alét.do ISS"), zerando `valor_servicos` E
+  `base_calculo` juntos (o fallback antigo herdava `base = val_serv`).
+  Corrigido com 4 recortes dedicados, gateados por evidência do defeito
+  (nenhum rótulo de prestador reconhecível antes de "TOMADOR" / linha
+  "VALOR TOTAL DA NOTA" ilegível): Código de Verificação e bloco do
+  Prestador via recorte + despeculagem (filtro de mediana) em zoom alto;
+  grade de valores via recorte por CÉLULA individual (Dedução/Base/
+  Alíquota recuperados; o Valor do ISS continua ilegível mesmo isolado —
+  DERIVADO matematicamente de Base × Alíquota; Crédito/Outras Retenções
+  fixados em 0,00, sempre zero nesta nota e irrecuperáveis via OCR em
+  qualquer zoom/kernel testado).
 - DANFSe Nacional (`danfse_nacional`): razão social do prestador saindo
   ERRADA — o próprio endereço dele (ex.: `RUA ITAIPU, S/N, MONTE GORDO
   (MONTE GORDO) Camaçari - BA 42840-178`) em vez do nome (nota real nº 4,
