@@ -317,7 +317,12 @@ class SPPdfExtractor:
         # emissor, não pela frase "FATURA DE LOCAÇÃO": o layout de 2 colunas do
         # OCR quebra essa frase (intercalada com o nome da empresa em linhas
         # separadas), então a marca genérica de locação nunca casa nesta nota.
-        if re.search(r'13\.?398\.?812[/.]?0001-?89', t, re.IGNORECASE):
+        # O MESMO CNPJ também emite faturas de SERVIÇO DE COMUNICAÇÃO/internet
+        # (achado real, nota F&F Comunicações nº 31696) — estrutura
+        # completamente diferente da locação de CFTV; o título específico
+        # dessa fatura tem prioridade sobre o CNPJ do emissor para não
+        # roteá-la aqui por engano.
+        if re.search(r'13\.?398\.?812[/.]?0001-?89', t, re.IGNORECASE) and not re.search(r'NOTA\s+FISCAL\s+DE\s+FATURA\s+DE\s+SERVI[CÇ]O\s+DE\s+COMUNICA[CÇ][AÃ]O', t, re.IGNORECASE):
             return LAYOUT_FF_LOCACAO
         if re.search(r'CPE BAHIA|cpe tecnologia', t, re.IGNORECASE):
             return LAYOUT_CPE_LOCACAO
@@ -502,7 +507,12 @@ class SPPdfExtractor:
         # emissor, não pela frase "FATURA DE LOCAÇÃO": o layout de 2 colunas do
         # OCR quebra essa frase (intercalada com o nome da empresa em linhas
         # separadas), então a marca genérica de locação nunca casa nesta nota.
-        if re.search(r'13\.?398\.?812[/.]?0001-?89', t, re.IGNORECASE):
+        # O MESMO CNPJ também emite faturas de SERVIÇO DE COMUNICAÇÃO/internet
+        # (achado real, nota F&F Comunicações nº 31696) — estrutura
+        # completamente diferente da locação de CFTV; o título específico
+        # dessa fatura tem prioridade sobre o CNPJ do emissor para não
+        # roteá-la aqui por engano.
+        if re.search(r'13\.?398\.?812[/.]?0001-?89', t, re.IGNORECASE) and not re.search(r'NOTA\s+FISCAL\s+DE\s+FATURA\s+DE\s+SERVI[CÇ]O\s+DE\s+COMUNICA[CÇ][AÃ]O', t, re.IGNORECASE):
             return LAYOUT_FF_LOCACAO
         if re.search(r'CPE BAHIA|cpe tecnologia', t, re.IGNORECASE):
             return LAYOUT_CPE_LOCACAO
@@ -3976,25 +3986,45 @@ class SPPdfExtractor:
             if len(chave) == 44:
                 cnpj_prest = chave[6:20]  # posições 6-19 = CNPJ emitente na chave NF-e mod22
 
-        # Estratégia 2: primeiro CNPJ formatado no texto
+        # Estratégia 2: primeiro CNPJ formatado no texto que NÃO esteja logo
+        # depois do rótulo "CNPJ/CPF" (esse é sempre o do TOMADOR, à direita
+        # do documento — ver _extrair_tomador_telecom) — sem essa exclusão, o
+        # CNPJ do emitente saía IGUAL ao do tomador sempre que o próprio CNPJ
+        # do emitente (impresso sem rótulo, mais acima) viesse com algum
+        # ruído de OCR no separador (achado real, nota F&F Comunicações
+        # nº 31696: "13.398,812/0001-89", vírgula em vez de ponto entre "398"
+        # e "812" — não casava a regex antiga, então o fallback pulava direto
+        # pro 2º CNPJ do texto, o do tomador). Tolerante a essa vírgula.
         if not cnpj_prest:
-            m_cnpj = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', t)
-            if m_cnpj:
+            for m_cnpj in re.finditer(r'(\d{2}[.,]\d{3}[.,]\d{3}[/.]\d{4}-\d{2})', t):
+                antes = t[max(0, m_cnpj.start() - 20):m_cnpj.start()]
+                if re.search(r'CNPJ\s*[/Il|]?\s*CPF', antes, re.IGNORECASE):
+                    continue
                 cnpj_prest = re.sub(r'\D', '', m_cnpj.group(1))
+                break
 
         # Nome: primeiras linhas não-vazias antes do primeiro CNPJ/telefone/CEP,
         # pulando o título fixo "DOCUMENTO AUXILIAR..." do cabeçalho deste layout
         # (senão o loop parava nele por engano, achando que era o nome do prestador).
+        # `re.search` (não `re.match`): o OCR às vezes cola ruído solto ANTES
+        # do título (". | DOCUMENTO AUXILIAR..."), e `re.match` (ancorado no
+        # início da linha) não pulava essa variante — achado real, nota F&F
+        # Comunicações nº 31696.
         linhas = [l.strip() for l in t.split('\n') if l.strip()]
         nome_prest = linhas[0] if linhas else "Prestador de Telecomunicação"
         for l in linhas:
-            if re.match(r'DOCUMENTO\s+AUXILIAR', l, re.IGNORECASE):
+            if re.search(r'DOCUMENTO\s+AUXILIAR', l, re.IGNORECASE):
                 continue
             if re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\(\d{2}\)\s*\d{4}', l):
                 break
             if re.search(r'[A-Za-zÀ-ú]', l) and len(l) > 3:
                 nome_prest = l
                 break
+        # A cópia deste nome que vem do recorte de zoom alto (prependado)
+        # costuma trazer ruído de pontuação solto colado nas pontas
+        # ("; Grupo FeF ." em vez de "Grupo FeF") — remove sem tocar em
+        # pontuação legítima NO MEIO do nome (ex.: "F&F", "LTDA.").
+        nome_prest = re.sub(r'^\W+|\W+$', '', nome_prest, flags=re.UNICODE).strip() or nome_prest
 
         # Endereço: linha que contém CEP de 8 dígitos ou padrão "Rua/Av"
         logradouro, numero, bairro, municipio, uf, cep = ("Não informado", "S/N", "Não informado", "Não informado", "BA", "00000000")
@@ -4010,7 +4040,13 @@ class SPPdfExtractor:
         if m_cep:
             cep = re.sub(r'\D', '', m_cep.group(1))
 
-        m_mun = re.search(r'(\w[\w\s]+)\s*[-–]\s*([A-Z]{2})\b', t)
+        # Confinado a UMA linha (`[^\n]` em vez de `\s`, que também casa
+        # quebra de linha): sem essa borda, o município saía com todo o
+        # bloco anterior colado ("Boutique Guarajuba PH Gestao\n\nGUARAJUBA
+        # 0 Guarajuba 42840310\nCamacari" em vez de só "Camacari") — a
+        # resolução por IBGE ainda funcionava por sorte (acha "Camacari"
+        # dentro do lixo), mas o campo bruto ficava poluído.
+        m_mun = re.search(r'([^\d\n][^\n]*?)[ \t]*[-–][ \t]*([A-Z]{2})\b', t)
         if m_mun:
             municipio = m_mun.group(1).strip()
             uf = m_mun.group(2).strip()
@@ -4040,16 +4076,28 @@ class SPPdfExtractor:
         O OCR deste layout costuma confundir a barra "/" do rótulo com a
         letra "I" (ex: "CNPJ/CPF:" vira "CNPJICPF:"), então o separador é
         tratado como opcional e tolerante a essa variação.
+
+        Usa a ÚLTIMA ocorrência do rótulo, não a primeira: quando o recorte
+        de zoom alto do cabeçalho (`_ocr_recut_telecom_comunicacao`) é
+        prependado ao texto, ele também traz sua PRÓPRIA cópia (mais
+        garblada, com colunas fundidas) desse mesmo rótulo — a 1ª ocorrência
+        no texto combinado. A cópia da leitura padrão (zoom 3x, mais limpa)
+        vem depois, e é dessa que o nome do tomador é resolvido de forma
+        confiável (achado real, nota F&F Comunicações nº 31696: a 1ª
+        ocorrência fazia o nome sair como um fragmento de ruído do recorte,
+        "Ds nn RR )", em vez de "Boutique Guarajuba PH Gestao").
         """
-        m_cnpj = re.search(r'CNPJ\s*[/Il|]?\s*CPF\s*[:\s]*([\d./-]+)', t, re.IGNORECASE)
+        m_cnpj = None
+        for m_cnpj in re.finditer(r'CNPJ\s*[/Il|]?\s*CPF\s*[:\s]*([\d./-]+)', t, re.IGNORECASE):
+            pass
         cnpj_tom = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
 
         # Nome: primeira linha "de nome" encontrada subindo a partir do bloco
         # com "CNPJ/CPF", pulando linhas de endereço (contêm dígitos, ex:
         # número/CEP) ou no padrão "Município - UF".
         nome_tom = "Tomador Não Identificado"
+        bloco_antes = t[:m_cnpj.start()] if m_cnpj else ""
         if m_cnpj:
-            bloco_antes = t[:m_cnpj.start()]
             linhas_antes = [l.strip() for l in bloco_antes.split('\n') if l.strip()]
             if linhas_antes:
                 for l in reversed(linhas_antes):
@@ -4061,9 +4109,18 @@ class SPPdfExtractor:
                         nome_tom = l
                         break
 
-        # Endereço: extrai CEP, município e UF do bloco ao redor do CNPJ/CPF
+        # Endereço: extrai CEP, município e UF do bloco ao redor do CNPJ/CPF —
+        # mas sem voltar antes do início do próprio nome do tomador, senão a
+        # janela alcança (e "rouba") o endereço do PRESTADOR, impresso mais
+        # acima no documento (achado real, nota F&F Comunicações nº 31696: o
+        # endereço do tomador não tem "Rua/Av" nenhum — é só o nome do bairro
+        # / praia, "Guarajuba" — então a regex de logradouro abaixo nunca casa
+        # dentro do bloco certo e, sem essa borda, "vencia" casando a "Rua
+        # Senhor do Bonfim..." do prestador, bem mais acima no texto).
         pos_cnpj = m_cnpj.start() if m_cnpj else 0
-        bloco_tom = t[max(0, pos_cnpj - 400): pos_cnpj + 400]
+        pos_nome_tom = bloco_antes.rfind(nome_tom) if nome_tom != "Tomador Não Identificado" else -1
+        inicio_bloco = pos_nome_tom if pos_nome_tom != -1 else max(0, pos_cnpj - 400)
+        bloco_tom = t[inicio_bloco: pos_cnpj + 400]
 
         logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
         m_end = re.search(
@@ -4080,7 +4137,8 @@ class SPPdfExtractor:
             cep = re.sub(r'\D', '', m_cep.group(1))
 
         municipio, uf = "Não informado", "BA"
-        m_mun = re.search(r'(\w[\w\s]+)\s*[-–]\s*([A-Z]{2})\b', bloco_tom)
+        # Confinado a UMA linha (ver mesma correção em _extrair_prestador_telecom).
+        m_mun = re.search(r'([^\d\n][^\n]*?)[ \t]*[-–][ \t]*([A-Z]{2})\b', bloco_tom)
         if m_mun:
             municipio = m_mun.group(1).strip()
             uf = m_mun.group(2).strip()
@@ -7176,9 +7234,23 @@ class SPPdfExtractor:
             )
 
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
-            # "TOTAL A PAGAR: R$ 129,90" ou "TOTAL A PAGAR R$ 129,90"
-            m_total = re.search(r'TOTAL\s+A\s+PAGAR\s*[:\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
-            v = self._parse_valor(m_total.group(1)) if m_total else 0.0
+            # "TOTAL A PAGAR: R$ 129,90" (rótulo limpo) — mas no recorte de
+            # zoom alto usado por esta nota (ver _ocr_recut_telecom_comunicacao)
+            # o rótulo às vezes sai colado sem espaço nenhum ENTRE as 3
+            # palavras, e o valor sem a vírgula decimal (achado real, nota
+            # F&F Comunicações nº 31696: "TOTALAPAGAR:R$55840", valor real
+            # R$558,40) — \s+ exigia espaço, então nunca casava; e sem
+            # vírgula/ponto no valor capturado, tratamos os 2 últimos dígitos
+            # como centavos em vez de propagar R$55.840,00 (100x o valor real).
+            m_total = re.search(r'TOTAL\s*A?\s*PAGAR\s*[:\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            if m_total:
+                bruto = m_total.group(1)
+                if '.' not in bruto and ',' not in bruto and len(bruto) > 2:
+                    v = self._parse_valor(f'{bruto[:-2]},{bruto[-2:]}')
+                else:
+                    v = self._parse_valor(bruto)
+            else:
+                v = 0.0
 
             # BC ICMS e alíquota (campos presentes no documento, mapeados para base_calculo/aliquota)
             m_bc = re.search(r'BC\s+ICMS\s+([\d\.,]+)', t, re.IGNORECASE)
@@ -7937,6 +8009,23 @@ class SPPdfExtractor:
                     if len(recut_ff.strip()) > len(best_text.strip()):
                         best_text = recut_ff
 
+                # NF-e de Serviço de Comunicação (Telecom): achado real (nota
+                # F&F Comunicações nº 31696) — a leitura padrão (zoom 3x)
+                # desta nota perde a COLUNA DIREITA inteira do cabeçalho:
+                # "NOTA FISCAL Nº", "DATA DE EMISSÃO", "REFERÊNCIA (ANO/MÊS)",
+                # "VENCIMENTO" e "TOTAL A PAGAR" simplesmente não aparecem no
+                # texto (mesma classe de bug já vista no Guarulhos/ARMAC: zoom
+                # baixo perde conteúdo específico desta nota). Um re-OCR da
+                # página inteira em zoom 6x recupera todos esses campos
+                # limpos. PREPENDADO (não substitui best_text) porque, em
+                # troca, o zoom 6x perde o CNPJ do emitente (só legível no
+                # zoom 3x) — os dois textos se complementam, e a extração usa
+                # a 1ª ocorrência de cada rótulo.
+                if re.search(r'NOTA\s+FISCAL\s+DE\s+FATURA\s+DE\s+SERVI[CÇ]O\s+DE\s+COMUNICA[CÇ][AÃ]O', best_text, re.IGNORECASE):
+                    recut_telecom = self._ocr_recut_telecom_comunicacao(page)
+                    if recut_telecom.strip():
+                        best_text = f"{recut_telecom}\n{best_text}"
+
                 return best_text
             finally:
                 doc.close()
@@ -7995,6 +8084,27 @@ class SPPdfExtractor:
             finally:
                 if tmp_path and os.path.exists(tmp_path):
                     os.remove(tmp_path)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_telecom_comunicacao(page) -> str:
+        """Re-OCR da página inteira em zoom 6x (vs. 3x da leitura padrão) para
+        NF-e de Serviço de Comunicação (Telecom). Achado real (nota F&F
+        Comunicações nº 31696): a leitura padrão perde a coluna direita
+        inteira do cabeçalho ("NOTA FISCAL Nº", "DATA DE EMISSÃO",
+        "REFERÊNCIA (ANO/MÊS)", "VENCIMENTO", "TOTAL A PAGAR") — o zoom 6x
+        recupera todos esses campos limpos (mesma classe de bug do
+        Guarulhos/ARMAC: zoom baixo perde conteúdo específico desta nota)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por')
         except Exception:
             return ""
 
