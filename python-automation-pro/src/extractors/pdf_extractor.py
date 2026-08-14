@@ -16,8 +16,9 @@ from pdfminer.high_level import extract_text, extract_pages
 # pyrefly: ignore[missing-import]
 from pdfminer.layout import LTChar
 import re
-from typing import Optional, List
+from typing import Optional, List, Union
 from ..models.nfse_models import Nfse, Entidade, Endereco, Valores
+from ..models.nfe_produto_models import NfeProduto, EntidadeNfe, ItemProduto, Transportador, ValoresNfe
 from ..utils.ibge_resolver import IBGEResolver
 from datetime import datetime
 
@@ -82,6 +83,7 @@ LAYOUT_CAMACARI_SISLOC = 'camacari_sisloc'  # Camaçari/BA via plataforma SISLOC
 LAYOUT_MONTE_SANTO = 'monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, em texto livre "OBJETO DO CONTRATO"/"OBRA: ..., <CIDADE>/<UF>") - `municipio_incidencia_override` implementado (revisão 2026-08-10): a linha "OBRA:" sempre termina no formato ", <CIDADE>/<UF>", âncora confiável o suficiente; incidência do ISSQN vai para o município da obra quando presente, senão permanece no do prestador (Monte Santo)
 LAYOUT_NFCOM_SALVADOR = 'nfcom_salvador'  # Empresa Baiana de Jornalismo S.A. (EBJ, CNPJ 14.583.041/0001-62, Salvador/BA) - NFCom (Nota Fiscal de Serviço de Comunicação Eletrônica), PDF DIGITAL, template nacional hospedado no portal SVRS (dfe-portal.svrs.rs.gov.br/NfCom), estruturalmente distinto de uma NFS-e ABRASF: tributado por ICMS (não ISS), chave de acesso de 44 dígitos própria do padrão NFCom/NF-e mod. 62. Detectado pelo CNPJ do emitente (específico, não pela marca genérica do documento - decisão do usuário, para não capturar futuras NFCom de outros emitentes/UFs sem revisão). Precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (a chave de acesso desta nota também casaria esse rótulo, e o parser DANFSe não serve pra ela - achado real, nota EBJ nº 624, nov/2025: caía no LAYOUT_NACIONAL e saía com o valor zerado, ItemListaServico incompatível e o tomador com a razão social vazada do rótulo "Nº TELEFONE"). Prestador é FIXO (mesmo emitente sempre, endereço da própria EBJ hardcoded - mesmo racional de LAYOUT_PJB_LOCACAO/LAYOUT_FF_LOCACAO); tomador extraído dinamicamente do bloco "NOME DO DESTINATÁRIO"/"END."/"CPF/CNPJ" (rótulos e valores em ordem PARCIALMENTE invertida: o valor do endereço vem ANTES do valor da razão social, apesar do rótulo "NOME DO DESTINATÁRIO" vir primeiro). ValorServicos/ValorLiquidoNfse = "TOTAL A PAGAR (R$)"; BaseCalculo/Aliquota/ValorIss mantidos em 0,00 propositalmente (decisão do usuário: nota tributada por ICMS, não por ISS - sinalizado em `Nfse.avisos`, não fabricado). ItemListaServico/CodigoTributacaoMunicipio = "0000" (não é item real da LC116, mesma convenção de não-incidência já usada em Barreiras/CAMACARI_SISLOC)
 LAYOUT_SAO_JOSE_SC = 'sao_jose_sc'  # Prefeitura Municipal de São José/SC ("PREFEITURA MUNICIAL DE SÃO JOSÉ" - erro de digitação real do próprio gerador do PDF, "MUNICIAL" em vez de "MUNICIPAL", preservado como está impresso), NFS-e tributada, PDF DIGITAL (sem OCR). Achado real: nota nº 348301, INTELBRAS S/A - IND DE TEL ELET BRA (CNPJ 82.901.000/0001-27, matriz em São José/SC) -> SINDICATO DOS DELEGADOS DE POLICIA (Salvador/BA). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com um padrão de reordenação PRÓPRIO (distinto do "labels dumped, depois values dumped" de Monte Santo/Guarulhos): razão social + nome fantasia vêm ANTES do bloco de rótulos (Nome Fantasia/Nome-Razão Social/CPF-CNPJ/Endereço/Complemento/Município/E-mail); os 5 valores restantes vêm DEPOIS do bloco de rótulos, mas com "Município" REALOCADO para o início da sequência (ordem real: Município, CPF/CNPJ, Endereço[+Complemento na mesma sub-linha], E-mail) - sem tratamento dedicado, o parser genérico atribuiria o Município ao CPF/CNPJ e vice-versa. CEP/UF do PRESTADOR saem DESLOCADOS para depois do cabeçalho "TOMADOR DE SERVIÇOS" (artefato de leitura em 2 colunas do pdfminer, mesma classe geral já vista em outros layouts digitais). Serviço de licenciamento de software (item LC116 "1.05" -> "0105"); discriminação = nome do plano/produto faturado ("LIC SOFT CLOUD-STANDARD 36X"), não o texto legal do item. Sem Optante Simples Nacional (prestador é empresa de grande porte)
+LAYOUT_DANFE_PRODUTO = 'danfe_produto'  # NF-e Modelo 55 (DANFE Estadual) - documento de PRODUTO/mercadoria tributado por ICMS/IPI, estruturalmente DIFERENTE de qualquer NFS-e (não tem "discriminação"/"código de serviço" único - tem tabela de N itens com NCM/CFOP, grade de ICMS e bloco "TRANSPORTADOR/VOLUMES TRANSPORTADOS"). Retorna um objeto `NfeProduto` em vez de `Nfse` (ver `parse()`/`_parse_danfe_produto`). Detecção ESTRUTURAL (não gated a nenhum emitente específico - decisão do usuário, pois notas de compra de mercadoria vêm de fornecedores variados, ao contrário do padrão "prestador fixo" de faturas de locação recorrentes): exige a combinação "DANFE" + "Documento Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA" - assinatura mandada pelo padrão nacional SEFAZ/CONFAZ para TODO Modelo 55, ausente de qualquer NFS-e. Checada bem no TOPO de `_detect_layout`/`_detect_layout_page`, antes até do check da DANFSe Nacional: o rótulo genérico "FATURA/DUPLICATA" (presente em qualquer DANFE) colidia com a marca da Localiza (`LAYOUT_LOCALIZA`), e "CHAVE DE ACESSO" colidiria com o fallback amplo da DANFSe Nacional - achado real ao revisar a nota nº 52.136 (GRAN COFFEE COM. LOC. E SERVICOS -> SINDICATO DOS DELEGADOS DE POLICIA, venda de café, R$595,00): sem esta detecção no topo, a nota caía inteira em `LAYOUT_LOCALIZA` e saía com tomador não identificado, valor zerado e o prestador hardcoded errado ("LOCALIZA RENT A CAR S/A" - nome de OUTRO emitente fixo). Emitente extraído do bloco livre (letterhead) impresso entre o canhoto/recibo e o box "DANFE" (CNPJ/IE vêm de rótulos isolados na grade, não do letterhead); destinatário da grade "DESTINATÁRIO/REMETENTE" (rótulos padronizados nacionalmente); tabela de itens modelada como lista (`ItemProduto`) - nesta nota só há 1 item, mas o parser da linha da tabela generaliza para N linhas repetidas. Grade "CÁLCULO DE IMPOSTO" tem um quirk de ordem: o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de rótulos) tem seu VALOR deslocado para o FIM do 2º bloco de valores (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) - mesma família geral de "labels dumped, depois values dumped" já vista em várias NFS-e, faceta nova aqui. Chave de acesso é a REAL do documento (extraída do código de barras/texto, não gerada por checksum como no `NfeTransformer` workaround) - ver `src/transformers/nfe_produto_transformer.py`.
 
 
 # Etiquetas para Identificação de Entidades
@@ -255,6 +257,14 @@ class SPPdfExtractor:
         Identifica o layout da nota a partir de marcas textuais únicas.
         """
         t = self.raw_text
+        # NF-e Modelo 55 (DANFE Estadual de PRODUTO) ANTES de qualquer outra
+        # marca: rótulos genéricos de DANFE ("FATURA/DUPLICATA", "CHAVE DE
+        # ACESSO") colidem com layouts de NFS-e mais abaixo na cadeia (achado
+        # real: caía em LAYOUT_LOCALIZA pela marca "FATURA/DUPLICATA", comum a
+        # qualquer DANFE). Ver LAYOUT_DANFE_PRODUTO.
+        if re.search(r'\bDANFE\b', t) and re.search(r'Documento\s+Auxiliar\s+da\s+Nota\s+Fiscal\s+Eletr[ôo]nica', t, re.IGNORECASE) \
+                and re.search(r'0\s*-\s*ENTRADA', t, re.IGNORECASE) and re.search(r'1\s*-\s*SA[ÍI]DA', t, re.IGNORECASE):
+            return LAYOUT_DANFE_PRODUTO
         # DANFSe Nacional (NFS-e Nacional v1.0) ANTES de qualquer marca municipal:
         # a DANFSe é emitida PELO município, então o cabeçalho traz "Prefeitura
         # Municipal de <X>" / "Município de <X>", que casaria o layout municipal
@@ -479,6 +489,11 @@ class SPPdfExtractor:
         Returns a layout constant or LAYOUT_GENERICO if none match.
         """
         t = page_text
+        # NF-e Modelo 55 (DANFE Estadual de PRODUTO) ANTES de qualquer outra
+        # marca (mesmo racional de _detect_layout) - ver LAYOUT_DANFE_PRODUTO.
+        if re.search(r'\bDANFE\b', t) and re.search(r'Documento\s+Auxiliar\s+da\s+Nota\s+Fiscal\s+Eletr[ôo]nica', t, re.IGNORECASE) \
+                and re.search(r'0\s*-\s*ENTRADA', t, re.IGNORECASE) and re.search(r'1\s*-\s*SA[ÍI]DA', t, re.IGNORECASE):
+            return LAYOUT_DANFE_PRODUTO
         # DANFSe Nacional ANTES das marcas municipais (mesmo racional de
         # _detect_layout): a DANFSe traz "Prefeitura Municipal de <X>" e casaria
         # o layout municipal homônimo antes. "DANFSe v1.0"/"Documento Auxiliar da
@@ -9540,12 +9555,18 @@ class SPPdfExtractor:
         print(f"[*] PDF '{self.pdf_path}' sem texto detectado. Iniciando extração via OCR (Tesseract)...")
         return "\n\x0c\n".join(self._ocr_page(i) for i in range(n_pages))
 
-    def parse(self) -> Optional[Nfse]:
+    def parse(self) -> Optional[Union[Nfse, NfeProduto]]:
         if not self.raw_text: self.extract_raw_text()
-        
+
         if len(self.raw_text.strip()) < 50: return None
 
         self.layout = self._detect_layout()
+
+        if self.layout == LAYOUT_DANFE_PRODUTO:
+            # Documento de PRODUTO (NF-e Modelo 55), estruturalmente distinto
+            # de qualquer NFS-e - retorna um `NfeProduto`, não um `Nfse`. Ver
+            # LAYOUT_DANFE_PRODUTO/`_parse_danfe_produto`.
+            return self._parse_danfe_produto()
 
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             # A ordem de leitura do `extract_text()` padrão está quebrada
@@ -9680,6 +9701,249 @@ class SPPdfExtractor:
             municipio_incidencia_override=municipio_incidencia_override,
         )
 
+    def _parse_danfe_produto(self) -> Optional[NfeProduto]:
+        """Extrai um `NfeProduto` (NF-e Modelo 55 - DANFE Estadual de
+        mercadoria) de `self.raw_text`. Ver LAYOUT_DANFE_PRODUTO para o
+        histórico da colisão que motivou este parser dedicado. Rótulos usados
+        aqui ("NOME/RAZÃO SOCIAL", "CNPJ/CPF", "BAIRRO/DISTRITO", "DADOS DOS
+        PRODUTOS/SERVIÇOS" etc.) são padronizados nacionalmente pelo
+        SEFAZ/CONFAZ para todo Modelo 55, ao contrário dos templates de NFS-e
+        (cada município tem o seu) - por isso a extração aqui é genérica, não
+        gated a um emitente específico."""
+        t = self.raw_text
+
+        def _num(s: Optional[str]) -> float:
+            if not s: return 0.0
+            try:
+                return float(s.replace('.', '').replace(',', '.'))
+            except ValueError:
+                return 0.0
+
+        def _parse_data_ddmmyyyy_traco(s: Optional[str]) -> Optional[datetime]:
+            if not s: return None
+            try:
+                dia, mes, ano = s.strip().split('-')
+                return datetime(int(ano), int(mes), int(dia))
+            except (ValueError, AttributeError):
+                return None
+
+        avisos: List[str] = []
+
+        # --- Cabeçalho DANFE ---
+        m = re.search(r'N\.\s*([\d.]+)\s*\n+\s*S[ÉE]RIE\s*\n?\s*(\d+)', t, re.IGNORECASE)
+        numero = m.group(1).replace('.', '') if m else '00000000'
+        serie = m.group(2) if m else '1'
+        if numero == '00000000':
+            avisos.append("Número da nota não encontrado")
+
+        m = re.search(r'0\s*-\s*ENTRADA\s*\n1\s*-\s*SA[ÍI]DA\s*\n+\s*(\d)\s*\n', t, re.IGNORECASE)
+        tipo_operacao = m.group(1) if m else '1'
+
+        m = re.search(r'CHAVE\s+DE\s+ACESSO\s*\n+\s*([\d\s]{40,60})', t, re.IGNORECASE)
+        chave_acesso = re.sub(r'\s', '', m.group(1)) if m else ''
+        if len(chave_acesso) != 44:
+            avisos.append("Chave de acesso não encontrada ou incompleta")
+
+        m = re.search(
+            r'PROTOCOLO\s+DE\s+AUTORIZA[ÇC][ÃA]O\s+DE\s+USO\s*\n+\s*(\d+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+            t, re.IGNORECASE)
+        protocolo_autorizacao = m.group(1) if m else None
+        protocolo_data_hora = _parse_dmy(m.group(2), m.group(3)) if m else None
+
+        m = re.search(r'NATUREZA\s+DA\s+OPERA[ÇC][ÃA]O\s*\n+\s*(.+)', t, re.IGNORECASE)
+        natureza_operacao = m.group(1).strip() if m else "VENDA DE MERCADORIA"
+
+        m = re.search(r'DATA\s+DA\s+EMISS[ÃA]O\s*\n+\s*(\d{2}-\d{2}-\d{4})', t, re.IGNORECASE)
+        data_emissao = _parse_data_ddmmyyyy_traco(m.group(1)) if m else None
+        if data_emissao is None:
+            data_emissao = datetime.now()
+            avisos.append("Data de emissão não encontrada (usando a data atual como fallback)")
+
+        m = re.search(r'DATA\s+DA\s+ENTRADA/SA[ÍI]DA\s*\n+\s*(\d{2}-\d{2}-\d{4})', t, re.IGNORECASE)
+        data_saida_entrada = _parse_data_ddmmyyyy_traco(m.group(1)) if m else None
+
+        # --- Emitente: letterhead livre (entre o canhoto e o box "DANFE") ---
+        razao_social_emit = "Emitente Não Identificado"
+        logradouro_emit, numero_emit, complemento_emit = "Não informado", "S/N", None
+        bairro_emit, municipio_emit, uf_emit, cep_emit, telefone_emit = "", "", "BA", "", None
+        m = re.search(
+            r'ASSINATURA\s+DO\s+RECEBEDOR\s*\n+(?:NF-e\s*\n+N\.\s*[\d.]+\s*\n+S[ÉE]RIE\s*\d+\s*\n+)?(.+?)\n+DANFE\s*\n+Documento',
+            t, re.IGNORECASE | re.DOTALL)
+        if m:
+            letterhead = m.group(1).strip()
+            linhas = [l for l in letterhead.split('\n') if l.strip()]
+            if linhas:
+                razao_social_emit = linhas[0].strip()
+            m2 = re.search(
+                r'(.+?)\n(.*?N\.?\s*(\d+)[^\n]*)\nBairro\s+([A-ZÀ-Ú\s]+?)\s*,\s*([^,]+),\s*([A-Z]{2})\nFone:\s*([^,]+),\s*CEP:\s*(\d{8})',
+                letterhead, re.IGNORECASE)
+            if m2:
+                logradouro_emit = m2.group(1).strip()
+                numero_emit = m2.group(3)
+                resto_linha_numero = m2.group(2)
+                m3 = re.search(r'-\s*(.+)$', resto_linha_numero)
+                complemento_emit = m3.group(1).strip() if m3 else None
+                bairro_emit = m2.group(4).strip()
+                municipio_emit = m2.group(5).strip()
+                uf_emit = m2.group(6).upper()
+                telefone_emit = m2.group(7).strip()
+                cep_emit = m2.group(8)
+        if not municipio_emit:
+            avisos.append("Endereço do emitente não identificado (letterhead fora do padrão esperado)")
+
+        m = re.search(r'INSCRI[ÇC][ÃA]O\s+ESTADUAL\s*\n+\s*(\d+)\s*\n+DESTINAT[ÁA]RIO', t, re.IGNORECASE)
+        ie_emit = m.group(1) if m else None
+        m = re.search(r'DESTINAT[ÁA]RIO/REMETENTE[\s\S]{0,200}?CNPJ\s*\n+\s*([\d./-]+)', t, re.IGNORECASE)
+        cnpj_emit = m.group(1) if m else "00.000.000/0000-00"
+
+        cod_mun_emit = _ibge_resolver.extract_and_validate(municipio_emit, uf_emit, city_hint=municipio_emit, raw_doc_text=t)
+
+        emitente = EntidadeNfe(
+            cnpj_cpf=cnpj_emit,
+            inscricao_estadual=ie_emit,
+            razao_social=razao_social_emit,
+            endereco=Endereco(
+                logradouro=logradouro_emit, numero=numero_emit, complemento=complemento_emit,
+                bairro=bairro_emit, codigo_municipio=cod_mun_emit, municipio=municipio_emit,
+                uf=uf_emit, cep=cep_emit,
+            ),
+            telefone=telefone_emit,
+        )
+
+        # --- Destinatário: grade "DESTINATÁRIO/REMETENTE" ---
+        razao_social_dest = "Destinatário Não Identificado"
+        logradouro_dest, numero_dest = "Não informado", "S/N"
+        m = re.search(r'NOME/RAZ[ÃA]O\s+SOCIAL\s*\n+(.+?)\n+ENDERE[ÇC]O\s*\n+(.+?)\n+MUNIC[ÍI]PIO\s*\n+(.+?)\n+FATURA/DUPLICATA',
+                      t, re.IGNORECASE)
+        municipio_dest = ""
+        if m:
+            razao_social_dest = re.sub(r'\s*-\s*$', '', m.group(1).strip())
+            endereco_dest_raw = m.group(2).strip()
+            municipio_dest = m.group(3).strip()
+            m_end = re.search(r'^(.*?)\s+N\.?\s*(\S+)$', endereco_dest_raw, re.IGNORECASE)
+            if m_end:
+                logradouro_dest = m_end.group(1).strip()
+                numero_dest = m_end.group(2)
+            else:
+                logradouro_dest = endereco_dest_raw
+        else:
+            avisos.append("Dados do destinatário não identificados")
+
+        fatura_duplicata = None
+        bairro_dest, cep_dest, uf_dest, cnpj_dest = "", "", "BA", "00000000000000"
+        m = re.search(
+            r'FATURA/DUPLICATA\s*\n+(.+?)\n+FONE/FAX\s*\n+(.*?)\n+CNPJ/CPF\s*\n+([\d./-]+)\s*\n+BAIRRO/DISTRITO\s*\n+(.+?)\n+CEP\s*\n+([\d.-]+)\s*\n+UF\s*\n+([A-Z]{2})',
+            t, re.IGNORECASE)
+        if m:
+            fatura_duplicata = m.group(1).strip()
+            cnpj_dest = m.group(3)
+            bairro_dest = m.group(4).strip()
+            cep_dest = m.group(5)
+            uf_dest = m.group(6).upper()
+        else:
+            avisos.append("CNPJ/CPF do destinatário não identificado")
+
+        cod_mun_dest = _ibge_resolver.extract_and_validate(municipio_dest, uf_dest, city_hint=municipio_dest, raw_doc_text=t)
+
+        destinatario = EntidadeNfe(
+            cnpj_cpf=cnpj_dest,
+            razao_social=razao_social_dest,
+            endereco=Endereco(
+                logradouro=logradouro_dest, numero=numero_dest, bairro=bairro_dest,
+                codigo_municipio=cod_mun_dest, municipio=municipio_dest, uf=uf_dest, cep=cep_dest,
+            ),
+        )
+
+        # --- Transportador/Volumes (opcional) ---
+        transportador = None
+        m_razao_end = re.search(
+            r'TRANSPORTADOR/VOLUMES\s+TRANSPORTADOS\s*\n+RAZ[ÃA]O\s+SOCIAL\s*\n+(.+?)\n+ENDERE[ÇC]O\s*\n+(.+?)\n+QUANTIDADE',
+            t, re.IGNORECASE)
+        if m_razao_end:
+            m_frete = re.search(r'FRETE\s+POR\s+CONTA\s*\n+(.+?)\n+C[ÓO]DIGO\s+ANTT', t, re.IGNORECASE)
+            m_mun_uf_cnpj = re.search(
+                r'MUNIC[ÍI]PIO\s*\n+(.+?)\nN[ÚU]MERO\s*\n+PESO\s+BRUTO\s*\n+UF\s*\n+(.+?)\n+CNPJ/CPF\s*\n+([\d./-]+)\s*\n+INSCRI[ÇC][ÃA]O\s+ESTADUAL\s*\n+(\d+)\s*\n+PESO\s+L[ÍI]QUIDO\s*\n+([\d.,]+)\s*\w*\s*\n+([\d.,]+)',
+                t, re.IGNORECASE)
+            m_qtd = re.search(r'QUANTIDADE\s*\n+ESP[ÉE]CIE\s*\n+MARCA\s*\n+([\d.,]+)\s*\n+', t, re.IGNORECASE)
+            transportador = Transportador(
+                razao_social=re.sub(r'\s*-\s*$', '', m_razao_end.group(1).strip()),
+                endereco=m_razao_end.group(2).strip(),
+                frete_por_conta=re.search(r'^\d+', m_frete.group(1).strip()).group(0) if m_frete else None,
+                municipio=m_mun_uf_cnpj.group(1).strip() if m_mun_uf_cnpj else None,
+                uf=m_mun_uf_cnpj.group(2).strip().upper() if m_mun_uf_cnpj else None,
+                cnpj_cpf=m_mun_uf_cnpj.group(3) if m_mun_uf_cnpj else None,
+                inscricao_estadual=m_mun_uf_cnpj.group(4) if m_mun_uf_cnpj else None,
+                peso_bruto=_num(m_mun_uf_cnpj.group(5)) if m_mun_uf_cnpj else None,
+                peso_liquido=_num(m_mun_uf_cnpj.group(6)) if m_mun_uf_cnpj else None,
+                quantidade_volumes=_num(m_qtd.group(1)) if m_qtd else None,
+            )
+
+        # --- Itens (tabela "DADOS DOS PRODUTOS/SERVIÇOS") ---
+        itens: List[ItemProduto] = []
+        item_pattern = re.compile(
+            r'\n(\d{4,})\s*\n+(.+?)\s*\n+(\d{8})\s*\n+(\d{2,3})\s*\n+(\d{4})\s*\n+([A-Z]{1,4})\s*\n+'
+            r'([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)',
+            re.IGNORECASE)
+        for m_item in item_pattern.finditer(t):
+            (codigo, descricao, ncm, cst, cfop, unidade, quantidade, valor_unitario,
+             _valor_desc, _pct_desc, valor_total, bc_icms, valor_icms, aliquota_icms) = m_item.groups()
+            itens.append(ItemProduto(
+                codigo=codigo, descricao=descricao.strip(), ncm=ncm, cfop=cfop, cst_icms=cst,
+                unidade=unidade, quantidade=_num(quantidade), valor_unitario=_num(valor_unitario),
+                valor_total=_num(valor_total), base_calculo_icms=_num(bc_icms),
+                valor_icms=_num(valor_icms), aliquota_icms=_num(aliquota_icms),
+            ))
+        if not itens:
+            avisos.append("Nenhum item de produto identificado na tabela")
+
+        # --- Valores totais (grade "CÁLCULO DE IMPOSTO") ---
+        # Quirk de ordem: o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de
+        # rótulos) tem seu VALOR deslocado para o FIM do 2º bloco de valores
+        # (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) -
+        # ver comentário de LAYOUT_DANFE_PRODUTO.
+        m_bloco1 = re.search(
+            r'VALOR\s+TOTAL\s+DOS\s+PRODUTOS\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+VALOR\s+DO\s+FRETE',
+            t, re.IGNORECASE)
+        m_bloco2 = re.search(
+            r'VALOR\s+TOTAL\s+DA\s+NOTA\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)',
+            t, re.IGNORECASE)
+        if m_bloco1:
+            base_calculo_icms, valor_icms_total, base_calculo_icms_st, valor_icms_st = (_num(g) for g in m_bloco1.groups())
+        else:
+            base_calculo_icms = valor_icms_total = base_calculo_icms_st = valor_icms_st = 0.0
+            avisos.append("Grade de cálculo de ICMS não identificada")
+        if m_bloco2:
+            valor_frete, valor_seguro, desconto, outras_despesas, valor_ipi, valor_total_nota, valor_total_produtos = (
+                _num(g) for g in m_bloco2.groups())
+        else:
+            valor_frete = valor_seguro = desconto = outras_despesas = valor_ipi = valor_total_nota = valor_total_produtos = 0.0
+            avisos.append("Valor total da nota não identificado")
+        if valor_total_nota == 0.0:
+            avisos.append("Valor total da nota extraído como zero")
+
+        valores = ValoresNfe(
+            base_calculo_icms=base_calculo_icms, valor_icms=valor_icms_total,
+            base_calculo_icms_st=base_calculo_icms_st, valor_icms_st=valor_icms_st,
+            valor_total_produtos=valor_total_produtos, valor_frete=valor_frete,
+            valor_seguro=valor_seguro, desconto=desconto, outras_despesas=outras_despesas,
+            valor_ipi=valor_ipi, valor_total_nota=valor_total_nota,
+        )
+
+        m = re.search(r'INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES\s*\n+(.+?)\n+RESERVADO\s+AO\s+FISCO', t, re.IGNORECASE | re.DOTALL)
+        informacoes_complementares = m.group(1).strip() if m else None
+
+        return NfeProduto(
+            chave_acesso=chave_acesso, numero=numero, serie=serie,
+            natureza_operacao=natureza_operacao, tipo_operacao=tipo_operacao,
+            data_emissao=data_emissao, data_saida_entrada=data_saida_entrada,
+            protocolo_autorizacao=protocolo_autorizacao, protocolo_data_hora=protocolo_data_hora,
+            emitente=emitente, destinatario=destinatario, itens=itens,
+            transportador=transportador, valores=valores,
+            fatura_duplicata=fatura_duplicata,
+            informacoes_complementares=informacoes_complementares,
+            avisos=avisos,
+        )
+
     def _extrair_municipio_incidencia_override(self) -> Optional[str]:
         """Quando a própria nota indica que o ISSQN é devido em OUTRO
         município (serviço de construção civil prestado fora da sede do
@@ -9739,7 +10003,7 @@ class SPPdfExtractor:
 
         return None
 
-    def parse_multiple(self) -> List[Nfse]:
+    def parse_multiple(self) -> List[Union[Nfse, NfeProduto]]:
         """Extrai múltiplas notas do mesmo PDF, fatiando blocos de texto por heurística de início de nota."""
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
@@ -10011,7 +10275,21 @@ class SPPdfExtractor:
             try:
                 nfse = sub_ext.parse()
                 if not nfse: continue
-                
+
+                # NfeProduto (DANFE Estadual de mercadoria) usa `emitente`, não
+                # `prestador` - documento estruturalmente distinto, sem a
+                # mesma trava antilixo de OCR degradado (esta detecção é 100%
+                # digital/estrutural, sem o mesmo risco de falso-negativo de
+                # nome que a trava abaixo cobre para NFS-e escaneada).
+                if isinstance(nfse, NfeProduto):
+                    key = f"{nfse.numero}_{nfse.emitente.cnpj_cpf}"
+                    if key in seen_numbers and nfse.numero != '00000000':
+                        continue
+                    nfse.pagina_origem = page_idx
+                    seen_numbers.add(key)
+                    results.append(nfse)
+                    continue
+
                 # Trava contra Lixo Residual (Páginas processadas que não são notas).
                 # Fotos/JPGs de baixa qualidade (ex.: nota Botelho/Camaçari) podem
                 # perder número e CNPJ no OCR mas ainda ter nomes de prestador/tomador
@@ -10026,13 +10304,13 @@ class SPPdfExtractor:
                     tem_nome_tomador = nfse.tomador and nfse.tomador.razao_social not in placeholders_razao and len(nfse.tomador.razao_social.strip()) > 5
                     if not (tem_nome_prestador or tem_nome_tomador):
                         continue
-                
+
                 # Evita duplicidade se o fatiamento falhou e pegou a mesma nota duas vezes
                 # ou se a nota tem múltiplas páginas e o fatiamento não as uniu
                 key = f"{nfse.numero}_{nfse.prestador.cnpj_cpf}"
                 if key in seen_numbers and nfse.numero != '00000000':
                     continue
-                
+
                 nfse.pagina_origem = page_idx
                 seen_numbers.add(key)
                 results.append(nfse)
