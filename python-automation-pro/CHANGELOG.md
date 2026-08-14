@@ -27,6 +27,36 @@ sessão, de todos os layouts/fixes entregues está em
   Endereço/Município/CEP (sem rótulo de ruído reconhecido) como razão
   social. Corrigido tolerando `"(O"`/`"QO"` (com espaço opcional antes)
   como forma corrompida do "@".
+- NF-e de Serviço de Comunicação (`telecom_comunicacao`): 6 bugs achados
+  num review de uma nota real (nº 31696, F&F Comunicações/Grupo F&F →
+  Boutique Guarajuba/PH Gestão, R$558,40) — layout que não tinha teste
+  nenhum até então. (1) Colisão de detecção com `ff_locacao` (mesmo
+  emissor, documentos diferentes) — o título da fatura de comunicação
+  agora tem prioridade sobre o CNPJ do emissor. (2) CNPJ do prestador saía
+  igual ao do tomador quando o OCR degradava o separador do CNPJ da F&F
+  — corrigido tolerando o ruído e excluindo candidatos já rotulados
+  "CNPJ/CPF" (sempre do tomador). (3) Leitura padrão perdia a coluna
+  direita inteira do cabeçalho (número, data de emissão, referência,
+  vencimento, total) — número caía num fallback genérico perigoso que
+  pescava o número da Resolução ANATEL citada no rodapé; novo recorte
+  dedicado em zoom 6x resolve. (4) Total a pagar com rótulo colado sem
+  vírgula decimal causaria valor 100x maior — corrigido. (5) Endereço do
+  tomador vazava o do prestador quando o tomador não tinha "Rua/Av" no
+  próprio endereço; município também vazava o bloco anterior colado por
+  um regex que casava quebra de linha. (6) Nomes do prestador/tomador
+  saíam corrompidos pelo recorte de zoom alto (ruído de colunas fundidas)
+  quando esse recorte é prependado ao texto. Suíte 211→218 verdes; teste
+  novo `test_telecom_comunicacao_ff_layout.py`.
+- Camaçari/BA escaneado (`camacari_ba_scan_v3`): número da nota saía
+  zerado (`00000000`, nota real nº 285, pág.20 do lote PH Gestão 07/2026,
+  AVANÇO GESTÃO E ADMINISTRAÇÃO LTDA → PH GESTÃO) — uma das 3 tentativas
+  de recorte do cabeçalho degrada o rótulo "Número da Nota" para "nero da
+  Nota" (perde o "úm" inteiro), e a âncora antiga não tolerava essa
+  variante; a ocorrência com o rótulo limpo não tem número por perto.
+  Corrigido tolerando "nero da Nota", exigindo que o número colado também
+  apareça como linha isolada em outro bloco do texto antes de aceitá-lo
+  (evita repetir o erro já catalogado na nota nº 20335/PADUA, onde o
+  número colado ao rótulo degradado era simplesmente errado).
 - Monte Santo/BA: serviço de construção civil (item 07.02) prestado fora da
   sede do prestador não estava incidindo o ISSQN no município correto da
   obra (LC 116/2003 art. 3º III) — a nota traz "Local do Serviço: Fora do
