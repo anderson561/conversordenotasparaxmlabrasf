@@ -8856,9 +8856,24 @@ class SPPdfExtractor:
             # rótulo, evitando cair no recorte fixo abaixo (calibrado numa
             # nota específica — pode acertar a caixa ERRADA, "Código de
             # Verificação", noutra com cabeçalho de altura diferente).
+            # Achado real 2026-08-14 (nota PLUXEE BENEFÍCIOS nº 08336055,
+            # pág.23 do lote Guarajuba 07/2026): o valor saiu com uma
+            # aspa espúria colada ("\"08336055", ruído de borda de célula
+            # — mesma classe de "|"/"4" espúrio já tolerada perto do CNPJ
+            # em outros layouts), e o `fullmatch` original exigia o token
+            # inteiro ser dígito puro — descartava esse candidato mesmo
+            # com 8 dígitos legíveis, caindo no recorte fixo por
+            # percentual, que nesta nota (cabeçalho mais alto que o da
+            # BOM NEGÓCIO) acerta a caixa "Data e Hora de Emissão" e
+            # devolve os dígitos da data+hora coladas como se fosse o
+            # número. `re.search` (em vez de `fullmatch`) aceita dígitos
+            # com ruído colado antes/depois, mantendo a mesma exigência
+            # de 6+ dígitos CONSECUTIVOS (não corta por pontuação interna
+            # — datas/CEPs/Inscrição Municipal, com separador a cada 2-5
+            # dígitos, continuam não colando o suficiente pra casar).
             candidatos_valor = sorted(
                 (i for i in range(len(data['text']))
-                 if re.fullmatch(r'\d{6,}', (data['text'][i] or '').strip())
+                 if re.search(r'\d{6,}', (data['text'][i] or '').strip())
                  and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3),
                 key=lambda i: data['top'][i]
             )

@@ -283,5 +283,66 @@ def test_ocr_header_box_sao_paulo_rotulo_corrompido_usa_valor_direto(monkeypatch
     doc.close()
 
 
+def test_ocr_header_box_sao_paulo_valor_com_aspa_espuria_colada(monkeypatch):
+    """Achado real (nota PLUXEE BENEFÍCIOS BRASIL S.A. nº 08336055, pág.23 do
+    lote Guarajuba Suítes 07/2026): o rótulo "Número da Nota" saiu quebrado em
+    3 fragmentos ('N�', 'da', 'Not') que não casam `N[uú]mero` inteiro
+    (mesma classe de defeito da FLASH TECNOLOGIA acima), e o valor real saiu
+    com uma ASPA espúria colada na frente ('"08336055', ruído de borda de
+    célula do OCR — mesma classe de ruído "|"/"4" já tolerada perto do CNPJ
+    em outros layouts) — o fallback antigo (`re.fullmatch(r'\\d{6,}', ...)`)
+    exigia o token inteiro ser dígito puro e descartava esse candidato mesmo
+    com 8 dígitos legíveis, caindo no recorte fixo por percentual (calibrado
+    numa nota de cabeçalho mais baixo), que nesta nota acerta a caixa "Data e
+    Hora de Emissão" (16/07/2026 20:32:05) e devolve os dígitos da data+hora
+    coladas como se fosse o número (achado: `numero` saía "167072026203205"
+    em vez de "08336055"). Corrigido trocando `fullmatch` por `search` — aceita
+    dígitos com ruído colado antes/depois, mantendo a exigência de 6+ dígitos
+    CONSECUTIVOS (datas/CEPs/Inscrição Municipal, com separador a cada 2-5
+    dígitos, continuam não casando)."""
+    import pymupdf
+    import pytesseract
+    from PIL import Image as PILImage
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+
+    # Réplica dos tokens reais (mesmas posições/textos, coordenadas de zoom 3x
+    # numa página 1786x2526) capturados via `pytesseract.image_to_data` na
+    # nota PLUXEE nº 08336055.
+    mock_data = {
+        'text': ['N�', 'da', 'Not', '"08336055', 'PREFEITURA'],
+        'left': [1385, 1471, 1503, 1401, 978],
+        'top': [154, 155, 156, 160, 164],
+        'width': [25, 11, 35, 208, 46],
+        'height': [18, 19, 18, 50, 30],
+    }
+
+    monkeypatch.setattr(pytesseract, "image_to_data", lambda *a, **k: mock_data)
+
+    crop_boxes = []
+    orig_crop = PILImage.Image.crop
+
+    def tracking_crop(self, box):
+        crop_boxes.append(box)
+        return orig_crop(self, box)
+
+    monkeypatch.setattr(PILImage.Image, "crop", tracking_crop)
+    monkeypatch.setattr(pytesseract, "image_to_string", lambda img, **k: "08336055")
+
+    resultado = SPPdfExtractor._ocr_header_box_sao_paulo(page, 0)
+
+    assert resultado == "Número da Nota\n08336055\n"
+
+    # O recorte fixo de fallback (calibrado por percentual, comportamento
+    # antigo) NUNCA deve ser usado quando o valor foi localizado pela
+    # própria assinatura numérica, mesmo com ruído colado.
+    w_f, h_f = 595 * 6, int(842 * 6)
+    box_fallback_antigo = (int(w_f * 0.67), int(h_f * 0.098), int(w_f * 0.98), int(h_f * 0.126))
+    assert box_fallback_antigo not in crop_boxes
+
+    doc.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

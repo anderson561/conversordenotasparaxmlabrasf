@@ -15,6 +15,20 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- São Paulo/SP escaneado (`sao_paulo_sp_scan`): `Numero` saindo com dígitos
+  da data/hora de emissão em vez do número real da nota (nota real nº
+  08336055, PLUXEE BENEFÍCIOS BRASIL S.A. → PH GESTÃO E CONSULTORIA, pág.23
+  do lote Guarajuba 07/2026) — o valor do número saía com uma aspa espúria
+  colada na frente (`"08336055`, ruído de borda de célula do OCR), e o
+  gatilho do recorte dedicado de cabeçalho (`_ocr_header_box_sao_paulo`)
+  exigia o token inteiro ser dígito puro (`re.fullmatch`), descartando esse
+  candidato mesmo com 8 dígitos legíveis; caía então no recorte fixo por
+  percentual (calibrado numa nota de cabeçalho mais baixo), que nesta nota
+  acerta a caixa "Data e Hora de Emissão" e devolve `16072026203205` em vez
+  de `08336055`. Corrigido trocando `fullmatch` por `search` no gatilho —
+  aceita dígitos com ruído colado antes/depois, mantendo a exigência de 6+
+  dígitos CONSECUTIVOS (datas/CEPs/Inscrição Municipal, com separador a cada
+  2-5 dígitos, continuam não casando). Suíte 224→**225 verdes**.
 - Salvador/BA (`salvador_ba`): Código de Verificação, CNPJ/razão social do
   PRESTADOR e grade de valores saindo todos ERRADOS/zerados numa nota real
   (nº 00039029, A LIMPCANO DESENTUPIMENTO E SUCÇÃO DE FOSSAS LTDA - EPP →
