@@ -31,6 +31,41 @@ sessão, de todos os layouts/fixes entregues está em
   sinalizado via `Nfse.avisos`. Suíte 225→**227 verdes**; teste novo
   `test_nfcom_salvador_layout.py`.
 
+- Novo layout **São José/SC** (`sao_jose_sc`) — INTELBRAS S/A (CNPJ
+  82.901.000/0001-27, matriz em São José/SC) → SINDICATO DOS DELEGADOS DE
+  POLICIA (Salvador/BA), nota real nº 348301, R$ 178,80. Blocos "PRESTADOR
+  DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com reordenação própria (razão social/
+  nome fantasia antes do bloco de rótulos; Município realocado para o
+  início da sequência de valores restante) e CEP/UF do prestador deslocados
+  para depois do cabeçalho "TOMADOR DE SERVIÇOS" (artefato de leitura em 2
+  colunas do pdfminer). IBGE de São José/SC (`4216602`) registrado em
+  `KNOWN_CITIES`, confirmado via fonte oficial. Suíte 227→**229 verdes**;
+  teste novo `test_sao_jose_sc_layout.py`.
+
+### Corrigido
+
+- `parse_multiple`: um bloco de PREÂMBULO (canhoto/recibo do destinatário)
+  antes da 1ª nota real de um PDF, separado por uma linha divisória longa
+  (200+ hifens), virava uma "nota" fantasma isolada (nº `00000000`, razão
+  social = o próprio texto do canhoto) quando o bloco seguinte (a nota real)
+  forçava o flush do que já estava acumulado — achado real ao criar o
+  layout São José/SC (nota nº 348301, canhoto "Identificação e assinatura...
+  do recebedor" antes do conteúdo da nota). Corrigido de forma GENÉRICA (não
+  gated a nenhum layout): um bloco sem NENHUM sinal de nota (CNPJ/CPF,
+  rótulo de entidade, "Nota"/"NFS") é descartado quando `current_invoice`
+  ainda está vazio (nenhuma nota iniciada) — restrito a esse caso para não
+  afetar páginas de CONTINUAÇÃO de uma nota já iniciada (ex.: 2ª página do
+  Monte Santo). Zero regressão na suíte completa.
+
+- 2 funções de extração de entidade (uma do NFCom Salvador, duas do São
+  José/SC) chamavam `IBGEResolver.extract_and_validate(municipio, uf)` sem
+  passar `city_hint=municipio` — o lookup direto por nome nunca era
+  acionado, e o código caía silenciosamente no fallback de CAPITAL do
+  estado (São José/SC → Florianópolis `4205407`, em vez de São José
+  `4216602`). O caso do NFCom Salvador "funcionava por coincidência"
+  (Salvador é a capital da Bahia). Corrigido nos 3 call sites; **não
+  auditado** nos demais layouts que possam compartilhar essa omissão.
+
 ### Corrigido
 
 - São Paulo/SP escaneado (`sao_paulo_sp_scan`): `Numero` saindo com dígitos
