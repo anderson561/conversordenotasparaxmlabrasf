@@ -25,6 +25,13 @@ sessão, de todos os layouts/fixes entregues está em
   apareça como linha isolada em outro bloco do texto antes de aceitá-lo
   (evita repetir o erro já catalogado na nota nº 20335/PADUA, onde o
   número colado ao rótulo degradado era simplesmente errado).
+- Monte Santo/BA: serviço de construção civil (item 07.02) prestado fora da
+  sede do prestador não estava incidindo o ISSQN no município correto da
+  obra (LC 116/2003 art. 3º III) — a nota traz "Local do Serviço: Fora do
+  Município" e a cidade da obra em texto livre ("OBRA: ..., <CIDADE>/<UF>"),
+  extraível de forma confiável pela âncora de fim de linha. `Nfse.
+  municipio_incidencia_override` agora também cobre esse layout (mesmo
+  padrão já usado no Guarulhos/SP).
 - São Paulo/SP escaneado (`sao_paulo_sp_scan`): número da nota saindo
   ERRADO (ex.: `13`/`7668` em vez de `05114339`/`05210826`) quando o
   próprio rótulo "Número" sai corrompido em fragmentos no zoom de
