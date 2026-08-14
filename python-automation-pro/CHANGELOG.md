@@ -15,6 +15,16 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- Camaçari/BA escaneado (`camacari_ba_scan_v3`): número da nota saía
+  zerado (`00000000`, nota real nº 285, pág.20 do lote PH Gestão 07/2026,
+  AVANÇO GESTÃO E ADMINISTRAÇÃO LTDA → PH GESTÃO) — uma das 3 tentativas
+  de recorte do cabeçalho degrada o rótulo "Número da Nota" para "nero da
+  Nota" (perde o "úm" inteiro), e a âncora antiga não tolerava essa
+  variante; a ocorrência com o rótulo limpo não tem número por perto.
+  Corrigido tolerando "nero da Nota", exigindo que o número colado também
+  apareça como linha isolada em outro bloco do texto antes de aceitá-lo
+  (evita repetir o erro já catalogado na nota nº 20335/PADUA, onde o
+  número colado ao rótulo degradado era simplesmente errado).
 - Monte Santo/BA: serviço de construção civil (item 07.02) prestado fora da
   sede do prestador não estava incidindo o ISSQN no município correto da
   obra (LC 116/2003 art. 3º III) — a nota traz "Local do Serviço: Fora do
