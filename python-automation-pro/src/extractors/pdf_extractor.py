@@ -3590,8 +3590,11 @@ class SPPdfExtractor:
 
         def is_valid_razao(line: str) -> bool:
             line_clean = line.strip()
-            # Clean emails (with OCR resilience for @ like Q, O or dot when followed by real domain)
-            line_clean = re.sub(r'\b[a-zA-Z0-9._%+-]+(?:@|[qQoO]|\.)[a-zA-Z0-9.-]+\.(?:com|br|net|org|gov)\b', '', line_clean, flags=re.I).strip()
+            # Clean emails (com resiliência de OCR para o "@" virando Q, O, ponto
+            # ou, achado real DANFSe Nacional Camaçari/BA MEI, "(O"/"QO" precedido
+            # de um espaço espúrio quando a razão social e o e-mail vêm colados na
+            # mesma linha da grade — ex.: "ANAPAULAENE01 (OGMAIL.COM").
+            line_clean = re.sub(r'\b[a-zA-Z0-9._%+-]+\s*(?:@|[qQoO]|\.|\(O|QO)[a-zA-Z0-9.-]+\.(?:com|br|net|org|gov)\b', '', line_clean, flags=re.I).strip()
             # Clean CNPJs and other numbers
             line_clean = re.sub(r'^\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}\s*', '', line_clean).strip()
             line_clean = re.sub(r'^\d{2}\.\d{3}\.\d{3}\s*', '', line_clean).strip()
@@ -3660,8 +3663,8 @@ class SPPdfExtractor:
             razao = ''
         else:
             # Limpeza final robusta:
-            # 1. Remove e-mails (resiliente)
-            razao = re.sub(r'\b[a-zA-Z0-9._%+-]+(?:@|[qQoO]|\.)[a-zA-Z0-9.-]+\.(?:com|br|net|org|gov)\b', '', razao, flags=re.I).strip()
+            # 1. Remove e-mails (resiliente, mesma tolerância de is_valid_razao)
+            razao = re.sub(r'\b[a-zA-Z0-9._%+-]+\s*(?:@|[qQoO]|\.|\(O|QO)[a-zA-Z0-9.-]+\.(?:com|br|net|org|gov)\b', '', razao, flags=re.I).strip()
             razao = re.sub(r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', '', razao).strip()
             # 2. Remove fragmentos de data/hora no final (como em Nota 7: PH COPIADORAS... 06/04/2026 18:51:03)
             razao = re.sub(r'\s*\d{2}/\d{2}/\d{4}.*$', '', razao).strip()
