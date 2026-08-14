@@ -13,6 +13,24 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Adicionado
+
+- Novo layout **NFCom Salvador** (`nfcom_salvador`) — Empresa Baiana de
+  Jornalismo S.A. (EBJ, CNPJ 14.583.041/0001-62, Salvador/BA), NFCom (Nota
+  Fiscal de Serviço de Comunicação Eletrônica, padrão nacional SVRS,
+  tributada por ICMS, não ISS). Nota real nº 624 (SIND DELEGADOS DE POLICIA
+  DO EST DA BAHIA, R$ 400,00) caía no fallback `danfse_nacional` (a chave de
+  acesso de 44 dígitos da NFCom também casa o gatilho amplo "Chave de
+  Acesso") e saía com o valor ZERADO e o tomador com a razão social vazada
+  do rótulo "Nº TELEFONE" — o parser da NFS-e Nacional não serve para a
+  estrutura de uma NFCom. Corrigido com detecção específica do CNPJ do
+  emissor, prestador fixo (mesmo emitente sempre), extração dedicada do
+  tomador (rótulos e valores em ordem parcialmente invertida no bloco do
+  destinatário) e leitura do "TOTAL A PAGAR (R$)". BaseCalculo/Aliquota/
+  ValorIss mantidos em 0,00 propositalmente (decisão do usuário: ICMS ≠ ISS),
+  sinalizado via `Nfse.avisos`. Suíte 225→**227 verdes**; teste novo
+  `test_nfcom_salvador_layout.py`.
+
 ### Corrigido
 
 - São Paulo/SP escaneado (`sao_paulo_sp_scan`): `Numero` saindo com dígitos
