@@ -66,6 +66,22 @@ sessão, de todos os layouts/fixes entregues está em
   Modelo 55)" da GUI. Suíte 229→**231 verdes**; teste novo
   `test_danfe_produto_layout.py`.
 
+- **Retenções federais no Portal Nacional (`danfse_nacional`)** — extração de
+  IRRF, INSS ("Contribuição Previdenciária - Retida") e um novo campo
+  `Valores.valor_contribuicoes_sociais_retidas` (valor COMBINADO de
+  PIS+COFINS+CSLL, rótulo "Contribuições Sociais - Retidas", sem abertura
+  individual — soma para `OutrasRetencoes` no XML por não haver tag ABRASF
+  própria). Nenhum dos três era extraído antes, mesmo com valor real na nota
+  (achado a partir de um pedido do usuário pra analisar viabilidade de
+  extrair PIS/COFINS/CSLL/Contribuições Sociais/INSS/ISS/IRRF Retidos em
+  todo o conversor). Extração por adjacência ESTRITA rótulo→valor — em
+  notas onde o pdfminer despeja os rótulos desta seção juntos sem os
+  valores aparecerem no texto, os campos ficam em 0,00 em vez de atribuir
+  errado (regressão coberta por teste). Não confundir com "PIS - Débito
+  Apuração Própria"/"COFINS - Débito Apuração Própria" (débito próprio do
+  prestador, não retenção — permanece não extraído). Suíte 231→**234
+  verdes**; teste novo `test_danfse_nacional_retencoes_federais.py`.
+
 - Novo layout **BIO CONTROL DESINSETIZADORA** (`biocontrol_dedetizadora`) —
   BIO CONTROL DESINSETIZADORA LTDA (CNPJ 04.811.846/0001-62, Lauro de
   Freitas/BA) → BONI TRANSPORTES, LOGISTICA E COMERCIO LTDA, nota real nº
@@ -85,7 +101,7 @@ sessão, de todos os layouts/fixes entregues está em
   validado contra o render real da página, não só o texto OCR. Item LC116
   "7.13" (dedetização/desinsetização/controle de pragas urbanas), confirmado
   tanto pelo recorte quanto pela discriminação real da nota. Suíte
-  231→**233 verdes**; teste novo `test_biocontrol_layout.py`.
+  234→**236 verdes**; teste novo `test_biocontrol_layout.py`.
 
 ### Corrigido
 

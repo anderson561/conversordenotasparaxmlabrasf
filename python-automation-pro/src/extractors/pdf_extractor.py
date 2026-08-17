@@ -7151,9 +7151,37 @@ class SPPdfExtractor:
             iss = _num_rotulo(r'ISSQN\s+Apurado')
             iss_retido = bool(re.search(r'ISSQN\s+Retido[\s\S]{0,40}?\bSim\b', t, re.IGNORECASE))
 
+            # Seção "TRIBUTAÇÃO FEDERAL": rótulo diretamente seguido do valor
+            # ("-" quando vazio, "R$ n,nn"/"R$ n.nn" quando preenchido) - só
+            # quando o pdfminer preserva essa adjacência (achado real: em
+            # notas onde os rótulos desta seção saem despejados juntos e os
+            # valores nunca aparecem no texto extraído, a âncora
+            # propositalmente NÃO casa, mantendo o campo em 0.0 em vez de
+            # atribuir errado - ver `test_danfse_nacional_retencoes_federais.py`).
+            def _valor_apos_rotulo_grade(label):
+                m = re.search(label + r'\s*\n+\s*(-|' + m_rs + r')', t, re.IGNORECASE)
+                if not m:
+                    return 0.0
+                val = m.group(1)
+                if val == '-':
+                    return 0.0
+                m_v = re.search(m_rs, val)
+                return self._parse_valor_tolerante(m_v.group(1)) if m_v else 0.0
+
+            irrf = _valor_apos_rotulo_grade(r'\bIRRF\b')
+            inss = _valor_apos_rotulo_grade(r'Contribui[çc][ãa]o\s+Previdenci[áa]ria\s*-\s*Retida')
+            # "Contribuições Sociais - Retidas": valor COMBINADO de PIS+COFINS
+            # +CSLL, sem abertura individual - não confundir com "PIS/COFINS -
+            # Débito Apuração Própria" (rótulo diferente, mais abaixo na
+            # mesma seção: é o débito próprio do prestador, não retenção).
+            contrib_sociais = _valor_apos_rotulo_grade(r'Contribui[çc][õo]es\s+Sociais\s*-\s*Retidas')
+
             return Valores(
                 valor_servicos=serv,
                 valor_deducoes=0.0,
+                valor_inss=inss,
+                valor_ir=irrf,
+                valor_contribuicoes_sociais_retidas=contrib_sociais,
                 base_calculo=base or serv,
                 aliquota=0.0,
                 valor_iss=iss,
