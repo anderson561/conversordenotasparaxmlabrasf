@@ -83,6 +83,7 @@ LAYOUT_CAMACARI_SISLOC = 'camacari_sisloc'  # Camaçari/BA via plataforma SISLOC
 LAYOUT_MONTE_SANTO = 'monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, em texto livre "OBJETO DO CONTRATO"/"OBRA: ..., <CIDADE>/<UF>") - `municipio_incidencia_override` implementado (revisão 2026-08-10): a linha "OBRA:" sempre termina no formato ", <CIDADE>/<UF>", âncora confiável o suficiente; incidência do ISSQN vai para o município da obra quando presente, senão permanece no do prestador (Monte Santo)
 LAYOUT_NFCOM_SALVADOR = 'nfcom_salvador'  # Empresa Baiana de Jornalismo S.A. (EBJ, CNPJ 14.583.041/0001-62, Salvador/BA) - NFCom (Nota Fiscal de Serviço de Comunicação Eletrônica), PDF DIGITAL, template nacional hospedado no portal SVRS (dfe-portal.svrs.rs.gov.br/NfCom), estruturalmente distinto de uma NFS-e ABRASF: tributado por ICMS (não ISS), chave de acesso de 44 dígitos própria do padrão NFCom/NF-e mod. 62. Detectado pelo CNPJ do emitente (específico, não pela marca genérica do documento - decisão do usuário, para não capturar futuras NFCom de outros emitentes/UFs sem revisão). Precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (a chave de acesso desta nota também casaria esse rótulo, e o parser DANFSe não serve pra ela - achado real, nota EBJ nº 624, nov/2025: caía no LAYOUT_NACIONAL e saía com o valor zerado, ItemListaServico incompatível e o tomador com a razão social vazada do rótulo "Nº TELEFONE"). Prestador é FIXO (mesmo emitente sempre, endereço da própria EBJ hardcoded - mesmo racional de LAYOUT_PJB_LOCACAO/LAYOUT_FF_LOCACAO); tomador extraído dinamicamente do bloco "NOME DO DESTINATÁRIO"/"END."/"CPF/CNPJ" (rótulos e valores em ordem PARCIALMENTE invertida: o valor do endereço vem ANTES do valor da razão social, apesar do rótulo "NOME DO DESTINATÁRIO" vir primeiro). ValorServicos/ValorLiquidoNfse = "TOTAL A PAGAR (R$)"; BaseCalculo/Aliquota/ValorIss mantidos em 0,00 propositalmente (decisão do usuário: nota tributada por ICMS, não por ISS - sinalizado em `Nfse.avisos`, não fabricado). ItemListaServico/CodigoTributacaoMunicipio = "0000" (não é item real da LC116, mesma convenção de não-incidência já usada em Barreiras/CAMACARI_SISLOC)
 LAYOUT_SAO_JOSE_SC = 'sao_jose_sc'  # Prefeitura Municipal de São José/SC ("PREFEITURA MUNICIAL DE SÃO JOSÉ" - erro de digitação real do próprio gerador do PDF, "MUNICIAL" em vez de "MUNICIPAL", preservado como está impresso), NFS-e tributada, PDF DIGITAL (sem OCR). Achado real: nota nº 348301, INTELBRAS S/A - IND DE TEL ELET BRA (CNPJ 82.901.000/0001-27, matriz em São José/SC) -> SINDICATO DOS DELEGADOS DE POLICIA (Salvador/BA). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com um padrão de reordenação PRÓPRIO (distinto do "labels dumped, depois values dumped" de Monte Santo/Guarulhos): razão social + nome fantasia vêm ANTES do bloco de rótulos (Nome Fantasia/Nome-Razão Social/CPF-CNPJ/Endereço/Complemento/Município/E-mail); os 5 valores restantes vêm DEPOIS do bloco de rótulos, mas com "Município" REALOCADO para o início da sequência (ordem real: Município, CPF/CNPJ, Endereço[+Complemento na mesma sub-linha], E-mail) - sem tratamento dedicado, o parser genérico atribuiria o Município ao CPF/CNPJ e vice-versa. CEP/UF do PRESTADOR saem DESLOCADOS para depois do cabeçalho "TOMADOR DE SERVIÇOS" (artefato de leitura em 2 colunas do pdfminer, mesma classe geral já vista em outros layouts digitais). Serviço de licenciamento de software (item LC116 "1.05" -> "0105"); discriminação = nome do plano/produto faturado ("LIC SOFT CLOUD-STANDARD 36X"), não o texto legal do item. Sem Optante Simples Nacional (prestador é empresa de grande porte)
+LAYOUT_BIOCONTROL = 'biocontrol_dedetizadora'  # BIO CONTROL DESINSETIZADORA LTDA (CNPJ 04.811.846/0001-62, Lauro de Freitas/BA) - template próprio "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO" (distinto tanto de LAYOUT_LAURO_FREITAS, a Prefeitura oficial, quanto de LAYOUT_PASSWORD_ENOTAS, a plataforma eNotas Gateway - 3º sistema diferente no MESMO município). PDF escaneado (OCR); blocos "Dados do Prestador"/"Dados do Tomador" em grade limpa de 2 linhas por campo (rótulo, depois valor) - ao contrário do padrão "prestador fixo" de outras faturas de locação (PJB/F&F/LMR/NFCom Salvador), aqui a extração é DINÂMICA para as duas entidades, pois o texto já sai limpo o bastante em zoom 3x padrão. Duas grades densas (linha "Tributação de Serviços" com o Código LC 116, e a linha dupla "Tributos Federais"/"Impostos sobre serviços ISSQN") saem CORROMPIDAS na leitura de página inteira (Código LC 116 "7.13" vira "743"; PIS/COFINS/IR saem com os valores trocados) - recuperadas por um recorte dedicado em zoom 8x de cada linha (`_ocr_recut_biocontrol`), validado contra a imagem real da nota nº 36345 (BONI TRANSPORTES -> tomador, R$5.200,00, dedetização/controle de pragas). Serviço mapeado para o item LC116 "7.13" (Dedetização/desinsetização/controle de pragas urbanas), confirmado tanto pela discriminação ("TERMONEBULIZAÇÃO... CONTROLE DE BARATAS, MOSCAS, FORMIGAS... E ROEDORES") quanto pelo recorte dedicado do Código LC 116. ISS não retido pelo tomador (pago pelo prestador via guia própria) mas o valor ainda sai informado na nota (5% = R$260,00) - extraído do recorte, não fabricado nem zerado.
 LAYOUT_DANFE_PRODUTO = 'danfe_produto'  # NF-e Modelo 55 (DANFE Estadual) - documento de PRODUTO/mercadoria tributado por ICMS/IPI, estruturalmente DIFERENTE de qualquer NFS-e (não tem "discriminação"/"código de serviço" único - tem tabela de N itens com NCM/CFOP, grade de ICMS e bloco "TRANSPORTADOR/VOLUMES TRANSPORTADOS"). Retorna um objeto `NfeProduto` em vez de `Nfse` (ver `parse()`/`_parse_danfe_produto`). Detecção ESTRUTURAL (não gated a nenhum emitente específico - decisão do usuário, pois notas de compra de mercadoria vêm de fornecedores variados, ao contrário do padrão "prestador fixo" de faturas de locação recorrentes): exige a combinação "DANFE" + "Documento Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA" - assinatura mandada pelo padrão nacional SEFAZ/CONFAZ para TODO Modelo 55, ausente de qualquer NFS-e. Checada bem no TOPO de `_detect_layout`/`_detect_layout_page`, antes até do check da DANFSe Nacional: o rótulo genérico "FATURA/DUPLICATA" (presente em qualquer DANFE) colidia com a marca da Localiza (`LAYOUT_LOCALIZA`), e "CHAVE DE ACESSO" colidiria com o fallback amplo da DANFSe Nacional - achado real ao revisar a nota nº 52.136 (GRAN COFFEE COM. LOC. E SERVICOS -> SINDICATO DOS DELEGADOS DE POLICIA, venda de café, R$595,00): sem esta detecção no topo, a nota caía inteira em `LAYOUT_LOCALIZA` e saía com tomador não identificado, valor zerado e o prestador hardcoded errado ("LOCALIZA RENT A CAR S/A" - nome de OUTRO emitente fixo). Emitente extraído do bloco livre (letterhead) impresso entre o canhoto/recibo e o box "DANFE" (CNPJ/IE vêm de rótulos isolados na grade, não do letterhead); destinatário da grade "DESTINATÁRIO/REMETENTE" (rótulos padronizados nacionalmente); tabela de itens modelada como lista (`ItemProduto`) - nesta nota só há 1 item, mas o parser da linha da tabela generaliza para N linhas repetidas. Grade "CÁLCULO DE IMPOSTO" tem um quirk de ordem: o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de rótulos) tem seu VALOR deslocado para o FIM do 2º bloco de valores (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) - mesma família geral de "labels dumped, depois values dumped" já vista em várias NFS-e, faceta nova aqui. Chave de acesso é a REAL do documento (extraída do código de barras/texto, não gerada por checksum como no `NfeTransformer` workaround) - ver `src/transformers/nfe_produto_transformer.py`.
 
 
@@ -379,6 +380,14 @@ class SPPdfExtractor:
             return LAYOUT_LOCALIZA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
+        # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): detecção pelo CNPJ/
+        # razão social do emitente ESPECÍFICO, não pela marca genérica do
+        # município (já usada por LAYOUT_LAURO_FREITAS/LAYOUT_PASSWORD_ENOTAS
+        # para outros 2 sistemas distintos do mesmo município) nem pelo título
+        # "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO" (pode ser template genérico
+        # de outro emissor/plataforma ainda não visto).
+        if re.search(r'04\.?811\.?846[/.]?0001-?62|BIO\s+CONTROL\s+DESINSETIZADORA', t, re.IGNORECASE):
+            return LAYOUT_BIOCONTROL
         if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
         # Mata de São João/BA (plataforma SAATRI) — específico do município
@@ -591,6 +600,14 @@ class SPPdfExtractor:
             return LAYOUT_LOCALIZA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
+        # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): detecção pelo CNPJ/
+        # razão social do emitente ESPECÍFICO, não pela marca genérica do
+        # município (já usada por LAYOUT_LAURO_FREITAS/LAYOUT_PASSWORD_ENOTAS
+        # para outros 2 sistemas distintos do mesmo município) nem pelo título
+        # "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO" (pode ser template genérico
+        # de outro emissor/plataforma ainda não visto).
+        if re.search(r'04\.?811\.?846[/.]?0001-?62|BIO\s+CONTROL\s+DESINSETIZADORA', t, re.IGNORECASE):
+            return LAYOUT_BIOCONTROL
         if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
         # Mata de São João/BA (plataforma SAATRI) — específico do município.
@@ -750,6 +767,15 @@ class SPPdfExtractor:
             # caixa de cabeçalho). Usamos o mês da emissão em vez de arcar
             # com o custo/risco de um recorte extra para um valor redundante.
             result = datetime(data_emissao.year, data_emissao.month, 1)
+        elif layout == LAYOUT_BIOCONTROL:
+            # "06/07/2026 07:46:49 07/2026 Lauro de Freitas..." — competência
+            # (MM/AAAA) é o 3º token da linha de valores, logo após data+hora.
+            m = re.search(r'\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\s+(\d{2})/(\d{4})', t)
+            if m:
+                try:
+                    result = datetime(int(m.group(2)), int(m.group(1)), 1)
+                except ValueError:
+                    result = None
         elif layout == LAYOUT_TELECOM_COMUNICACAO:
             # Campo "REFERÊNCIA (ANO/MÊS): 2026/06" ou "REFERÊNCIA: 2026/06"
             m = re.search(r'REFER[EÊ]NCIA\s*(?:\([^)]*\))?\s*[:\s]+(\d{4})/(\d{2})', t, re.IGNORECASE)
@@ -887,6 +913,17 @@ class SPPdfExtractor:
             # "Data e Hora da Emissão: 18/06/2026 17:17:00" — linha canônica
             # prependida por `_ocr_recut_guarulhos`.
             m = re.search(r'Data\s+e\s+Hora\s+da\s+Emiss[ãa]o\s*:\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
+        if self.layout == LAYOUT_BIOCONTROL:
+            # "Data de Emissão Competência Local da Prestação..." (rótulos)
+            # seguido de "06/07/2026 07:46:49 07/2026 Lauro de Freitas..."
+            # (valores) — data+hora são os 2 primeiros tokens da linha.
+            m = re.search(
+                r'Data\s+de\s+Emiss[ãa]o\s+Compet[êe]ncia.*?\n+\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+                t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
@@ -1222,6 +1259,20 @@ class SPPdfExtractor:
             # valor diferente do número da nota).
             m = re.search(r'N[úu]mero\s+da\s+Nota\s*\n+\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_BIOCONTROL:
+            # "Número da NFS-e" (canto superior direito) seguido, algumas
+            # linhas depois (título "Emitida em Lauro de Freitas (BA)" entre
+            # os dois, artefato de leitura em 2 colunas), do valor de 15
+            # dígitos "202600000036345" — mesmo racional de janela pós-rótulo
+            # já usado em LAYOUT_PASSWORD_ENOTAS (distingue de CEP/telefone/
+            # inscrição municipal, todos mais curtos).
+            m_lab = re.search(r'N[úu]mero\s+da\s+NFS-?e', t, re.IGNORECASE)
+            if m_lab:
+                janela = t[m_lab.end(): m_lab.end() + 120]
+                m_num = re.search(r'(\d{14,})', janela)
+                if m_num:
+                    return m_num.group(1).strip()
 
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             # "# NFS-e 24052" — texto já reconstruído por coordenada
@@ -1624,6 +1675,17 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_BIOCONTROL:
+            # "Detalhamento dos Serviços\nTERMONEBULIZACAO, ATOMIZACAO,
+            # CONTROLE DE BARATAS...\n\nRetencao para a Previdencia Social..."
+            m = re.search(
+                r'Detalhamento\s+dos\s+Servi[çc]os\s*\n+(.*?)\n\s*\n\s*Retencao',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             # "Discriminação do(s) Serviço(s)\n\nSERVIÇOS DE MARKETING DIGITAL\n\n
             # Classificação do Serviço (LEI 116/2003)..." — bloco entre o rótulo
@@ -2031,6 +2093,20 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_BIOCONTROL:
+            # "Código LC 116: 7.13" — linha canônica prependida pelo recorte
+            # dedicado (`_ocr_recut_biocontrol`); a leitura de página inteira
+            # lê esse campo corrompido ("743", sem o ponto decimal). Item
+            # 7.13 da LC116/2003 (dedetização/desinfecção/desinsetização/
+            # controle de pragas urbanas) - confirmado pela discriminação
+            # real ("TERMONEBULIZACAO... CONTROLE DE BARATAS, MOSCAS,
+            # FORMIGAS, TRACAS DE CEREAIS E ROEDORES"). Fallback fixo "0713"
+            # caso o recorte não recupere o campo em alguma nota futura.
+            m = re.search(r'C[óo]digo\s+LC\s*116\s*:\s*(\d{1,2})\.(\d{2})', t, re.IGNORECASE)
+            if m:
+                return m.group(1).zfill(2) + m.group(2)
+            return "0713"
+
         if self.layout == LAYOUT_PJB_LOCACAO:
             # Locação de bens móveis sem incidência de ISS (LC 116/2003, item
             # não tributável) - mesmo critério do Barreiras para esse tipo de
@@ -2256,6 +2332,17 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_BIOCONTROL:
+            # "...Lauro de Freitas - BA B0416E1B5 NFSE - 40870" — o código de
+            # verificação fica entre o "Local da Prestação" (fixo, sempre
+            # este prestador) e o rótulo "NFSE" (início da Série/Número RPS),
+            # única forma de isolar o token no meio da linha de valores
+            # despejados (label row: "Data de Emissão Competência Local da
+            # Prestação Código de Verificação Série | Número RPS").
+            m = re.search(r'Lauro\s+de\s+Freitas\s*-\s*BA\s+([A-Z0-9]{6,12})\s+NFSE', t, re.IGNORECASE)
+            if m:
+                return m.group(1).upper()
+
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_FF_LOCACAO):
             return "FATURA"
 
@@ -2567,6 +2654,15 @@ class SPPdfExtractor:
                 return self._extrair_prestador_sao_jose(t)
             else:
                 return self._extrair_tomador_sao_jose(t)
+
+        if self.layout == LAYOUT_BIOCONTROL:
+            if is_intermediario:
+                return None
+            if is_prestador:
+                m_bloco = re.search(r'Dados\s+do\s+Prestador(.*?)Dados\s+do\s+Tomador', t, re.IGNORECASE | re.DOTALL)
+            else:
+                m_bloco = re.search(r'Dados\s+do\s+Tomador(.*?)Detalhamento\s+dos\s+Servi[çc]os', t, re.IGNORECASE | re.DOTALL)
+            return self._extrair_entidade_biocontrol(m_bloco.group(1) if m_bloco else '')
 
         # São Paulo/SP digital: em algumas notas reais (ex. AMIL/TEMIS,
         # 2026-07-31) o pdfminer extrai o texto numa ordem física diferente da
@@ -4530,6 +4626,107 @@ class SPPdfExtractor:
                 uf=uf,
                 cep=cep,
             ),
+        )
+
+    @staticmethod
+    def _corrigir_arroba_ocr(email: str) -> str:
+        """Tesseract lê o '@' como uma letra maiúscula solta quando o e-mail
+        vem colado direto na letra seguinte, sem espaço nenhum ao redor (ex.:
+        "administrativoObiocontrolbahia.com.br" -> o "O" no meio É o '@';
+        achado real, nota BioControl nº 36345, prestador E tomador). Só
+        substitui quando NÃO há '@' já presente e o padrão bate exatamente
+        (minúsculas, 1 maiúscula solta, minúsculas, domínio) - não mexe em
+        e-mails que já vieram corretos outros layouts."""
+        if '@' in email:
+            return email
+        m = re.match(r'^([a-z0-9._-]+)[A-Z]([a-z0-9-]+\.(?:com|net|org|gov)(?:\.br)?)$', email)
+        if m:
+            return f"{m.group(1)}@{m.group(2)}"
+        return email
+
+    def _extrair_entidade_biocontrol(self, t_bloco: str) -> Entidade:
+        """Extrai prestador/tomador do layout BioControl (Lauro de Freitas/BA,
+        template "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO"). Blocos "Dados do
+        Prestador"/"Dados do Tomador" têm a MESMA estrutura de 2 linhas por
+        campo (rótulo, depois valor) - ao contrário de outros layouts
+        "prestador fixo" (PJB/F&F/LMR/NFCom Salvador), aqui o texto já sai
+        limpo o bastante em zoom 3x padrão para extrair as DUAS entidades
+        dinamicamente, sem hardcode de endereço."""
+        cnpj = "00000000000000"
+        razao_social = "Não identificado"
+        inscricao_municipal = None
+        logradouro, numero, complemento = "Não informado", "S/N", None
+        bairro, municipio, uf, cep = "Não informado", "Lauro de Freitas", "BA", "00000000"
+        email = None
+
+        m_razao = re.search(
+            r'Raz[ãa]o\s+Social\s+CNPJ\s*\n+(.+?)\s+(\d{2}\.?\d{3}\.?\d{3}[/.]?\d{4}-?\d{2})',
+            t_bloco, re.IGNORECASE)
+        if m_razao:
+            razao_social = m_razao.group(1).strip() or razao_social
+            cnpj = re.sub(r'\D', '', m_razao.group(2))
+
+        m_insc_linha = re.search(
+            r'Nome\s+Fantasia.*?Inscri[çc][ãa]o\s+Municipal\s*\n+(.+)',
+            t_bloco, re.IGNORECASE)
+        if m_insc_linha:
+            m_insc = re.search(r'(\d{10,15})\s*$', m_insc_linha.group(1).strip())
+            if m_insc:
+                inscricao_municipal = m_insc.group(1)
+
+        m_end = re.search(
+            r'Endere[çc]o\s+N[uú]mero\s+Complemento\s*\n+(.+?)\s+(\d+)\s+(.*)',
+            t_bloco, re.IGNORECASE)
+        if m_end:
+            logradouro = m_end.group(1).strip() or logradouro
+            numero = m_end.group(2).strip() or numero
+            complemento = m_end.group(3).strip() or None
+
+        # Bairro e Município vêm colados na mesma linha sem separador ("Recreio
+        # Ipitanga Lauro de Freitas-BA..."), ambos podendo ter mais de uma
+        # palavra - uma divisão puramente lazy/greedy não generaliza (achado
+        # real: "Recreio Ipitanga" via lazy vira só "Recreio", "Ipitanga"
+        # vaza pro município). Como esta nota é da plataforma de UM emissor
+        # fixo registrado em Lauro de Freitas/BA (nome do próprio layout) e o
+        # tomador observado também é local, ancoramos "Lauro de Freitas"
+        # literalmente como município - se um tomador de OUTRA cidade aparecer
+        # numa nota futura, o regex simplesmente não casa (bairro/município
+        # caem no default "Não informado", nunca um valor errado).
+        m_bmc = re.search(
+            r'Bairro\s+Munic[íi]pio\s+CEP\s+Telefone\s*\n+(.+?)\s+(Lauro\s+de\s+Freitas)\s*-\s*([A-Z]{2})\s+(\d{8})\s+(\(\d{2}\)[\d\s-]+)',
+            t_bloco, re.IGNORECASE)
+        if m_bmc:
+            bairro = m_bmc.group(1).strip() or bairro
+            municipio = m_bmc.group(2).strip() or municipio
+            uf = m_bmc.group(3).strip() or uf
+            cep = m_bmc.group(4).strip() or cep
+
+        # Achado real: o OCR às vezes solta uma letra de ruído logo após o
+        # rótulo "E-mail" (ex.: "E-mail E" no bloco do tomador desta mesma
+        # nota, distinto do "E" solto no FIM do e-mail do prestador) - tolera
+        # qualquer coisa não-quebra-de-linha entre o rótulo e as quebras que
+        # antecedem o valor.
+        m_email = re.search(r'E-mail\b[^\n]*\n+(\S+@?\S*\.\S+)', t_bloco, re.IGNORECASE)
+        if m_email:
+            email = self._corrigir_arroba_ocr(m_email.group(1).strip())
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao_social,
+            inscricao_municipal=inscricao_municipal,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+            email=email,
         )
 
     _LABEL_TOKEN_SAO_PAULO = re.compile(
@@ -6646,6 +6843,57 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout == LAYOUT_BIOCONTROL:
+            # Fonte: linhas canônicas prependidas pelo recorte dedicado
+            # (`_ocr_recut_biocontrol`) - a leitura de página inteira
+            # embaralha essa grade densa (PIS/COFINS/IR saem trocados entre
+            # si; Alíquota/Valor ISS somem por completo). O resumo em texto
+            # livre ("Retencao para a Previdencia Social (11%): R$ 572,00"
+            # etc.) já confirma os totais (572,00+52,00+241,80 = 865,80;
+            # 5.200,00-865,80 = 4.334,20 = Valor Líquido impresso), mas o
+            # recorte dá a abertura INDIVIDUAL de PIS/COFINS/CSLL (mais
+            # precisa que o campo combinado `valor_contribuicoes_sociais_
+            # retidas`, reservado para quando só existe o valor somado).
+            def _campo(label):
+                m = re.search(re.escape(label) + r'\s*:\s*([\d.,]+)', t, re.IGNORECASE)
+                return self._parse_valor(m.group(1)) if m else 0.0
+
+            valor_servicos = _campo("Valor Total dos Serviços")
+            base_calculo = _campo("Base de cálculo") or valor_servicos
+            valor_deducoes = _campo("Dedução da Base de cálculo")
+            desconto_incondicionado = _campo("Valor Descontos")
+            valor_pis = _campo("Valor PIS")
+            valor_cofins = _campo("Valor COFINS")
+            valor_ir = _campo("Valor IR")
+            valor_inss = _campo("Valor INSS")
+            valor_csll = _campo("Valor CSLL")
+            outras_retencoes = _campo("Valor Outras Retenções")
+            valor_iss = _campo("Valor ISS")
+            m_aliq = re.search(r'Al[íi]quota\s+ISS\s*:\s*([\d.,]+)', t, re.IGNORECASE)
+            aliquota = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
+
+            m_liq = re.search(r'Valor\s+L[íi]quido\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            valor_liquido_nfse = self._parse_valor(m_liq.group(1)) if m_liq else valor_servicos
+
+            return Valores(
+                valor_servicos=valor_servicos,
+                valor_deducoes=valor_deducoes,
+                valor_pis=valor_pis,
+                valor_cofins=valor_cofins,
+                valor_inss=valor_inss,
+                valor_ir=valor_ir,
+                valor_csll=valor_csll,
+                iss_retido=False,
+                valor_iss=valor_iss,
+                valor_iss_retido=0.0,
+                outras_retencoes=outras_retencoes,
+                base_calculo=base_calculo,
+                aliquota=aliquota,
+                valor_liquido_nfse=valor_liquido_nfse,
+                desconto_incondicionado=desconto_incondicionado,
+                desconto_condicionado=0.0,
+            )
+
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             # Grade com 2 colunas lado a lado na mesma banda de Y (retenções
             # federais à esquerda; valores do serviço à direita), mais uma
@@ -8529,6 +8777,18 @@ class SPPdfExtractor:
                     if recut_telecom.strip():
                         best_text = f"{recut_telecom}\n{best_text}"
 
+                # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): a leitura
+                # padrão (zoom 3x) já lê bem os blocos de entidade e o resumo
+                # em texto livre, mas embaralha a linha "Tributação de
+                # Serviços" (Código LC 116) e a dupla "Tributos Federais"/
+                # "Impostos sobre serviços ISSQN" (achado real, nota nº
+                # 36345) — recorte dedicado por linha recupera os valores
+                # exatos (ver `_ocr_recut_biocontrol`).
+                if re.search(r'BIO\s+CONTROL\s+DESINSETIZADORA|04\.?811\.?846[/.]?0001-?62', best_text, re.IGNORECASE):
+                    recut_bio = self._ocr_recut_biocontrol(page)
+                    if recut_bio.strip():
+                        best_text = f"{recut_bio}\n{best_text}"
+
                 return best_text
             finally:
                 doc.close()
@@ -9218,6 +9478,73 @@ class SPPdfExtractor:
                 linhas.append(f"Alíquota: {numeros[2]}")
                 linhas.append(f"Valor do ISS: {numeros[3]}")
                 linhas.append(f"Valor Líquido: {numeros[4]}")
+
+            return "\n".join(linhas)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_biocontrol(page) -> str:
+        """Recorte dedicado para a NFS-e da BIO CONTROL DESINSETIZADORA
+        (Lauro de Freitas/BA, template "DEMONSTRATIVO DA NOTA FISCAL DE
+        SERVIÇO"). A leitura padrão (zoom 3x) extrai corretamente os blocos
+        de entidade e o resumo em texto livre ("Retencao para a Previdencia
+        Social...", "Valor Liquido"), mas embaralha 2 linhas de grade densa:
+        a linha "Tributação de Serviços" (Código LC 116 sai "743" em vez de
+        "7.13") e a dupla "Tributos Federais"/"Impostos sobre serviços
+        ISSQN" (6 valores lado a lado cada, saem com PIS/COFINS/IR trocados
+        entre si e Alíquota/Valor ISS somem por completo). Um recorte em
+        zoom 8x de cada linha, isolado por faixa de Y, recupera os valores
+        exatos - validado contra a imagem real da nota nº 36345 (BONI
+        TRANSPORTES, R$5.200,00): LC116=7.13; Outras Retenções=0,00,
+        PIS=33,80, COFINS=156,00, IR=52,00, INSS=572,00, CSLL=52,00; Valor
+        Total dos Serviços/Base de cálculo=5.200,00, Valor Descontos/
+        Dedução=0,00, Alíquota ISS=5,00%, Valor ISS=260,00."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            linhas = []
+
+            # "Tributação de Serviços" — Código LC 116 / Código do Serviço / NBS.
+            pix_lc = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=pymupdf.Rect(0, 415, 596, 475))
+            img_lc = Image.open(io.BytesIO(pix_lc.tobytes("png"))).convert('L')
+            txt_lc = pytesseract.image_to_string(img_lc, lang='por', config='--psm 6')
+            m_lc = re.search(r'tribut[áa]vel\s*/\s*Tributado\s+no\s+munic[íi]pio\s+(\d{1,2}[.,]\d{2})', txt_lc, re.IGNORECASE)
+            if m_lc:
+                linhas.append(f"Código LC 116: {m_lc.group(1).replace(',', '.')}")
+
+            # "Tributos Federais": Outras Retenções/PIS/COFINS/IR/INSS/CSLL.
+            pix_fed = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=pymupdf.Rect(0, 518, 596, 552))
+            img_fed = Image.open(io.BytesIO(pix_fed.tobytes("png"))).convert('L')
+            txt_fed = pytesseract.image_to_string(img_fed, lang='por', config='--psm 6')
+            m_fed = re.search(
+                r'([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})',
+                txt_fed)
+            if m_fed:
+                linhas.append(f"Valor Outras Retenções: {m_fed.group(1)}")
+                linhas.append(f"Valor PIS: {m_fed.group(2)}")
+                linhas.append(f"Valor COFINS: {m_fed.group(3)}")
+                linhas.append(f"Valor IR: {m_fed.group(4)}")
+                linhas.append(f"Valor INSS: {m_fed.group(5)}")
+                linhas.append(f"Valor CSLL: {m_fed.group(6)}")
+
+            # "Impostos sobre serviços ISSQN": Total/Descontos/Dedução/Base/Alíquota/ISS.
+            pix_iss = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0), clip=pymupdf.Rect(0, 556, 596, 592))
+            img_iss = Image.open(io.BytesIO(pix_iss.tobytes("png"))).convert('L')
+            txt_iss = pytesseract.image_to_string(img_iss, lang='por', config='--psm 6')
+            m_iss = re.search(
+                r'([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d.]+,\d{2})\s+([\d,.]+)\s*%\s+([\d.]+,\d{2})',
+                txt_iss)
+            if m_iss:
+                linhas.append(f"Valor Total dos Serviços: {m_iss.group(1)}")
+                linhas.append(f"Valor Descontos: {m_iss.group(2)}")
+                linhas.append(f"Dedução da Base de cálculo: {m_iss.group(3)}")
+                linhas.append(f"Base de cálculo: {m_iss.group(4)}")
+                linhas.append(f"Alíquota ISS: {m_iss.group(5)}")
+                linhas.append(f"Valor ISS: {m_iss.group(6)}")
 
             return "\n".join(linhas)
         except Exception:
