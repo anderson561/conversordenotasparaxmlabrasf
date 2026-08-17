@@ -403,12 +403,24 @@ class SPPdfExtractor:
             return LAYOUT_ROSARIO_LIMEIRA
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
-        if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
+        if re.search(r'(?:PREFEITURA\s+DO\s+)?MUNIC[IÍ]PIO\s+DE\s+S[AÃ]O\s+PAULO', t, re.IGNORECASE):
             # Mesmo cabeçalho para o SP digital (texto embutido) e o SP
             # escaneado (JPG/foto -> OCR). Só o escaneado passa por OCR, e sua
             # estrutura textual (2 colunas ruidosas, caixa de cabeçalho densa)
             # exige regras próprias — roteia para LAYOUT_SAO_PAULO_2 sem tocar
             # no layout digital, que continua 100% intacto.
+            #
+            # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
+            # INVESTIMENTOS LTDA -> MASSA ALIMENTACAO E SERVICOS S/A): foto do
+            # documento com o canto superior esquerdo do título DOBRADO,
+            # encobrindo literalmente "PREFEITURA DO " — o OCR nunca lê esse
+            # prefixo (não é ruído recuperável, a dobra cobre o papel de
+            # verdade), só "...MUNICÍPIO DE SÃO PAULO" sobrevive. Com o prefixo
+            # obrigatório, a página inteira caía em `LAYOUT_GENERICO` e era
+            # descartada como "página não reconhecida" — 0 notas extraídas do
+            # PDF inteiro. "PREFEITURA DO" passa a ser opcional (mesmo padrão
+            # já usado para outros municípios só pelo nome, ex.: Lauro de
+            # Freitas/Mata de São Jorge/Rosário da Limeira, linhas acima).
             return LAYOUT_SAO_PAULO_2 if getattr(self, 'from_ocr', False) else LAYOUT_SAO_PAULO
         if re.search(r'Prefeitura de Joinville|NF-em', t, re.IGNORECASE):
             return LAYOUT_JOINVILLE
@@ -620,12 +632,24 @@ class SPPdfExtractor:
             return LAYOUT_ROSARIO_LIMEIRA
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
-        if re.search(r'PREFEITURA DO MUNIC[IÍ]PIO DE S[AÃ]O PAULO', t, re.IGNORECASE):
+        if re.search(r'(?:PREFEITURA\s+DO\s+)?MUNIC[IÍ]PIO\s+DE\s+S[AÃ]O\s+PAULO', t, re.IGNORECASE):
             # Mesmo cabeçalho para o SP digital (texto embutido) e o SP
             # escaneado (JPG/foto -> OCR). Só o escaneado passa por OCR, e sua
             # estrutura textual (2 colunas ruidosas, caixa de cabeçalho densa)
             # exige regras próprias — roteia para LAYOUT_SAO_PAULO_2 sem tocar
             # no layout digital, que continua 100% intacto.
+            #
+            # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
+            # INVESTIMENTOS LTDA -> MASSA ALIMENTACAO E SERVICOS S/A): foto do
+            # documento com o canto superior esquerdo do título DOBRADO,
+            # encobrindo literalmente "PREFEITURA DO " — o OCR nunca lê esse
+            # prefixo (não é ruído recuperável, a dobra cobre o papel de
+            # verdade), só "...MUNICÍPIO DE SÃO PAULO" sobrevive. Com o prefixo
+            # obrigatório, a página inteira caía em `LAYOUT_GENERICO` e era
+            # descartada como "página não reconhecida" — 0 notas extraídas do
+            # PDF inteiro. "PREFEITURA DO" passa a ser opcional (mesmo padrão
+            # já usado para outros municípios só pelo nome, ex.: Lauro de
+            # Freitas/Mata de São Jorge/Rosário da Limeira, linhas acima).
             return LAYOUT_SAO_PAULO_2 if getattr(self, 'from_ocr', False) else LAYOUT_SAO_PAULO
         if re.search(r'Prefeitura de Joinville|NF-em', t, re.IGNORECASE):
             return LAYOUT_JOINVILLE
@@ -2347,6 +2371,21 @@ class SPPdfExtractor:
             return "FATURA"
 
         if self.layout == LAYOUT_SAO_PAULO_2:
+            # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
+            # INVESTIMENTOS LTDA): quando `_ocr_header_box_sao_paulo` recupera
+            # a caixa "Código de Verificação" (recorte dedicado, prependado ao
+            # texto), o valor ali é MAIS CONFIÁVEL que o heurístico abaixo
+            # ("emitido em <data> <código>") — a linha do RPS na leitura de
+            # página inteira pode estar corrompida (ex.: "BWP2-LR3IZ" com 1
+            # caractere espúrio a mais, virando "BWP2-LR3I" em vez do real
+            # "BWP2-LR3Z" ao aplicar o corte rígido de 4+4). Prioriza esse
+            # recorte quando presente; só cai no heurístico do RPS se o
+            # recorte não tiver rodado ou não tiver achado nada (nota sem essa
+            # degradação específica, comportamento antigo preservado).
+            m_recorte = re.search(r'C[oó]digo\s+de\s+Verifica[çc][ãa]o\s*\n\s*([A-Z0-9]{3,5}-[A-Z0-9]{3,6})', t, re.IGNORECASE)
+            if m_recorte:
+                return m_recorte.group(1).upper()
+
             # "RPS Nº 320839 Série NF, emitido em 25/06/2026 PQHZ-BYVT" — o
             # código de verificação (formato XXXX-XXXX) vem no FIM da linha do
             # RPS. O padrão genérico casaria "RPS Nº" → "RPSN"; aqui ancoramos
@@ -3851,7 +3890,10 @@ class SPPdfExtractor:
         # Remove fragmentos de CNPJ no início (comum em layouts de grade)
         razao = re.sub(r'^\d{2}\.\d{3}\.\d{3}\s+', '', razao).strip()
         razao = re.sub(r'^\d{8,}\s+', '', razao).strip()
-        razao = re.sub(r'^[\s/!|:.-]+', '', razao).strip()
+        # Achado real 2026-08-17 (São Paulo/Valestra, nota nº 00028202): OCR lê
+        # o ":" do rótulo como ";" ("Nome/Razão Social; MASSA ALIMENTACAO...")
+        # — sem o ";" nesta classe, o ";" vazava para o início da razão social.
+        razao = re.sub(r'^[\s/!|:;.-]+', '', razao).strip()
         # Letra minúscula solta antes do nome: é o ":" do rótulo lido como letra
         # ("Nome/Razão Social:" -> "...Social e"). Só minúscula, para não comer
         # um "E"/"A" legítimo de razão social em caixa alta.
@@ -3981,7 +4023,24 @@ class SPPdfExtractor:
         m_email = re.search(rf'{relax("E-mail")}\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{{2,}})', bloco_clean, re.IGNORECASE)
         if m_email:
             email = m_email.group(1).strip()
-        
+
+        if not email:
+            # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
+            # INVESTIMENTOS LTDA / MASSA ALIMENTACAO E SERVICOS S/A, São
+            # Paulo/SP escaneado): mesma degradação já corrigida no BioControl
+            # (`_corrigir_arroba_ocr`) — o OCR lê o "@" como uma letra
+            # maiúscula solta quando o e-mail vem colado sem espaço ao redor
+            # ("oriane.costaQnwgroup.com.br" em vez de
+            # "oriane.costa@nwgroup.com.br"), e a regex estrita acima exige
+            # "@" literal, nunca casando. Reaproveita a mesma correção,
+            # generalizada para qualquer layout — só tenta quando a regex
+            # estrita já falhou, sem risco de regressão em e-mails corretos.
+            m_email_ruido = re.search(rf'{relax("E-mail")}\s*(\S+\.[a-zA-Z]{{2,}}(?:\.[a-zA-Z]{{2,}})?)', bloco_clean, re.IGNORECASE)
+            if m_email_ruido:
+                candidato = self._corrigir_arroba_ocr(m_email_ruido.group(1).strip())
+                if '@' in candidato:
+                    email = candidato
+
         # Tenta extrair Telefone
         telefone = None
         # Padrão para telefone: (XX) XXXX-XXXX ou similar
@@ -3995,7 +4054,20 @@ class SPPdfExtractor:
             end_data['cep'] = re.sub(r'\D', '', m_cep.group(1))
 
         # Tenta extrair Município e UF
-        m_mun = re.search(rf'(?:{relax("Município")}|{relax("Cidade/UF")})\s*([^0-9]+?)(?={relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|$)', bloco_clean, re.IGNORECASE)
+        #
+        # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
+        # INVESTIMENTOS LTDA -> MASSA ALIMENTACAO E SERVICOS S/A, São Paulo/SP
+        # escaneado): `relax("Município")` exige o "í" ACENTUADO literal
+        # (relax() escapa cada caractere da string Python, incluindo o "í");
+        # `re.IGNORECASE` só dobra maiúsculas/minúsculas, não equivale
+        # acento/sem-acento — quando o OCR lê "Municipio" sem acento (comum,
+        # ex.: "Municipio: São Paulo UF: SP"), o rótulo inteiro nunca casava e
+        # a extração caía no fallback de município/UF (que aqui, sem
+        # nenhuma correspondência prévia, resolve para o default de outro
+        # município via `IBGEResolver` — sintoma: prestador de São Paulo/SP
+        # saía com município "Não informado" e UF "BA"). `Munic[íi]pio`
+        # tolera as 2 grafias sem mudar o resto do padrão.
+        m_mun = re.search(rf'(?:Munic[íi]pio|{relax("Cidade/UF")})\s*([^0-9]+?)(?={relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|$)', bloco_clean, re.IGNORECASE)
         if m_mun:
             mun_text = m_mun.group(1).strip()
             # Limpeza de possíveis sobras de labels
@@ -4054,9 +4126,46 @@ class SPPdfExtractor:
                 # complemento, e o número fica "S/N" em vez de fabricado.
                 segs_sp = [s.strip() for s in partes_end.split(' - ') if s.strip()]
                 if segs_sp:
-                    bairro_sp = re.sub(r'[\s:=-]+$', '', segs_sp[-1]).strip()
+                    complemento_extra_sp = None
+                    # Achado real 2026-08-17 (nota nº 00028202, VALESTRA
+                    # NEGOCIOS E INVESTIMENTOS LTDA / MASSA ALIMENTACAO E
+                    # SERVICOS S/A): esta mesma nota já é coberta em OUTRO
+                    # scan (`test_sao_paulo2_scan_layout.py`, linha do
+                    # tomador) com a vírgula intacta separando o complemento
+                    # ("...VILELA 110, SALAS 203 E 204 ... - parque bela vista
+                    # - CEP:") — aqui o OCR perdeu a vírgula e leu o MESMO
+                    # complemento como um 3º segmento após o " - " ("R
+                    # SENADOR THEOTONIO VILELA 110 - PARQUE BELA VISTA -
+                    # SALAS 203 E 204 - CEP:..."), sem vírgula em NENHUM
+                    # segmento. Tratar sempre o ÚLTIMO segmento como bairro
+                    # (regra de cima) pegava "SALAS 203 E 204" como bairro e
+                    # perdia "PARQUE BELA VISTA" por completo. Quando há 3+
+                    # segmentos e o 1º não tem vírgula (ou seja, não é o caso
+                    # comma-variant já tratado abaixo), o bairro de verdade é
+                    # sempre o 2º segmento e tudo depois dele é complemento —
+                    # confirmado comparando as 2 leituras da MESMA nota.
+                    if len(segs_sp) >= 3 and ',' not in segs_sp[0]:
+                        bairro_sp = re.sub(r'[\s:=-]+$', '', segs_sp[1]).strip()
+                        # Limpa 2 tipos de sobra que grudam no ÚLTIMO segmento:
+                        # (1) o traço solto de "... - " (o rótulo seguinte, ex.
+                        # "CEP", começa logo ali — a lookahead do `m_end` já
+                        # exclui o rótulo em si, mas o "strip()" de fora só
+                        # remove espaço, não o hífen que sobra sem o espaço
+                        # seguinte pra completar o delimitador " - "); (2) o
+                        # fragmento do CEP TRUNCADO pela própria foto ("CE...",
+                        # achado real nesta mesma nota no PRESTADOR — a dobra
+                        # no canto do documento corta o valor do CEP antes de
+                        # imprimir o "P", sobrando só "CE..." — não é rótulo
+                        # "CEP" completo, então a lookahead não o exclui).
+                        complemento_extra_sp = re.sub(
+                            r'\s*(?:CE\.{2,}|[\s:=-]+)$', '', ' '.join(segs_sp[2:])
+                        ).strip()
+                    else:
+                        bairro_sp = re.sub(r'[\s:=-]+$', '', segs_sp[-1]).strip()
                     if bairro_sp:
                         end_data['bairro'] = bairro_sp
+                    if complemento_extra_sp:
+                        end_data['complemento'] = complemento_extra_sp
                     resto_sp = segs_sp[0]
                     if ',' in resto_sp:
                         antes_sp, depois_sp = [p.strip() for p in resto_sp.split(',', 1)]
@@ -7343,16 +7452,63 @@ class SPPdfExtractor:
                 aliquota = self._parse_valor(m_grid.group(3)) / 100
                 iss = self._parse_valor(m_grid.group(4))
             else:
-                deducoes, base, aliquota, iss = 0.0, val_serv, 0.0, 0.0
+                # Achado real 2026-08-17 (nota nº 00028202): quando a grade
+                # sai completamente ilegível no zoom 3 (achado que motivou
+                # `_ocr_recut_grade_valores_sao_paulo`), o recorte dedicado
+                # prepende uma linha canônica SEM a Base de Cálculo (só
+                # Dedução/Alíquota/ISS — o recorte específico da Base não é
+                # estável o bastante para confiar, ver docstring do recut).
+                # A Base é sempre igual a Valor dos Serviços menos Deduções
+                # nesta grade (confirmado: 18.279,65 - 0,00 = 18.279,65, e a
+                # imagem da nota real não mostra nenhum outro ajuste), então
+                # é sempre DERIVADA em vez de recapturada.
+                m_grid2 = re.search(
+                    r'Valor\s+Total\s+das\s+Dedu[çc][õo]es\s+Al[íi]quota\s+Valor\s+do\s+ISS\s*\n\s*'
+                    + NUM + r'\s+' + NUM + r'%?\s+' + NUM,
+                    t, re.IGNORECASE)
+                if m_grid2:
+                    deducoes = self._parse_valor(m_grid2.group(1))
+                    aliquota = self._parse_valor(m_grid2.group(2)) / 100
+                    iss = self._parse_valor(m_grid2.group(3))
+                    base = val_serv - deducoes
+                else:
+                    deducoes, base, aliquota, iss = 0.0, val_serv, 0.0, 0.0
+
+            # Retenções federais (IRRF/CSLL/COFINS/PIS-PASEP): mesma
+            # degradação/recut acima. Sem rótulo/grade própria antes desta
+            # correção — quando ausentes, ficam em 0,00 (comportamento já
+            # existente, não regride notas sem essa grade).
+            m_federais = re.search(
+                r'IRRF\s*\(R\$\)\s+CSLL\s*\(R\$\)\s+COFINS\s*\(R\$\)\s+PIS/PASEP\s*\(R\$\)\s*\n\s*'
+                + NUM + r'\s+' + NUM + r'\s+' + NUM + r'\s+' + NUM,
+                t, re.IGNORECASE)
+            if m_federais:
+                ir = self._parse_valor(m_federais.group(1))
+                csll = self._parse_valor(m_federais.group(2))
+                cofins = self._parse_valor(m_federais.group(3))
+                pis = self._parse_valor(m_federais.group(4))
+                # Achado real (mesma nota): "Valor Líquido: R$ 17155,45" no
+                # corpo da discriminação bate exatamente com Valor dos
+                # Serviços menos as 4 retenções federais (18.279,65 -
+                # 274,19 - 182,80 - 548,39 - 118,82 = 17.155,45) — o ISS
+                # desta nota NÃO é retido (não entra nesta subtração).
+                liquido = val_serv - ir - csll - cofins - pis
+            else:
+                ir = csll = cofins = pis = 0.0
+                liquido = val_serv
 
             return Valores(
                 valor_servicos=val_serv,
                 valor_deducoes=deducoes,
+                valor_ir=ir,
+                valor_csll=csll,
+                valor_cofins=cofins,
+                valor_pis=pis,
                 base_calculo=base,
                 aliquota=aliquota,
                 valor_iss=iss,
                 iss_retido=False,
-                valor_liquido_nfse=val_serv,
+                valor_liquido_nfse=liquido,
             )
 
         if self.layout == LAYOUT_SALVADOR:
@@ -8704,10 +8860,33 @@ class SPPdfExtractor:
                 # Nota" do canto superior direito sai ilegível na página inteira
                 # (o número "00331020" chega a virar "5"). Recorte dedicado na
                 # mesma orientação já corrigida (best_angle) recupera o número.
-                if re.search(r'PREFEITURA\s+DO\s+MUNIC[IÍ]PIO\s+DE\s+S[AÃ]O\s+PAULO', best_text, re.IGNORECASE):
+                #
+                # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
+                # INVESTIMENTOS LTDA): foto com o canto do título dobrado
+                # encobre "PREFEITURA DO " (mesmo achado da detecção de layout,
+                # ver `_detect_layout`/`_detect_layout_page`) — com o prefixo
+                # obrigatório, este gatilho nunca disparava, o recorte de
+                # cabeçalho nunca rodava, e a extração caía nos números
+                # ilegíveis da leitura de página inteira (Número da Nota saía
+                # como o Nº do RPS, Data de Emissão/Competência saíam com o ano
+                # do RPS corrompido, Código de Verificação saía com um
+                # caractere a menos). Mesmo relaxamento aplicado na detecção.
+                if re.search(r'(?:PREFEITURA\s+DO\s+)?MUNIC[IÍ]PIO\s+DE\s+S[AÃ]O\s+PAULO', best_text, re.IGNORECASE):
                     header_sp = self._ocr_header_box_sao_paulo(page, best_angle)
                     if header_sp.strip():
                         best_text = f"{header_sp}\n{best_text}"
+
+                    # Grade de retenções federais (IRRF/CSLL/COFINS/PIS-PASEP)
+                    # + grade Deduções/Alíquota/ISS: mesma degradação de
+                    # "caixa densa ilegível no zoom 3" que motivou o recorte
+                    # de cabeçalho acima, achada na MESMA nota (ver docstring
+                    # de `_ocr_recut_grade_valores_sao_paulo`). Só dispara
+                    # quando o rótulo "IRRF" aparece no texto (evita custo
+                    # extra em notas cuja grade já sai legível).
+                    if re.search(r'IRRF', best_text, re.IGNORECASE):
+                        grade_sp = self._ocr_recut_grade_valores_sao_paulo(page, best_angle)
+                        if grade_sp.strip():
+                            best_text = f"{grade_sp}\n{best_text}"
 
                 # Cuiabá/MT (ISSNet) escaneado: a grade "Detalhamento dos
                 # Tributos" (Vl. Total dos Serviços | ... | Total do ISSQN |
@@ -9678,31 +9857,47 @@ class SPPdfExtractor:
 
     @staticmethod
     def _ocr_header_box_sao_paulo(page, angle: int = 0) -> str:
-        """Recorta e reprocessa em zoom alto (6x) a caixa "Número da Nota" do
-        canto superior direito da NFS-e de São Paulo ESCANEADA (JPG/foto). O
-        número (ex.: "00331020", dígitos em negrito) sai ilegível na leitura de
-        página inteira — chega a virar "5". Aplica a MESMA rotação (`angle`) que
-        o _ocr_page usou para deixar a página na vertical e lê a célula do número
-        com PSM 6 + whitelist de dígitos. Retorna uma linha sintética limpa
-        ("Número da Nota\\n<n>") para a branch de número casar sem depender do
-        resto da caixa. Validado contra a nota real (BOM NEGOCIO nº 00331020,
-        JPG rotacionado 180°).
+        """Recorta e reprocessa em zoom alto (6x) as 3 mini-tabelas empilhadas
+        do canto superior direito da NFS-e de São Paulo ESCANEADA (JPG/foto):
+        Número da Nota / Data e Hora de Emissão / Código de Verificação. Todas
+        saem ilegíveis na leitura de página inteira (o número "00331020" chega
+        a virar "5"). Aplica a MESMA rotação (`angle`) que o _ocr_page usou
+        para deixar a página na vertical e lê cada célula em zoom alto,
+        devolvendo as linhas sintéticas limpas que existirem para a extração
+        genérica casar sem depender do resto da caixa. Número validado contra
+        a nota real (BOM NEGOCIO nº 00331020, JPG rotacionado 180°).
 
-        A caixa "Número da Nota" é a 1ª de 3 mini-tabelas empilhadas (Número da
-        Nota / Data e Hora de Emissão / Código de Verificação) — a ALTURA do
-        cabeçalho acima dela (logo + título + "NOTA FISCAL ELETRÔNICA..." +
-        "RPS Nº...") varia de nota para nota (achado real 2026-08-12, nota
-        FLASH TECNOLOGIA nº 05121900: o recorte fixo por percentual, calibrado
-        na nota BOM NEGÓCIO, caía 1 caixa abaixo do esperado e lia "Código de
-        Verificação" (MKT3-B9ZH) em vez de "Número da Nota" — a whitelist de
-        dígitos "inventava" números a partir das letras, saindo "392"). Fix:
-        localiza a palavra "Número" dinamicamente via `image_to_data` (zoom
-        3x, restrito à metade direita/terço superior da página, onde a caixa
+        A caixa "Número da Nota" é a 1ª das 3 — a ALTURA do cabeçalho acima
+        dela (logo + título + "NOTA FISCAL ELETRÔNICA..." + "RPS Nº...") varia
+        de nota para nota (achado real 2026-08-12, nota FLASH TECNOLOGIA nº
+        05121900: o recorte fixo por percentual, calibrado na nota BOM
+        NEGÓCIO, caía 1 caixa abaixo do esperado e lia "Código de Verificação"
+        (MKT3-B9ZH) em vez de "Número da Nota" — a whitelist de dígitos
+        "inventava" números a partir das letras, saindo "392"). Fix: localiza
+        a palavra "Número" dinamicamente via `image_to_data` (zoom 3x,
+        restrito à metade direita/terço superior da página, onde a caixa
         sempre fica) e recorta só a linha imediatamente abaixo dela, em zoom
         alto — imune à altura variável do cabeçalho. Mantém o recorte fixo
         antigo como FALLBACK (só usado se a localização dinâmica não achar o
         rótulo), preservando o comportamento já validado se a nova técnica
-        falhar por algum motivo imprevisto."""
+        falhar por algum motivo imprevisto.
+
+        Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
+        INVESTIMENTOS LTDA -> MASSA ALIMENTACAO E SERVICOS S/A): foto com o
+        canto do documento dobrado — a MESMA degradação de zoom 3x que
+        ilegibiliza o Número da Nota também apaga o VALOR de "Data e Hora de
+        Emissão" por completo (o rótulo sobrevive, mas nenhum dígito depois
+        dele) e corta 1 caractere do "Código de Verificação" ("BWP2-LR3I" em
+        vez de "BWP2-LR3Z"). Sem o valor da Emissão, o regex genérico de data
+        (que busca a 1ª data logo após o rótulo) "casava" com a data mais
+        próxima no restante do texto — a do RPS substituído, ela própria com
+        1 dígito trocado pelo OCR ("27/02/2028" em vez de "27/02/2026") -
+        gerando Data de Emissão E Competência erradas em 2 anos. Localiza
+        "Emiss[ãa]o" e "erifica[çc][aã]o" pela mesma técnica de
+        `image_to_data` usada para "Número", recortando e lendo cada caixa
+        independentemente; linhas ausentes (rótulo não localizado ou recorte
+        sem valor plausível) são simplesmente omitidas, sem afetar as
+        demais."""
         try:
             import pymupdf
             import pytesseract
@@ -9721,6 +9916,9 @@ class SPPdfExtractor:
                 # esse dígito espúrio isolado se cole ao número de verdade.
                 grupos = re.findall(r'\d+', txt)
                 return max(grupos, key=len) if grupos else ''
+
+            def _ocr_texto(crop_img):
+                return pytesseract.image_to_string(crop_img.convert('L'), lang='por', config='--psm 6')
 
             zoom_locate = 3.0
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
@@ -9743,66 +9941,242 @@ class SPPdfExtractor:
                 img_f = img_f.rotate(-angle, expand=True)
             w_f, h_f = img_f.size
 
+            linhas = []
+            numero = ''
+            numero_anchor = None  # (x_left, y_top, h_label) no zoom_locate — reaproveitado como âncora para a data
+
             if candidatos:
                 i = candidatos[0]
                 x_left, y_top, h_label = data['left'][i], data['top'][i], data['height'][i]
+                numero_anchor = (x_left, y_top, h_label)
                 x0 = max(0, int(x_left * escala * 0.9))
                 y0 = max(0, int((y_top + h_label * 1.1) * escala))
                 y1 = min(h_f, int((y_top + h_label * 3.2) * escala))
-                num = _ocr_digitos(img_f.crop((x0, y0, w_f, y1)))
-                if num:
-                    return f"Número da Nota\n{num}\n"
+                numero = _ocr_digitos(img_f.crop((x0, y0, w_f, y1)))
 
-            # Achado real (nota FLASH TECNOLOGIA nº 05114339, RPS 3566572,
-            # pasta "0001-80" 07/2026): no zoom de localização (3x) o
-            # próprio rótulo "Número" pode saltar OCR corrompido em
-            # fragmentos que não casam a palavra inteira (ex.: "N?" +
-            # "daN" em tokens separados) — `candidatos` fica vazio mesmo
-            # com o valor bem legível ao lado ("05114339", único token
-            # puramente numérico da região, fonte maior/em negrito).
-            # Localiza o valor DIRETO pela própria assinatura (dígitos,
-            # comprimento >= 6, topo da região — a caixa "Número da Nota"
-            # é sempre a 1ª das 3 empilhadas) em vez de depender do
-            # rótulo, evitando cair no recorte fixo abaixo (calibrado numa
-            # nota específica — pode acertar a caixa ERRADA, "Código de
-            # Verificação", noutra com cabeçalho de altura diferente).
-            # Achado real 2026-08-14 (nota PLUXEE BENEFÍCIOS nº 08336055,
-            # pág.23 do lote Guarajuba 07/2026): o valor saiu com uma
-            # aspa espúria colada ("\"08336055", ruído de borda de célula
-            # — mesma classe de "|"/"4" espúrio já tolerada perto do CNPJ
-            # em outros layouts), e o `fullmatch` original exigia o token
-            # inteiro ser dígito puro — descartava esse candidato mesmo
-            # com 8 dígitos legíveis, caindo no recorte fixo por
-            # percentual, que nesta nota (cabeçalho mais alto que o da
-            # BOM NEGÓCIO) acerta a caixa "Data e Hora de Emissão" e
-            # devolve os dígitos da data+hora coladas como se fosse o
-            # número. `re.search` (em vez de `fullmatch`) aceita dígitos
-            # com ruído colado antes/depois, mantendo a mesma exigência
-            # de 6+ dígitos CONSECUTIVOS (não corta por pontuação interna
-            # — datas/CEPs/Inscrição Municipal, com separador a cada 2-5
-            # dígitos, continuam não colando o suficiente pra casar).
-            candidatos_valor = sorted(
+            if not numero:
+                # Achado real (nota FLASH TECNOLOGIA nº 05114339, RPS 3566572,
+                # pasta "0001-80" 07/2026): no zoom de localização (3x) o
+                # próprio rótulo "Número" pode saltar OCR corrompido em
+                # fragmentos que não casam a palavra inteira (ex.: "N?" +
+                # "daN" em tokens separados) — `candidatos` fica vazio mesmo
+                # com o valor bem legível ao lado ("05114339", único token
+                # puramente numérico da região, fonte maior/em negrito).
+                # Localiza o valor DIRETO pela própria assinatura (dígitos,
+                # comprimento >= 6, topo da região — a caixa "Número da Nota"
+                # é sempre a 1ª das 3 empilhadas) em vez de depender do
+                # rótulo, evitando cair no recorte fixo abaixo (calibrado numa
+                # nota específica — pode acertar a caixa ERRADA, "Código de
+                # Verificação", noutra com cabeçalho de altura diferente).
+                # Achado real 2026-08-14 (nota PLUXEE BENEFÍCIOS nº 08336055,
+                # pág.23 do lote Guarajuba 07/2026): o valor saiu com uma
+                # aspa espúria colada ("\"08336055", ruído de borda de célula
+                # — mesma classe de "|"/"4" espúrio já tolerada perto do CNPJ
+                # em outros layouts), e o `fullmatch` original exigia o token
+                # inteiro ser dígito puro — descartava esse candidato mesmo
+                # com 8 dígitos legíveis, caindo no recorte fixo por
+                # percentual, que nesta nota (cabeçalho mais alto que o da
+                # BOM NEGÓCIO) acerta a caixa "Data e Hora de Emissão" e
+                # devolve os dígitos da data+hora coladas como se fosse o
+                # número. `re.search` (em vez de `fullmatch`) aceita dígitos
+                # com ruído colado antes/depois, mantendo a mesma exigência
+                # de 6+ dígitos CONSECUTIVOS (não corta por pontuação interna
+                # — datas/CEPs/Inscrição Municipal, com separador a cada 2-5
+                # dígitos, continuam não colando o suficiente pra casar).
+                candidatos_valor = sorted(
+                    (i for i in range(len(data['text']))
+                     if re.search(r'\d{6,}', (data['text'][i] or '').strip())
+                     and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3),
+                    key=lambda i: data['top'][i]
+                )
+                if candidatos_valor:
+                    i = candidatos_valor[0]
+                    x_left, y_top = data['left'][i], data['top'][i]
+                    w_val, h_val = data['width'][i], data['height'][i]
+                    numero_anchor = (x_left, y_top, h_val)
+                    x0 = max(0, int(x_left * escala * 0.9))
+                    y0 = max(0, int(y_top * escala * 0.9))
+                    x1 = min(w_f, int((x_left + w_val) * escala * 1.1))
+                    y1 = min(h_f, int((y_top + h_val) * escala * 1.1))
+                    numero = _ocr_digitos(img_f.crop((x0, y0, x1, y1)))
+
+            if not numero:
+                # Fallback: recorte fixo por percentual (comportamento original).
+                crop = img_f.crop((int(w_f * 0.67), int(h_f * 0.098), int(w_f * 0.98), int(h_f * 0.126)))
+                numero = _ocr_digitos(crop)
+
+            if numero:
+                linhas.append(f"Número da Nota\n{numero}")
+
+            # Data e Hora de Emissão (2ª caixa da pilha). Achado real (nota
+            # 00028202): quando as 3 caixas saem fundidas em 1-2 linhas na
+            # leitura de página inteira (dobra no canto do documento), um
+            # recorte ESTREITO ancorado no rótulo "Emissão" (mesmo padrão do
+            # Número acima) devolve a hora com um espaço espúrio no meio
+            # ("1 2:42:40" em vez de "13:42:10") — testado e descartado. Um
+            # recorte bem mais ALTO (zoom 10x, ancorado no próprio "Número da
+            # Nota" já localizado acima, opcionalmente relocalizando "Emissão"
+            # se o Número não tiver sido achado por rótulo) recompõe a linha
+            # inteira de forma limpa. Ancora em "Emissão" quando disponível
+            # (mais preciso); cai para a âncora do Número (mais alto na
+            # página, mas cobre a mesma região) só se o rótulo não aparecer.
+            cand_emissao = [
+                i for i in range(len(data['text']))
+                if re.search(r'Emiss[ãa]o', data['text'][i] or '', re.IGNORECASE)
+                and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.4
+            ]
+            ancora_data = None
+            if cand_emissao:
+                i = cand_emissao[0]
+                ancora_data = (data['left'][i], data['top'][i], data['height'][i])
+            elif numero_anchor:
+                ancora_data = numero_anchor
+            if ancora_data:
+                x_left, y_top, h_label = ancora_data
+                x0 = max(0, int(x_left * escala * 0.7))
+                y0 = max(0, int((y_top + h_label * 1.1) * escala))
+                y1 = min(h_f, int((y_top + h_label * 8.0) * escala))
+                texto_emissao = _ocr_texto(img_f.crop((x0, y0, w_f, y1)))
+                m_emissao = re.search(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)', texto_emissao)
+                if m_emissao:
+                    linhas.append(f"Data e Hora de Emissão\n{m_emissao.group(1)} {m_emissao.group(2)}")
+
+            # Código de Verificação (3ª caixa da pilha). Achado real (nota
+            # 00028202): o rótulo "Verificação" pode sumir POR COMPLETO da
+            # leitura de página inteira (nem um fragmento garblado sobra) —
+            # localizar por RÓTULO não funciona. O valor em si (padrão
+            # "XXXX-XXXX"/"XXXX.XXXX", único token do cabeçalho que mistura
+            # letra+dígito com separador) sobrevive como token reconhecível
+            # mesmo sem o rótulo ao lado — localizado pela própria forma,
+            # restrito à região do cabeçalho (topo da página, mesma faixa das
+            # outras 2 caixas) para não colidir com um CEP (também
+            # "NNNNN-NNN") mais abaixo no corpo do documento. Um recorte
+            # ESTREITO (margem pequena ao redor do próprio token, não da
+            # linha inteira) em zoom 10x é o que restaurou o caractere
+            # perdido no meio ("BWP2-LR3IZ", 1 "I" espúrio de sobra, virou
+            # "BWP2.LR3Z" — 4+4, igual à imagem original).
+            cand_cod = sorted(
                 (i for i in range(len(data['text']))
-                 if re.search(r'\d{6,}', (data['text'][i] or '').strip())
-                 and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3),
+                 if re.search(r'^[A-Z0-9]{3,6}[-.][A-Z0-9]{3,6}$', (data['text'][i] or '').strip(), re.IGNORECASE)
+                 and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.15),
                 key=lambda i: data['top'][i]
             )
-            if candidatos_valor:
-                i = candidatos_valor[0]
+            if cand_cod:
+                # Zoom mais alto que o das outras 2 caixas (10x em vez de 6x) —
+                # testado e validado: só nesse zoom específico o caractere
+                # espúrio some ("BWP2-LR3IZ" -> "BWP2.LR3Z"); no zoom 6x usado
+                # acima o "I" de sobra persiste ("BWP2-LRIZ", perdendo o "3").
+                zoom_cod = 10.0
+                escala_cod = zoom_cod / zoom_locate
+                pix_cod = page.get_pixmap(matrix=pymupdf.Matrix(zoom_cod, zoom_cod))
+                img_cod = Image.open(io.BytesIO(pix_cod.tobytes("png")))
+                if angle:
+                    img_cod = img_cod.rotate(-angle, expand=True)
+                w_cod, h_cod = img_cod.size
+
+                i = cand_cod[0]
                 x_left, y_top = data['left'][i], data['top'][i]
                 w_val, h_val = data['width'][i], data['height'][i]
-                x0 = max(0, int(x_left * escala * 0.9))
-                y0 = max(0, int(y_top * escala * 0.9))
-                x1 = min(w_f, int((x_left + w_val) * escala * 1.1))
-                y1 = min(h_f, int((y_top + h_val) * escala * 1.1))
-                num = _ocr_digitos(img_f.crop((x0, y0, x1, y1)))
-                if num:
-                    return f"Número da Nota\n{num}\n"
+                x0 = max(0, int(x_left * escala_cod * 0.85))
+                y0 = max(0, int(y_top * escala_cod * 0.7))
+                x1 = min(w_cod, int((x_left + w_val) * escala_cod * 1.15))
+                y1 = min(h_cod, int((y_top + h_val) * escala_cod * 1.3))
+                texto_cod = _ocr_texto(img_cod.crop((x0, y0, x1, y1)))
+                m_cod = re.search(r'\b([A-Z0-9]{3,5}[-.][A-Z0-9]{3,6})\b', texto_cod, re.IGNORECASE)
+                if m_cod:
+                    cod_norm = re.sub(r'[^A-Z0-9-]', '', m_cod.group(1).upper().replace('.', '-'))
+                    linhas.append(f"Código de Verificação\n{cod_norm}")
 
-            # Fallback: recorte fixo por percentual (comportamento original).
-            crop = img_f.crop((int(w_f * 0.67), int(h_f * 0.098), int(w_f * 0.98), int(h_f * 0.126)))
-            num = _ocr_digitos(crop)
-            return f"Número da Nota\n{num}\n" if num else ""
+            return "\n".join(linhas) + ("\n" if linhas else "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_grade_valores_sao_paulo(page, angle: int = 0) -> str:
+        """Recorta e reprocessa em zoom alto as 2 grades de valores da NFS-e
+        de São Paulo ESCANEADA (JPG/foto), logo abaixo de "VALOR TOTAL DO
+        SERVIÇO": (1) INSS/IRRF/CSLL/COFINS/PIS-PASEP/IPI (retenções
+        federais) e (2) Valor Total das Deduções/Base de Cálculo/Alíquota/
+        Valor do ISS/Crédito Programa da NFP. Ambas saem sem NENHUM valor
+        legível no zoom 3x padrão (achado real 2026-08-17, nota nº 00028202,
+        VALESTRA NEGOCIOS E INVESTIMENTOS LTDA -> MASSA ALIMENTACAO E
+        SERVICOS S/A) — os rótulos sobrevivem, mas a linha de valores vira
+        ruído ("1 TO ray E\" caso" em vez de "274,19 182,80 548,39 118,82",
+        "some som a |" em vez de "0,00 18.279,65 5,00% 913,98"), deixando
+        IRRF/CSLL/COFINS/PIS/Alíquota/ISS todos zerados.
+
+        Localiza os rótulos "IRRF" e "Alíquota" dinamicamente via
+        `image_to_data` (zoom 3x, mesma técnica de
+        `_ocr_header_box_sao_paulo`) e recorta cada grade numa faixa e zoom
+        próprios — testado e validado que NENHUM zoom único serve para as 2:
+        a grade federal só sai limpa em zoom 4x ("274,19 182,80 548,39
+        118,82"; zooms mais altos trocam o "8" de "118,82" por "5"), a grade
+        do ISS só em zoom 9x ("0,00 ... 5,00% 913,98"; zoom 4x perde a Base
+        de Cálculo por completo, mas ISS/Alíquota/Dedução continuam legíveis
+        e são os únicos 3 valores que este recorte de fato usa — a Base é
+        sempre derivada de `Valor dos Serviços - Deduções` por quem chama
+        esta função, mais confiável que reler o mesmo número já lido acima).
+        Devolve linhas sintéticas canônicas para PREPENDER ao texto base."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            if angle:
+                img_l = img_l.rotate(-angle, expand=True)
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+
+            linhas = []
+
+            cand_irrf = [i for i in range(len(data['text'])) if re.search(r'IRRF', data['text'][i] or '', re.IGNORECASE)]
+            if cand_irrf:
+                i = cand_irrf[0]
+                y_top, h_label = data['top'][i], data['height'][i]
+                zoom_a = 4.0
+                escala_a = zoom_a / zoom_locate
+                pix_a = page.get_pixmap(matrix=pymupdf.Matrix(zoom_a, zoom_a))
+                img_a = Image.open(io.BytesIO(pix_a.tobytes("png")))
+                if angle:
+                    img_a = img_a.rotate(-angle, expand=True)
+                w_a, h_a = img_a.size
+                y0 = max(0, int((y_top + h_label * 1.1) * escala_a))
+                y1 = min(h_a, int((y_top + h_label * 10.0) * escala_a))
+                texto_a = pytesseract.image_to_string(img_a.crop((0, y0, w_a, y1)), lang='por', config='--psm 6')
+                m_a = re.search(
+                    r'([\d.]*,\d{2})\D+?([\d.]*,\d{2})\D+?([\d.]*,\d{2})\D+?([\d.]*,\d{2})',
+                    texto_a
+                )
+                if m_a:
+                    linhas.append("IRRF (R$) CSLL (R$) COFINS (R$) PIS/PASEP (R$)")
+                    linhas.append(f"{m_a.group(1)} {m_a.group(2)} {m_a.group(3)} {m_a.group(4)}")
+
+            cand_aliq = [i for i in range(len(data['text'])) if re.search(r'Al[íi]quota', data['text'][i] or '', re.IGNORECASE)]
+            if cand_aliq:
+                i = cand_aliq[0]
+                y_top, h_label = data['top'][i], data['height'][i]
+                zoom_b = 9.0
+                escala_b = zoom_b / zoom_locate
+                pix_b = page.get_pixmap(matrix=pymupdf.Matrix(zoom_b, zoom_b))
+                img_b = Image.open(io.BytesIO(pix_b.tobytes("png")))
+                if angle:
+                    img_b = img_b.rotate(-angle, expand=True)
+                w_b, h_b = img_b.size
+                y0 = max(0, int((y_top + h_label * 1.0) * escala_b))
+                y1 = min(h_b, int((y_top + h_label * 4.0) * escala_b))
+                texto_b = pytesseract.image_to_string(img_b.crop((0, y0, w_b, y1)), lang='por', config='--psm 6')
+                m_b = re.search(
+                    r'^([\d.]*,\d{2}).*?(\d{1,2}[.,]\d{2})\s*%.*?([\d.]*,\d{2})',
+                    texto_b
+                )
+                if m_b:
+                    linhas.append("Valor Total das Deduções Alíquota Valor do ISS")
+                    linhas.append(f"{m_b.group(1)} {m_b.group(2).replace('.', ',')}% {m_b.group(3)}")
+
+            return "\n".join(linhas) + ("\n" if linhas else "")
         except Exception:
             return ""
 
