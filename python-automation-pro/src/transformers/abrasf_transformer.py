@@ -12,6 +12,15 @@ class Abrasf201Transformer:
     def _digits(value: str) -> str:
         return ''.join(ch for ch in (value or '') if ch.isdigit())
 
+    @staticmethod
+    def _outras_retencoes_total(nfse: Nfse) -> float:
+        """`OutrasRetencoes` não tem tag ABRASF própria para o valor
+        COMBINADO de "Contribuições Sociais Retidas" (PIS+COFINS+CSLL
+        somados, sem abertura individual - ver LAYOUT_NACIONAL) - somado
+        aqui à `outras_retencoes` genérica, que hoje nenhum layout preenche
+        ao mesmo tempo que o campo combinado."""
+        return nfse.valores.outras_retencoes + nfse.valores.valor_contribuicoes_sociais_retidas
+
     def _append_cpf_cnpj(self, parent, raw_doc: str, preferred: str = "cnpj"):
         """
         Garante geração consistente de CPF/CNPJ para evitar
@@ -88,7 +97,7 @@ class Abrasf201Transformer:
         ET.SubElement(valores_nfse, 'ValorInss').text = f"{nfse.valores.valor_inss:.2f}"
         ET.SubElement(valores_nfse, 'ValorIr').text = f"{nfse.valores.valor_ir:.2f}"
         ET.SubElement(valores_nfse, 'ValorCsll').text = f"{nfse.valores.valor_csll:.2f}"
-        ET.SubElement(valores_nfse, 'OutrasRetencoes').text = f"{nfse.valores.outras_retencoes:.2f}"
+        ET.SubElement(valores_nfse, 'OutrasRetencoes').text = f"{self._outras_retencoes_total(nfse):.2f}"
         ET.SubElement(valores_nfse, 'BaseCalculo').text = f"{nfse.valores.base_calculo:.2f}"
         ET.SubElement(valores_nfse, 'Aliquota').text = f"{nfse.valores.aliquota:.2f}"
         ET.SubElement(valores_nfse, 'ValorIss').text = f"{nfse.valores.valor_iss:.2f}"
@@ -153,7 +162,7 @@ class Abrasf201Transformer:
         ET.SubElement(valores, 'ValorInss').text = f"{nfse.valores.valor_inss:.2f}"
         ET.SubElement(valores, 'ValorIr').text = f"{nfse.valores.valor_ir:.2f}"
         ET.SubElement(valores, 'ValorCsll').text = f"{nfse.valores.valor_csll:.2f}"
-        ET.SubElement(valores, 'OutrasRetencoes').text = f"{nfse.valores.outras_retencoes:.2f}"
+        ET.SubElement(valores, 'OutrasRetencoes').text = f"{self._outras_retencoes_total(nfse):.2f}"
         if getattr(nfse.valores, 'valor_iss_retido', 0) > 0 or nfse.valores.iss_retido:
             ET.SubElement(valores, 'ValorIssRetido').text = f"{getattr(nfse.valores, 'valor_iss_retido', 0.0):.2f}"
         ET.SubElement(valores, 'IssRetido').text = "1" if nfse.valores.iss_retido else "2"
