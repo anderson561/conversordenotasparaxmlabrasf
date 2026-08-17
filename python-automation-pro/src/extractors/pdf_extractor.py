@@ -2507,10 +2507,21 @@ class SPPdfExtractor:
             # guard antigo rejeitava o valor certo e caía no fallback genérico,
             # que reconcatenava "ALVADOR" + o código real com o rótulo garblado
             # "Código de Verificação").
+            #
+            # Achado real 2026-08-17 (nota 2169/INSTITUIÇÃO ASSISTENCIAL): quando
+            # o código de verificação real não aparece de forma legível em NENHUM
+            # ponto do texto (nem no recorte dedicado, nem na leitura de página
+            # inteira), o próprio rótulo "PRESTADOR" (início da seção seguinte,
+            # "PRESTADOR DE SERVIÇOS") fica colado logo após "verificação:" sem
+            # nada no meio — e a palavra "PRESTADOR" (9 letras, sem dígito, mas
+            # dentro da faixa de tamanho aceita) era capturada como se fosse o
+            # próprio código. Rejeitamos esse valor explicitamente, pelo mesmo
+            # motivo que "ALVADOR" já é rejeitado acima: é um rótulo do
+            # documento, não um código.
             m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
             if m:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
-                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato != 'ALVADOR':
+                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato not in ('ALVADOR', 'PRESTADOR', 'TOMADOR'):
                     return candidato
 
         if self.layout == LAYOUT_CUIABA:
@@ -8502,7 +8513,18 @@ class SPPdfExtractor:
                     # um 2º "TOMADOR DE SERVIÇOS" que o fatiamento genérico
                     # pegava primeiro — o CNPJ certo do bloco original nunca
                     # era alcançado, caindo no sentinela.
-                    if m_tom and not re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', m_tom.group(1)):
+                    # Achado real 2026-08-17 (nota 2169/INSTITUIÇÃO ASSISTENCIAL
+                    # BENEFICENTE CONCEIÇÃO MACEDO): o CNPJ do tomador saía com
+                    # formatação PERFEITA no zoom 3 ("04.655.283/0003-50"), então
+                    # o gatilho antigo (só geometria) nunca disparava o recut -
+                    # mas o dígito estava errado (reprovava checksum; o certo é
+                    # "04.555.283/0003-50"), igual ao achado da nota 6508 (ver
+                    # comentário mais abaixo). Sem o recut, esse CNPJ inválido
+                    # caía no sentinela "não identificado" em vez do valor real.
+                    # Passa a exigir também checksum válido, não só formatação.
+                    m_cnpj_tom = re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', m_tom.group(1)) if m_tom else None
+                    cnpj_tom_ok = bool(m_cnpj_tom and self._validate_cnpj_cpf(m_cnpj_tom.group(0)))
+                    if m_tom and not cnpj_tom_ok:
                         tomador_text = self._ocr_tomador_salvador(page, best_angle)
                         if tomador_text.strip():
                             best_text = f"{tomador_text}\n{best_text}"
@@ -8906,24 +8928,57 @@ class SPPdfExtractor:
         "Código de Verificação"), usando PSM 6 (bloco único de texto) — a região
         inteira da página não recupera esses campos de forma confiável em
         nenhum zoom testado. Validado contra nota real: recupera "00004852" e
-        "AF7P-SGPS" mesmo quando o rótulo "Código" continua truncado."""
+        "AF7P-SGPS" mesmo quando o rótulo "Código" continua truncado.
+
+        Achado real 2026-08-17 (nota nº 2169/INSTITUIÇÃO ASSISTENCIAL BENEFICENTE
+        CONCEIÇÃO MACEDO): nesta nota a caixa tem a 3ª linha ("Código de
+        Verificação") mais baixa que o normal — o recorte original (11% da
+        altura) corta a imagem ANTES dela, então o campo nem aparece no texto
+        (não é caso de "aparece corrompido", é caso de "nem chega a aparecer").
+        Alturas de recorte maiores (16%) recuperam a linha em ambas as notas já
+        analisadas (2150 e 2169), mas cada uma só sai LEGÍVEL num zoom/PSM
+        diferente: 2150 lê limpo em zoom 4.5/PSM6 ("AYYE-QUUZ") mas embaralha
+        em zoom 8/PSM4; 2169 é o oposto, só lê limpo ("RKAR-XEE)") em zoom
+        8/PSM4. Por isso tenta as duas combinações nessa ordem e só aceita um
+        resultado que realmente pareça um código válido (não só a presença do
+        rótulo "Verificação") — devolver um recorte com o rótulo mas SEM valor
+        legível é pior que não prependar nada: cria um "Verificação:" pendurado
+        que o regex de extração (que tolera linhas em branco depois do rótulo)
+        podia casar com a palavra errada logo à frente no texto principal
+        concatenado (achado real: "PREFEITURA", início do bloco seguinte,
+        capturado como se fosse o código, na 1ª versão desta correção)."""
         try:
             import pymupdf
             import pytesseract
             from PIL import Image
             import io
 
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(4.5, 4.5))
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            w, h = img.size
-            crop = img.crop((int(w * 0.60), 0, w, int(h * 0.11)))
-            return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            def _tentativa(zoom, hfrac, psm):
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                w, h = img.size
+                crop = img.crop((int(w * 0.60), 0, w, int(h * hfrac)))
+                return pytesseract.image_to_string(crop, lang='por', config=f'--psm {psm}')
+
+            def _tem_codigo_valido(texto_ocr):
+                m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', texto_ocr, re.IGNORECASE)
+                return bool(m and m.group(1).upper() not in ('PRESTADOR', 'TOMADOR', 'PREFEITURA', 'SECRETARIA'))
+
+            texto_original = _tentativa(4.5, 0.11, 6)
+            if _tem_codigo_valido(texto_original):
+                return texto_original
+
+            for zoom, hfrac, psm in ((4.5, 0.16, 6), (8.0, 0.16, 4)):
+                tentativa = _tentativa(zoom, hfrac, psm)
+                if _tem_codigo_valido(tentativa):
+                    return tentativa
+
+            return texto_original
         except Exception:
             return ""
 
-    @staticmethod
-    def _ocr_tomador_salvador(page, angle: int = 0) -> str:
-        """Re-OCR da página inteira do Salvador/BA em zoom ALTO (5x), devolvendo
+    def _ocr_tomador_salvador(self, page, angle: int = 0) -> str:
+        """Re-OCR da página inteira do Salvador/BA em zoom ALTO, devolvendo
         SÓ o recorte do bloco do TOMADOR ("TOMADOR DE SERVIÇOS" até
         "DISCRIMINAÇÃO"). Em scans de baixa qualidade o zoom 3 padrão corrompe o
         CNPJ e a razão do tomador (ex.: "03.051.741/0001-90" vira
@@ -8932,20 +8987,44 @@ class SPPdfExtractor:
         validado contra a nota real nº 46 (BALUARTE -> SÃO PEDRO CONSTRUTORA).
         Devolve só o recorte para PREPENDER ao texto base (não troca a página
         inteira: em zoom 5 a discriminação do serviço se fragmenta). Aplica a
-        mesma rotação (`angle`) já detectada pelo _ocr_page."""
+        mesma rotação (`angle`) já detectada pelo _ocr_page.
+
+        Achado real 2026-08-17 (nota nº 2169/INSTITUIÇÃO ASSISTENCIAL BENEFICENTE
+        CONCEIÇÃO MACEDO): zoom 5 lê um CNPJ do tomador com FORMATAÇÃO válida mas
+        DÍGITO errado ("04.656.283/0003-50", reprova checksum — o certo é
+        "04.555.283/0003-50") e o endereço corrompido ("gar raia QUITERIA" em vez
+        de "RUA MARIA QUITERIA"), sem nenhum sinal de que a leitura falhou (a
+        formatação "parece" perfeita, só o dígito está errado). Testado contra a
+        mesma imagem real: zoom 6 recupera CNPJ e endereço corretos; zoom 7
+        volta a corromper o CNPJ. Como não há um zoom único que sirva para todas
+        as notas já validadas (zoom 5 é o único testado contra a nota 46), tenta
+        cada zoom em ordem e fica com o 1º cujo CNPJ capturado passa no
+        checksum — só cai para o resultado do zoom 5 (comportamento antigo,
+        sem validação) se NENHUM zoom validar, para nunca piorar um caso em que
+        o campo já saía ilegível antes desta correção."""
         try:
             import pymupdf
             import pytesseract
             from PIL import Image
             import io
 
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
-            img = Image.open(io.BytesIO(pix.tobytes("png")))
-            if angle:
-                img = img.rotate(-angle, expand=True)
-            txt = pytesseract.image_to_string(img, lang='por')
-            m = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS.*?(?=DISCRIMINA|$)', txt, re.IGNORECASE | re.DOTALL)
-            return m.group(0) if m else ""
+            melhor = ""
+            for zoom in (5.0, 6.0, 7.0):
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                if angle:
+                    img = img.rotate(-angle, expand=True)
+                txt = pytesseract.image_to_string(img, lang='por')
+                m = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS.*?(?=DISCRIMINA|$)', txt, re.IGNORECASE | re.DOTALL)
+                if not m:
+                    continue
+                bloco = m.group(0)
+                if not melhor:
+                    melhor = bloco
+                m_cnpj = re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', bloco)
+                if m_cnpj and self._validate_cnpj_cpf(m_cnpj.group(0)):
+                    return bloco
+            return melhor
         except Exception:
             return ""
 
@@ -9356,7 +9435,21 @@ class SPPdfExtractor:
         de forma estável. Devolve o texto do CNPJ formatado e JÁ VALIDADO
         (checksum ok) para substituir o candidato original via `str.replace`,
         ou `None` se não recuperar nada validável — nunca propaga um 2º
-        candidato inválido no lugar do 1º."""
+        candidato inválido no lugar do 1º.
+
+        Achado real 2026-08-17 (nota nº 2150, prestador INSTITUIÇÃO
+        ASSISTENCIAL BENEFICENTE CONCEIÇÃO MACEDO -> tomador BONI
+        TRANSPORTES): o recorte em zoom 8x já lê o dígito CORRETO do
+        prestador ("584", não o "684" da leitura padrão em zoom 3x), mas o
+        2º separador entre os grupos de 3 dígitos sai como ESPAÇO em vez de
+        ponto ("00.584 568/0001 -05") — a regex antiga exigia ponto literal
+        aí, então nunca casava e o recut voltava `None` mesmo já tendo o
+        dígito certo na imagem. Sem essa correção recuperada, o fallback
+        genérico de `_extrair_entidade` (nenhum CNPJ válido no bloco do
+        prestador -> pega o 1º CNPJ válido do documento inteiro) atribuía ao
+        prestador o CNPJ do TOMADOR (o único que sobrava validável) — bug
+        de identidade grave, não apenas um campo secundário errado. Tolerado
+        o mesmo tipo de espaço espúrio já aceito ao redor do hífen."""
         try:
             import pymupdf
             import pytesseract
@@ -9389,9 +9482,14 @@ class SPPdfExtractor:
             y1 = min(h_f, int((y_top + h_label * 2.6) * escala))
             crop = img_f.crop((0, y0, int(w_f * 0.45), y1))
             txt = pytesseract.image_to_string(crop, lang='por', config='--psm 6')
-            m = re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
+            m = re.search(r'\d{2}\.\d{3}[ \t.]\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
             if m and self._validate_cnpj_cpf(m.group(0)):
-                return m.group(0)
+                # Reformata com pontuação canônica (o "achado 2026-08-17" acima
+                # pode ter recuperado o 2º separador como espaço, não ponto) -
+                # devolve sempre no formato que a extração/regex downstream
+                # (`_extrair_entidade`, que exige pontuação estrita) reconhece.
+                d = re.sub(r'\D', '', m.group(0))
+                return f"{d[0:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:14]}"
             return None
         except Exception:
             return None

@@ -105,6 +105,25 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- Salvador/BA (`salvador_ba`): prestador saindo com o CNPJ do TOMADOR (notas
+  reais nº 2150/2169, INSTITUIÇÃO ASSISTENCIAL BENEFICENTE CONCEIÇÃO MACEDO →
+  BONI TRANSPORTES, reportado pelo usuário) — o recut dedicado de CNPJ com
+  dígito errado (`_ocr_recut_cnpj_invalido_salvador`) já lia o dígito certo do
+  prestador, mas exigia ponto literal como separador e o zoom alto às vezes
+  recupera espaço no lugar; regex sem match caía no `None`, e o fallback
+  genérico ("1º CNPJ válido do documento") pegava o do tomador. Corrigido para
+  tolerar espaço/tab OU ponto nesse separador, reformatando com pontuação
+  canônica antes de devolver. Achados colaterais na mesma nota (2169):
+  Código de Verificação saindo como a palavra `"PRESTADOR"` (rótulo sem valor
+  legível no meio, capturado como se fosse o código — mesmo recorte de
+  cabeçalho ganhou tentativas adicionais de zoom/PSM/altura, agora exigindo um
+  candidato plausível antes de aceitar); e CNPJ/razão social/endereço do
+  TOMADOR corrompidos (CNPJ com formatação válida mas dígito errado, sem
+  disparar o recut porque o gatilho só olhava a formatação — passou a validar
+  também o checksum, e o recut de tomador tenta múltiplos zooms em sequência).
+  Suíte 236→**241 verdes**; teste novo
+  `test_salvador_codigo_verificacao_e_tomador_2169.py`.
+
 - `parse_multiple`: um bloco de PREÂMBULO (canhoto/recibo do destinatário)
   antes da 1ª nota real de um PDF, separado por uma linha divisória longa
   (200+ hifens), virava uma "nota" fantasma isolada (nº `00000000`, razão
