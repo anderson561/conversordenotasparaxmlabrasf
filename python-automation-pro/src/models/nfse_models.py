@@ -32,6 +32,11 @@ class Valores(BaseModel):
     valor_iss: float = 0.0
     valor_iss_retido: float = 0.0
     outras_retencoes: float = 0.0
+    # Valor COMBINADO de "Contribuições Sociais Retidas" (PIS+COFINS+CSLL
+    # somados, sem abertura individual) - rótulo próprio do Portal Nacional
+    # (DANFSe). Distinto de `outras_retencoes`; não há tag ABRASF dedicada
+    # para ele, então o transformer o soma a `OutrasRetencoes` na saída XML.
+    valor_contribuicoes_sociais_retidas: float = 0.0
     base_calculo: float
     aliquota: float  # Ex: 0.05 para 5%
     valor_liquido_nfse: float
