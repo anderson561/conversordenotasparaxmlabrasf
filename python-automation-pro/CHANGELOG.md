@@ -82,6 +82,27 @@ sessão, de todos os layouts/fixes entregues está em
   prestador, não retenção — permanece não extraído). Suíte 231→**234
   verdes**; teste novo `test_danfse_nacional_retencoes_federais.py`.
 
+- Novo layout **BIO CONTROL DESINSETIZADORA** (`biocontrol_dedetizadora`) —
+  BIO CONTROL DESINSETIZADORA LTDA (CNPJ 04.811.846/0001-62, Lauro de
+  Freitas/BA) → BONI TRANSPORTES, LOGISTICA E COMERCIO LTDA, nota real nº
+  202600000036345, R$ 5.200,00 (dedetização/controle de pragas urbanas). 3º
+  sistema diferente para o MESMO município (ao lado da Prefeitura oficial
+  `lauro_de_freitas_ba` e da plataforma eNotas Gateway `password_enotas`),
+  template próprio "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO" — antes caía
+  inteira em `LAYOUT_GENERICO` (0 notas). Detecção pelo CNPJ/razão social do
+  emissor específico. Entidades prestador/tomador extraídas DINAMICAMENTE
+  (ao contrário do padrão "prestador fixo" de outras faturas de locação),
+  pois o bloco sai limpo o bastante em zoom 3x padrão. Um recorte dedicado
+  em zoom 8x (`_ocr_recut_biocontrol`) recupera 2 grades densas que a
+  leitura de página inteira embaralha: a linha "Tributação de Serviços"
+  (Código LC 116 "7.13" sai corrompido como "743") e a dupla "Tributos
+  Federais"/"Impostos sobre serviços ISSQN" (PIS/COFINS/IR saem com os
+  valores trocados entre si; Alíquota/Valor ISS somem por completo) —
+  validado contra o render real da página, não só o texto OCR. Item LC116
+  "7.13" (dedetização/desinsetização/controle de pragas urbanas), confirmado
+  tanto pelo recorte quanto pela discriminação real da nota. Suíte
+  234→**236 verdes**; teste novo `test_biocontrol_layout.py`.
+
 ### Corrigido
 
 - `parse_multiple`: um bloco de PREÂMBULO (canhoto/recibo do destinatário)
