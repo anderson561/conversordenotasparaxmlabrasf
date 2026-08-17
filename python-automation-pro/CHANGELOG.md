@@ -322,6 +322,25 @@ sessão, de todos os layouts/fixes entregues está em
   prioridade — mesma nota FLASH TECNOLOGIA (o aviso de substituição do RPS
   bate em "Emitido em" sem hora). Agora prefere o primeiro candidato COM
   hora entre os que casaram, em vez do primeiro da lista.
+- São Paulo/SP escaneado (`sao_paulo_sp_scan`): uma dobra física do papel
+  cobrindo "PREFEITURA DO" no título (nota real nº 00028202, VALESTRA
+  NEGOCIOS E INVESTIMENTOS LTDA → MASSA ALIMENTACAO E SERVICOS S/A) fazia a
+  nota inteira cair em `generico` (0 notas extraídas) — prefixo tornado
+  opcional na detecção de layout. A mesma dobra derrubava mais 6 campos na
+  mesma nota, todos corrigidos: Data/Hora de Emissão e Código de Verificação
+  recuperados por recorte dedicado (o rótulo do código some do OCR,
+  recuperado por busca da FORMA do próprio valor); endereço do prestador com
+  3 segmentos separados por " - " (bairro nem sempre é o último); "Município"
+  sem acento quebrava o casamento de rótulo (ambos prestador e tomador
+  caíam no fallback de capital, Salvador/BA); e-mail do tomador com "@" lido
+  como "Q"; razão social do tomador com ";" (em vez de ":") vazando no
+  início do valor (fix genérico, não específico de São Paulo); e as duas
+  grades de valores (retenções federais + Deduções/Alíquota/ISS)
+  totalmente ilegíveis em zoom padrão, recuperadas por recorte dedicado —
+  Base de Cálculo e Valor Líquido passam a ser DERIVADOS matematicamente
+  em vez de re-OCRizados, por não serem confiáveis em nenhum zoom testado.
+  Suíte 236→**237 verdes**; teste novo
+  `test_sao_paulo2_valestra_fold_defect.py`.
 
 ## [1.3.0] - 2026-08-10
 
