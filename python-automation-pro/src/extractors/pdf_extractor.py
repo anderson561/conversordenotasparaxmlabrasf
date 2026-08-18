@@ -10093,29 +10093,36 @@ class SPPdfExtractor:
 
     @staticmethod
     def _ocr_recut_grade_valores_sao_paulo(page, angle: int = 0) -> str:
-        """Recorta e reprocessa em zoom alto as 2 grades de valores da NFS-e
-        de São Paulo ESCANEADA (JPG/foto), logo abaixo de "VALOR TOTAL DO
-        SERVIÇO": (1) INSS/IRRF/CSLL/COFINS/PIS-PASEP/IPI (retenções
-        federais) e (2) Valor Total das Deduções/Base de Cálculo/Alíquota/
-        Valor do ISS/Crédito Programa da NFP. Ambas saem sem NENHUM valor
-        legível no zoom 3x padrão (achado real 2026-08-17, nota nº 00028202,
-        VALESTRA NEGOCIOS E INVESTIMENTOS LTDA -> MASSA ALIMENTACAO E
-        SERVICOS S/A) — os rótulos sobrevivem, mas a linha de valores vira
-        ruído ("1 TO ray E\" caso" em vez de "274,19 182,80 548,39 118,82",
-        "some som a |" em vez de "0,00 18.279,65 5,00% 913,98"), deixando
-        IRRF/CSLL/COFINS/PIS/Alíquota/ISS todos zerados.
+        """Recorta e reprocessa em zoom alto as grades de valores/serviço da
+        NFS-e de São Paulo ESCANEADA (JPG/foto), logo abaixo de "VALOR TOTAL
+        DO SERVIÇO": (1) INSS/IRRF/CSLL/COFINS/PIS-PASEP/IPI (retenções
+        federais), (2) "Código do Serviço" (item de 5 dígitos do cadastro
+        paulistano + descrição) e (3) Valor Total das Deduções/Base de
+        Cálculo/Alíquota/Valor do ISS/Crédito Programa da NFP. Todas saem
+        sem NENHUM valor legível no zoom 3x padrão (achado real 2026-08-17,
+        nota nº 00028202, VALESTRA NEGOCIOS E INVESTIMENTOS LTDA -> MASSA
+        ALIMENTACAO E SERVICOS S/A) — os rótulos sobrevivem, mas a linha de
+        valores vira ruído ("1 TO ray E\" caso" em vez de "274,19 182,80
+        548,39 118,82", "some som a |" em vez de "0,00 18.279,65 5,00%
+        913,98"), e "Código do Serviço" desaparece por completo (nem o
+        rótulo nem o valor aparecem no texto), deixando IRRF/CSLL/COFINS/
+        PIS/Alíquota/ISS/item de serviço todos no fallback (zerados/genérico
+        03115).
 
         Localiza os rótulos "IRRF" e "Alíquota" dinamicamente via
         `image_to_data` (zoom 3x, mesma técnica de
         `_ocr_header_box_sao_paulo`) e recorta cada grade numa faixa e zoom
-        próprios — testado e validado que NENHUM zoom único serve para as 2:
-        a grade federal só sai limpa em zoom 4x ("274,19 182,80 548,39
-        118,82"; zooms mais altos trocam o "8" de "118,82" por "5"), a grade
-        do ISS só em zoom 9x ("0,00 ... 5,00% 913,98"; zoom 4x perde a Base
-        de Cálculo por completo, mas ISS/Alíquota/Dedução continuam legíveis
-        e são os únicos 3 valores que este recorte de fato usa — a Base é
-        sempre derivada de `Valor dos Serviços - Deduções` por quem chama
-        esta função, mais confiável que reler o mesmo número já lido acima).
+        próprios — testado e validado que NENHUM zoom/PSM único serve para
+        as 3: a grade federal só sai limpa em zoom 4x/PSM 6 ("274,19 182,80
+        548,39 118,82"; zooms mais altos trocam o "8" de "118,82" por "5"),
+        "Código do Serviço" está na MESMA região (mesmo zoom 4x, ancorado no
+        mesmo "IRRF") mas só sai limpo com PSM 4 — PSM 6 devolve ruído nessa
+        faixa mais larga mesmo no mesmo zoom —, e a grade do ISS só em zoom
+        9x/PSM 6 ("0,00 ... 5,00% 913,98"; zoom 4x perde a Base de Cálculo
+        por completo, mas ISS/Alíquota/Dedução continuam legíveis e são os
+        únicos 3 valores que este recorte de fato usa — a Base é sempre
+        derivada de `Valor dos Serviços - Deduções` por quem chama esta
+        função, mais confiável que reler o mesmo número já lido acima).
         Devolve linhas sintéticas canônicas para PREPENDER ao texto base."""
         try:
             import pymupdf
@@ -10153,6 +10160,20 @@ class SPPdfExtractor:
                 if m_a:
                     linhas.append("IRRF (R$) CSLL (R$) COFINS (R$) PIS/PASEP (R$)")
                     linhas.append(f"{m_a.group(1)} {m_a.group(2)} {m_a.group(3)} {m_a.group(4)}")
+
+                # Achado real (mesma nota): "Código do Serviço" (item de 5
+                # dígitos do cadastro paulistano + descrição) fica logo
+                # abaixo da grade federal, também sem NENHUM valor legível no
+                # zoom 3x — mas PSM 4 (colunas), não PSM 6, recupera a linha
+                # inteira de forma limpa nesta faixa mais larga (PSM 6 devolve
+                # ruído aqui, mesmo no mesmo zoom 4x já usado para o IRRF).
+                y0_cod = max(0, int((y_top + h_label * 2.5) * escala_a))
+                y1_cod = min(h_a, int((y_top + h_label * 16.0) * escala_a))
+                texto_cod = pytesseract.image_to_string(img_a.crop((0, y0_cod, w_a, y1_cod)), lang='por', config='--psm 4')
+                m_cod = re.search(r'C[oó]digo\s+do\s+Servi[çc]o\s*\n\s*(\d{4,5}\s*-\s*.+)', texto_cod, re.IGNORECASE)
+                if m_cod:
+                    linhas.append("Código do Serviço")
+                    linhas.append(m_cod.group(1).strip())
 
             cand_aliq = [i for i in range(len(data['text'])) if re.search(r'Al[íi]quota', data['text'][i] or '', re.IGNORECASE)]
             if cand_aliq:
