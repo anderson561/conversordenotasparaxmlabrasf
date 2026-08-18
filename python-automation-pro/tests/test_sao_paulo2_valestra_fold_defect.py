@@ -22,12 +22,23 @@ import os
 #  - "Município" sai sem acento ("Municipio"), quebrando o relax() que
 #    exige o "í" literal;
 #  - o e-mail do tomador tem o "@" lido como "Q" ("oriane.costaQnwgroup.com.br");
-#  - o rótulo "Nome/Razão Social" do tomador sai com ";" em vez de ":".
+#  - o rótulo "Nome/Razão Social" do tomador sai com ";" em vez de ":";
+#  - "Código do Serviço" (item de tributação municipal, "01899 -
+#    Planejamento, coordenacao, programacao ou organizacao tecnica,
+#    financeira ou administrativa.") desaparece POR COMPLETO do OCR de
+#    página inteira (nem rótulo nem valor) — achado 2026-08-18, depois de
+#    reconferir o XML campo a campo contra a imagem real e notar que o
+#    item de serviço tinha caído no fallback genérico "03115" em vez do
+#    "01899" legível na própria nota. Recuperado pelo mesmo recorte
+#    dedicado (`_ocr_recut_grade_valores_sao_paulo`), numa 3ª captura na
+#    mesma região/zoom do IRRF mas com PSM 4 em vez de PSM 6.
 MOCK_TEXT = """Número da Nota
 00028202
 
 IRRF (R$) CSLL (R$) COFINS (R$) PIS/PASEP (R$)
 274,19 182,80 548,39 118,82
+Código do Serviço
+01899 - Planejamento, coordenacao, programacao ou organizacao tecnica, financeira ou administrativa.
 Valor Total das Deduções Alíquota Valor do ISS
 0,00 5,00% 913,98
 
@@ -105,7 +116,9 @@ do Belo: (3) Est NFS-e não gera crédito; (4) Esta NFS-e substitui o RPS Nº 28
 def test_sao_paulo2_valestra_dobra_no_titulo_ainda_detecta_layout(monkeypatch):
     """Blindagem principal: mesmo com a dobra física cobrindo 'PREFEITURA DO'
     no título, a nota continua sendo detectada como LAYOUT_SAO_PAULO_2 (nota
-    escaneada) — não cai em 'generico' nem gera 0 notas."""
+    escaneada) — não cai em 'generico' nem gera 0 notas. Também cobre o
+    item de serviço (01899), achado numa reconferência campo a campo do
+    XML depois do fix original (estava caindo no fallback genérico 03115)."""
     dummy_path = "tests/dummy_sp2_valestra.pdf"
     os.makedirs("tests", exist_ok=True)
     with open(dummy_path, "wb") as f:
@@ -124,6 +137,7 @@ def test_sao_paulo2_valestra_dobra_no_titulo_ainda_detecta_layout(monkeypatch):
         assert nfse.codigo_verificacao == "BWP2-LR3Z"
         assert nfse.data_emissao.strftime("%d/%m/%Y %H:%M:%S") == "27/02/2026 13:42:10"
         assert nfse.competencia.strftime("%m/%Y") == "02/2026"
+        assert nfse.servico_codigo == "01899"
 
         # Prestador em São Paulo/SP; tomador em Salvador/BA.
         assert nfse.prestador.cnpj_cpf == "30646364000104"

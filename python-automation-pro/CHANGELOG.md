@@ -341,6 +341,16 @@ sessão, de todos os layouts/fixes entregues está em
   em vez de re-OCRizados, por não serem confiáveis em nenhum zoom testado.
   Suíte 236→**237 verdes**; teste novo
   `test_sao_paulo2_valestra_fold_defect.py`.
+- São Paulo/SP escaneado (`sao_paulo_sp_scan`, mesma nota Valestra acima):
+  "Código do Serviço" (item de tributação municipal) desaparecia por
+  completo do OCR — nem rótulo nem valor —, caindo no fallback genérico
+  `03115` em vez do real `01899` ("Planejamento, coordenação, programação
+  ou organização técnica, financeira ou administrativa"), achado ao
+  reconferir o XML campo a campo contra a imagem depois do fix acima.
+  Recuperado com uma 3ª captura no mesmo recorte dedicado, na mesma
+  região/zoom do IRRF mas com PSM 4 em vez de PSM 6 (mesma imagem pode
+  precisar de PSM diferente pra sub-regiões adjacentes). Teste existente
+  ampliado; suíte permanece **242 verdes**.
 
 ## [1.3.0] - 2026-08-10
 
