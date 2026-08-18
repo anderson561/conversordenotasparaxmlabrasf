@@ -3755,9 +3755,15 @@ class SPPdfExtractor:
         # descartado) tratado como razão social válida pelo fallback genérico
         # linha-a-linha — fabricando um intermediário fantasma com CNPJ
         # sentinela. Retornar None ANTES da extração de razão evita cair
-        # nesse fallback.
+        # nesse fallback. O placeholder nem sempre é hífen ASCII: o OCR de
+        # outra nota real (Valestra nº 00028202) devolve um único travessão
+        # "—" (em dash, U+2014) em vez de "----" — corrigido tolerando 1+
+        # caractere tipo-traço da família en/em dash (U+2010-U+2015, nunca
+        # usada num CNPJ real) OU 2+ hífens ASCII (mantido em 2+ pra não
+        # colidir com o hífen ÚNICO de um CNPJ real bem formado, ex.:
+        # "12.345.678/0001-01").
         if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) and is_intermediario and m_bloco and \
-                re.search(r'CPF\s*/\s*CNPJ\s*:?\s*-{2,}', m_bloco.group(0), re.IGNORECASE):
+                re.search(r'CPF\s*/\s*CNPJ\s*:?\s*(?:-{2,}|[‐-―]+)', m_bloco.group(0), re.IGNORECASE):
             return None
 
         if bloco_sv is not None:

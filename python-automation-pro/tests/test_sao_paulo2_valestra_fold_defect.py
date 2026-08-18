@@ -172,6 +172,16 @@ def test_sao_paulo2_valestra_dobra_no_titulo_ainda_detecta_layout(monkeypatch):
         assert val.valor_cofins == pytest.approx(548.39)
         assert val.valor_pis == pytest.approx(118.82)
         assert val.valor_liquido_nfse == pytest.approx(17155.45)
+
+        # Intermediário fantasma (achado real 2026-08-18, reconferência
+        # adicional): o bloco "INTERMEDIÁRIO DE SERVIÇOS" desta nota vem com
+        # "CPF/CNPJ: —" (um único travessão/em dash, não "----" como na nota
+        # UNIMED CNU que originou o guard) — sem tolerar esse caractere, o
+        # guard de "placeholder vazio" não disparava e um intermediário
+        # fantasma era fabricado (CNPJ sentinela `00000000000100`, razão
+        # `": —"`, a partir do "DE SERVIÇOS" residual do próprio rótulo da
+        # seção). `Nfse.intermediario` deve ficar None.
+        assert nfse.intermediario is None
     finally:
         if os.path.exists(dummy_path):
             os.remove(dummy_path)
