@@ -146,6 +146,24 @@ sessão, de todos os layouts/fixes entregues está em
   (Salvador é a capital da Bahia). Corrigido nos 3 call sites; **não
   auditado** nos demais layouts que possam compartilhar essa omissão.
 
+- **Atualização automática do app (GUI) via GitHub Releases**
+  (`src/version.py` + `src/utils/auto_updater.py`): checagem automática
+  ao abrir + botão manual "Verificar atualizações", com download e
+  substituição automática do `nfse_converter_gui.exe` em execução
+  (decisão do usuário: não apenas notificar/linkar). Consulta
+  `GET /repos/.../releases/latest` (só enxerga Releases PUBLICADOS, não
+  tags soltas — novo passo manual do processo de release, documentado em
+  "Processo de Release" no `DOCUMENTACAO_CONVERSAO.md`); compara SemVer
+  contra `APP_VERSION`; baixa o asset `.exe` do Release com barra de
+  progresso; a troca do arquivo travado pelo Windows é feita por um
+  `.bat` auxiliar desanexado que aguarda o PID atual encerrar, move o
+  novo `.exe` por cima do antigo e relança o app. Pede confirmação do
+  usuário antes de aplicar (diálogo "Atualizar agora" / "Depois") — a
+  checagem é automática, a substituição em si não é silenciosa. Sem
+  Release publicado, sem rede, ou rodando via código-fonte (não `.exe`),
+  a checagem falha silenciosamente (retorna `None`), sem popup de erro.
+  Suíte 242→**256 verdes**; teste novo `test_auto_updater.py`.
+
 ### Corrigido
 
 - São Paulo/SP escaneado (`sao_paulo_sp_scan`): `Numero` saindo com dígitos
