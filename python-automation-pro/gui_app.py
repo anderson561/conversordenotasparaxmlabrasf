@@ -4,6 +4,8 @@ import threading
 from datetime import datetime, date
 from src.main import run_batch_conversion, run_contrato_conversion
 from src.models.contrato_locacao_model import ContratoLocacao, EntidadeContrato
+from src.version import APP_VERSION
+from src.utils import auto_updater
 
 def main(page: ft.Page):
     page.title = "Conversor NFS-e para ABRASF XML"
@@ -13,6 +15,121 @@ def main(page: ft.Page):
     page.window_resizable = True
     page.padding = 30
     page.vertical_alignment = ft.MainAxisAlignment.START
+
+    # ---------------------------------------------------------------
+    # Atualização automática (GitHub Releases)
+    # ---------------------------------------------------------------
+    update_status_text = ft.Text("", color="white54", size=11)
+
+    def aplicar_atualizacao(release):
+        dialog.open = False
+        page.update()
+
+        progress_dialog_text = ft.Text("Baixando atualização... 0%")
+        progress_dialog_bar = ft.ProgressBar(width=320, value=0)
+        progress_dialog = ft.AlertDialog(
+            title=ft.Text("Atualizando"),
+            content=ft.Column([progress_dialog_text, progress_dialog_bar], tight=True),
+            modal=True,
+        )
+        page.overlay.append(progress_dialog)
+        progress_dialog.open = True
+        page.update()
+
+        def on_progress(frac):
+            progress_dialog_bar.value = frac
+            progress_dialog_text.value = f"Baixando atualização... {int(frac * 100)}%"
+            page.update()
+
+        def run():
+            try:
+                asset = auto_updater.find_exe_asset(release)
+                if not asset:
+                    progress_dialog.open = False
+                    page.snack_bar = ft.SnackBar(ft.Text(
+                        "Release encontrado, mas sem o .exe anexado como asset."))
+                    page.snack_bar.open = True
+                    page.update()
+                    return
+
+                dest = os.path.join(
+                    os.environ.get("TEMP", "."),
+                    f"nfse_converter_gui_new_{os.getpid()}.exe",
+                )
+                auto_updater.download_asset(asset, dest, progress_callback=on_progress)
+
+                if not auto_updater.is_frozen():
+                    progress_dialog.open = False
+                    page.snack_bar = ft.SnackBar(ft.Text(
+                        "Download concluído, mas rodando via código-fonte "
+                        "(não .exe) — nada para substituir aqui."))
+                    page.snack_bar.open = True
+                    page.update()
+                    return
+
+                progress_dialog_text.value = "Reiniciando com a nova versão..."
+                page.update()
+                auto_updater.apply_update_and_restart(dest)
+            except Exception as ex:
+                progress_dialog.open = False
+                page.snack_bar = ft.SnackBar(ft.Text(f"Falha ao atualizar: {ex}"))
+                page.snack_bar.open = True
+                page.update()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def mostrar_dialog_atualizacao(release):
+        nonlocal dialog
+        def on_atualizar(e):
+            aplicar_atualizacao(release)
+
+        def on_depois(e):
+            dialog.open = False
+            page.update()
+
+        dialog = ft.AlertDialog(
+            title=ft.Text(f"Nova versão disponível: {release['version']}"),
+            content=ft.Text(
+                f"Você está usando a v{APP_VERSION}. Deseja baixar e instalar "
+                f"a {release['version']} agora? O app será reiniciado."
+            ),
+            actions=[
+                ft.TextButton("Depois", on_click=on_depois),
+                ft.ElevatedButton("Atualizar agora", on_click=on_atualizar),
+            ],
+        )
+        page.overlay.append(dialog)
+        dialog.open = True
+        page.update()
+
+    dialog = None
+
+    def verificar_atualizacoes(e=None, silencioso=False):
+        if not silencioso:
+            update_status_text.value = "Verificando atualizações..."
+            page.update()
+
+        def run():
+            release = auto_updater.check_latest_release()
+            if release:
+                update_status_text.value = f"Nova versão disponível: {release['version']}"
+                page.update()
+                mostrar_dialog_atualizacao(release)
+            elif not silencioso:
+                update_status_text.value = "Você já está na versão mais recente."
+                page.update()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    btn_verificar_atualizacoes = ft.TextButton(
+        "Verificar atualizações",
+        icon=ft.icons.SYSTEM_UPDATE,
+        on_click=lambda e: verificar_atualizacoes(e, silencioso=False),
+    )
+
+    # Checagem automática ao abrir, sem bloquear a UI nem incomodar se
+    # o GitHub estiver fora do ar / sem Release publicado ainda.
+    verificar_atualizacoes(silencioso=True)
 
     # ---------------------------------------------------------------
     # Componentes de UI — Seleção de arquivos PDF
@@ -483,7 +600,14 @@ def main(page: ft.Page):
                 expand=True,
                 bgcolor=ft.colors.BLACK12,
                 height=160,
-            )
+            ),
+            ft.Row(
+                [ft.Text(f"v{APP_VERSION}", color="white38", size=11),
+                 btn_verificar_atualizacoes,
+                 update_status_text],
+                alignment=ft.MainAxisAlignment.END,
+                spacing=12,
+            ),
         ], expand=True, scroll=ft.ScrollMode.AUTO)
     )
 

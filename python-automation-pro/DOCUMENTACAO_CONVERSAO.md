@@ -454,6 +454,64 @@ Documento fiscal de **PRODUTO/mercadoria** (tributado por ICMS/IPI), estruturalm
 
 ---
 
+## Atualização Automática (Auto-Update)
+
+A GUI (`nfse_converter_gui.exe`) verifica sozinha se existe uma versão mais
+nova publicada no GitHub, e pode baixar e se auto-substituir sem o usuário
+precisar baixar nada manualmente. **Escopo: só a GUI** — o CLI
+(`nfse_converter_cli.exe`) não tem verificação de atualização (uso mais
+técnico/scriptado, sem UI para mostrar avisos).
+
+- **Fonte da versão local**: `src/version.py` (`APP_VERSION`) — precisa ser
+  incrementado manualmente a cada release, junto com a tag git.
+- **Checagem**: automática, silenciosa, ao abrir o app (não bloqueia a UI —
+  roda em thread separada; falha de rede/GitHub fora do ar não gera popup de
+  erro, só não mostra nada) **+** botão manual "Verificar atualizações" no
+  rodapé da janela (mostra "Você já está na versão mais recente." quando não
+  há nada novo).
+- **Fonte da versão remota**: `GET /repos/anderson561/conversordenotasparaxmlabrasf/releases/latest`
+  (`src/utils/auto_updater.py:check_latest_release`) — API pública do GitHub
+  para o **Release PUBLICADO mais recente** (não draft, não pre-release).
+  **Importante:** essa API não enxerga tags soltas sem Release — ver
+  "Processo de Release" abaixo, é um passo manual novo.
+- **Comparação de versão**: SemVer simples (`(major, minor, patch)`), tolera
+  prefixo `v` (`v1.4.0` vs `1.3.0`).
+- **Aplicação**: quando há versão nova, mostra um diálogo
+  ("Nova versão disponível: vX.Y.Z" / "Atualizar agora" / "Depois") — a
+  checagem é automática, mas a substituição do arquivo **pede confirmação
+  explícita do usuário** antes de agir (não troca o .exe em execução sem
+  avisar). Ao confirmar: baixa o asset `.exe` do Release (com barra de
+  progresso), e como o Windows trava o arquivo do processo em execução, a
+  troca de fato é feita por um `.bat` auxiliar gerado em tempo de execução
+  (sem precisar de um 2º executável compilado) que aguarda o PID atual
+  sumir da `tasklist`, move o novo `.exe` por cima do antigo, relança o app
+  e se autodeleta — o app encerra com `os._exit(0)` assim que o `.bat` é
+  lançado (desanexado), para soltar o lock do arquivo o quanto antes.
+- **Rodando via código-fonte** (`python gui_app.py`, não `.exe` empacotado):
+  `auto_updater.is_frozen()` retorna `False`, e o fluxo de aplicação é
+  abortado com um aviso — não há `.exe` para substituir num ambiente de
+  desenvolvimento.
+
+### Processo de Release (passo manual novo)
+
+Antes desta funcionalidade, o processo de release parava na tag git
+(`git tag vX.Y.Z && git push --tags`) — tag sem Release publicado é
+invisível para `/releases/latest`, então o auto-update nunca vai encontrar
+nada até esse passo ser adotado:
+
+1. Rodar `build.bat` normalmente (gera `dist/nfse_converter_gui.exe`).
+2. Criar a tag e dar push (fluxo já existente).
+3. No GitHub, ir em **Releases → Draft a new release**, selecionar a tag
+   recém-criada, e **anexar `dist/nfse_converter_gui.exe` como asset**
+   (nome do arquivo precisa continuar `nfse_converter_gui.exe` — é o nome
+   que `find_exe_asset` procura primeiro).
+4. Publicar o Release (não deixar como Draft/Pre-release — `/releases/latest`
+   ignora os dois).
+
+Sem esse passo 3-4, o botão/checagem de atualização simplesmente não acha
+nada de novo (comportamento idêntico a "já está atualizado"), mesmo com
+tags mais novas no repositório.
+
 ## Processamento de Múltiplas Páginas (PDFs)
 
 O sistema conta com um motor de fatiamento inteligente que suporta:
