@@ -351,6 +351,19 @@ sessão, de todos os layouts/fixes entregues está em
   região/zoom do IRRF mas com PSM 4 em vez de PSM 6 (mesma imagem pode
   precisar de PSM diferente pra sub-regiões adjacentes). Teste existente
   ampliado; suíte permanece **242 verdes**.
+- São Paulo/SP (digital e escaneado, `sao_paulo_sp`/`sao_paulo_sp_scan`,
+  mesma nota Valestra acima): intermediário FANTASMA — bloco
+  `<Intermediario>` emitido no XML com CNPJ sentinela
+  `00000000000100` e `RazaoSocial=": —"` mesmo quando a nota não tem
+  intermediário de verdade (`CPF/CNPJ: —` / `Nome/Razão Social: —`, tudo
+  vazio). O guard existente contra esse fantasma (achado 2026-07-31, nota
+  UNIMED CNU) só reconhecia o placeholder `"----"` (2+ hífens ASCII); esta
+  nota usa um único travessão "—" (em dash, U+2014) em vez de hífen —
+  corrigido tolerando também 1+ caractere da família en/em dash
+  (U+2010-U+2015, nunca usada num CNPJ real), mantendo a exigência de 2+
+  hifens ASCII (para não colidir com o hífen único de um CNPJ real bem
+  formado, ex. `12.345.678/0001-01`). Teste existente ampliado; suíte
+  permanece **242 verdes**.
 
 ## [1.3.0] - 2026-08-10
 
