@@ -15,6 +15,25 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Adicionado
 
+- Novo layout **Vinhedo/SP** (`vinhedo_sp`) — plataforma Balker
+  (vinhedo.balker.com.br). Nota real nº 139 (WEDO DECOR LTDA → NAUTICA
+  INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, R$ 1.049,79) caía no
+  fallback `generico`, que produzia vários dados errados: `valor_servicos`
+  zerado, `valor_iss` fabricado como `28.0` (não bate com o valor real,
+  41,99), UF do prestador saindo `BA` em vez de `SP`, município do
+  prestador caindo no fallback Salvador/BA (Vinhedo não cadastrada em
+  `KNOWN_CITIES`), `servico_codigo` saindo `"03115"` (não bate com o item
+  real "7.19"), e a razão social do TOMADOR saindo `"País: BRASIL"`.
+  Estrutura própria: blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS"
+  com rótulo→valor adjacente na MESMA linha, mas o cabeçalho de seção
+  "TOMADOR DE SERVIÇOS" aparece deslocado no MEIO do próprio bloco do
+  tomador (mesmo quirk do Santos/SP) — fatiamento pela 2ª ocorrência de
+  "Razão Social/Nome:". Data de Emissão em formato "DD/MMM/AAAA -
+  HH:MM:SS" com mês abreviado em PT-BR. Grade de Retenções Federais +
+  Base/Alíquota/ISS (2 linhas x 7 colunas sem linhas de separação) onde o
+  pdfminer emite cada valor defasado em 1 coluna em relação ao próprio
+  rótulo — mapeado por índice fixo, documentado no código. Suíte
+  261→265 verdes; teste novo `test_vinhedo_sp_layout.py`.
 - Novo layout **Santos/SP** (`santos_sp`) — plataforma Ginfes
   (santos.ginfes.com.br, mesma do `guarulhos_sp`, mas nota DIGITAL/pdfminer,
   não escaneada). Nota real nº 16 (IN.OUT MOVEIS E DECORACOES LTDA →
