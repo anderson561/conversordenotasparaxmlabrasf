@@ -382,6 +382,24 @@ sessão, de todos os layouts/fixes entregues está em
   hifens ASCII (para não colidir com o hífen único de um CNPJ real bem
   formado, ex. `12.345.678/0001-01`). Teste existente ampliado; suíte
   permanece **242 verdes**.
+- DANFSe Nacional (`danfse_nacional`), plataforma **WebISS** (achado real,
+  Prefeitura Municipal de Aracaju/SE, nota nº 2026000000014, LY5T-1DG5,
+  reportado pelo usuário): `Valor dos Serviços`/`Valor Líquido`/`Base de
+  Cálculo ISS`/`Alíquota ISS` saíam todos ZERADOS (R$ 4.000,00 reais) — esta
+  plataforma usa vocabulário próprio ("Valor **dos** Serviços", plural, em
+  vez de "Valor do Serviço") e imprime o número da célula da grade SEM o
+  token "R$" (só o rótulo tem o sufixo "(R$)"), formato que os padrões
+  existentes (que exigem "R$ n,nn" logo após o rótulo) nunca casavam.
+  Estendido de forma ADITIVA (fallback só ativa quando o padrão original
+  não casou, sem risco às demais cidades que já usam este layout
+  compartilhado): reconhece o rótulo no plural, aceita número sem "R$", e
+  passa a extrair também Alíquota ISS e as Retenções Federais individuais
+  (PIS/COFINS/INSS/IR/CSLL) desta plataforma. A própria nota imprime
+  `"*****"` (mascarado) em Base de Cálculo ISS/ISS/ISS Retido (regime
+  ME/EPP do Simples Nacional) — mantidos em 0,00 (nunca fabricar um valor
+  sem lastro no documento), sinalizado por um aviso dedicado em
+  `Nfse.avisos`. Suíte 256→**257 verdes**; teste novo
+  `test_danfse_nacional_aracaju_webiss.py`.
 
 ## [1.3.0] - 2026-08-10
 

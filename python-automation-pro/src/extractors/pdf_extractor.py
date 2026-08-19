@@ -7302,14 +7302,69 @@ class SPPdfExtractor:
             # mesma seção: é o débito próprio do prestador, não retenção).
             contrib_sociais = _valor_apos_rotulo_grade(r'Contribui[çc][õo]es\s+Sociais\s*-\s*Retidas')
 
+            # WebISS (achado real: Aracaju/SE, nota 2026000000014, LY5T-1DG5):
+            # mesma DANFSe Nacional, mas com vocabulário PRÓPRIO desta
+            # plataforma - "Valor dos Serviços (R$)" (plural; os padrões
+            # acima só reconhecem "Valor do Serviço", singular), "Base de
+            # Cálculo ISS (R$)", "ISS (R$)", "ISS Retido (R$)", "Alíquota ISS
+            # (%)", "IR (R$)"/"INSS (R$)"/"PIS (R$)"/"COFINS (R$)"/"CSLL
+            # (R$)" - e o número da CÉLULA vem SEM o token "R$" (só no
+            # RÓTULO, como sufixo "(R$)"). Os padrões acima, que exigem
+            # "R$ n,nn" logo após o rótulo, nunca casam nessas notas -> Valor
+            # dos Serviços (e por tabela, Valor Líquido) caíam sempre em
+            # 0.0. Cada extração aqui só entra como FALLBACK (campo ainda
+            # zerado pelos padrões acima) para não arriscar nenhuma das
+            # outras ~8 cidades já cobertas por este layout compartilhado.
+            # Campos que a própria nota imprime mascarados ("*****" - Base
+            # de Cálculo ISS/ISS/ISS Retido nesta nota) não têm número real
+            # para casar e ficam corretamente em 0.0 (ver aviso dedicado em
+            # `parse()`), em vez de fabricar um valor.
+            m_num = r'(\d{1,3}(?:\.\d{3})*,\d{2})\b'
+
+            def _num_apos_sem_rs(label, janela=40):
+                m = re.search(label + r'[\s\S]{0,' + str(janela) + r'}?' + m_num, t, re.IGNORECASE)
+                return self._parse_valor(m.group(1)) if m else 0.0
+
+            if not serv:
+                serv = _num_apos_sem_rs(r'Valor\s+dos?\s+Servi[çc]os?\s*\(R\$\)')
+            if not liquido:
+                liquido = _num_apos_sem_rs(r'Valor\s+L[íi]quido\s*\(R\$\)')
+            if not serv:
+                serv = liquido
+            if not liquido:
+                liquido = serv
+
+            if not iss:
+                iss = _num_apos_sem_rs(r'\bISS\s*\(R\$\)')
+            if not iss_retido:
+                iss_retido = bool(re.search(r'ISS\s+Retido\s*\(R\$\)[\s\S]{0,40}?\bSim\b', t, re.IGNORECASE))
+
+            aliquota = 0.0
+            m_aliq = re.search(r'Al[íi]quota\s+ISS\s*\(%\)[\s\S]{0,20}?(\d{1,3}[.,]\d{2,4})', t, re.IGNORECASE)
+            if m_aliq:
+                aliquota = self._parse_valor_tolerante(m_aliq.group(1)) / 100
+
+            if not irrf:
+                irrf = _num_apos_sem_rs(r'\bIR\s*\(R\$\)')
+            if not inss:
+                inss = _num_apos_sem_rs(r'\bINSS\s*\(R\$\)')
+            pis = _num_apos_sem_rs(r'\bPIS\s*\(R\$\)')
+            cofins = _num_apos_sem_rs(r'\bCOFINS\s*\(R\$\)')
+            csll = _num_apos_sem_rs(r'\bCSLL\s*\(R\$\)')
+            outras_ret = _num_apos_sem_rs(r'Outras\s+Reten[çc][õo]es\s*\(R\$\)')
+
             return Valores(
                 valor_servicos=serv,
                 valor_deducoes=0.0,
+                valor_pis=pis,
+                valor_cofins=cofins,
+                valor_csll=csll,
                 valor_inss=inss,
                 valor_ir=irrf,
                 valor_contribuicoes_sociais_retidas=contrib_sociais,
+                outras_retencoes=outras_ret,
                 base_calculo=base or serv,
-                aliquota=0.0,
+                aliquota=aliquota,
                 valor_iss=iss,
                 iss_retido=iss_retido,
                 valor_iss_retido=iss if iss_retido else 0.0,
@@ -10533,6 +10588,17 @@ class SPPdfExtractor:
                 "Documento tributado por ICMS (NFCom - Nota Fiscal de Comunicação "
                 "Eletrônica), não sujeito a ISS - campos de Base de Cálculo/"
                 "Alíquota/Valor do ISS mantidos zerados propositalmente"
+            )
+        if self.layout == LAYOUT_NACIONAL and re.search(r'\*{3,}', self.raw_text):
+            # Achado real (Aracaju/SE, WebISS, nota 2026000000014): a
+            # própria prefeitura imprime "*****" no lugar de Base de Cálculo
+            # ISS/ISS/ISS Retido quando não há valor a exibir (regime ME/EPP
+            # de Simples Nacional) - não é falha de extração, mantemos 0.0
+            # em vez de fabricar um número.
+            avisos.append(
+                "Documento fonte mascara (\"*****\") um ou mais campos de "
+                "Base de Cálculo ISS/ISS/ISS Retido - mantidos zerados por "
+                "não haver valor real impresso para extrair"
             )
 
         municipio_incidencia_override = self._extrair_municipio_incidencia_override()
