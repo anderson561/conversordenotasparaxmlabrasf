@@ -61,6 +61,7 @@ class IBGEResolver:
         "MONTE SANTO": "2921550",
         "SAO JOSE": "4216602", "SÃO JOSÉ": "4216602",  # São José/SC (Grande Florianópolis)
         "SANTOS": "3548500",
+        "VINHEDO": "3556701",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
