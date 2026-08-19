@@ -15,6 +15,30 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Adicionado
 
+- Novo layout **Santos/SP** (`santos_sp`) — plataforma Ginfes
+  (santos.ginfes.com.br, mesma do `guarulhos_sp`, mas nota DIGITAL/pdfminer,
+  não escaneada). Nota real nº 16 (IN.OUT MOVEIS E DECORACOES LTDA →
+  NAUTICA INDUSTRIA E COMERCIO DE MOVEIS LTDA, R$ 6.666,86) caía no fallback
+  `generico`, que produzia vários dados errados: `valor_servicos` zerado,
+  `valor_iss` fabricado como `14.0` (número aleatório pescado do
+  documento), UF do prestador e do tomador saindo `BA` em vez de `SP`,
+  município do prestador caindo no fallback Salvador/BA (Santos não
+  cadastrada em `KNOWN_CITIES`), e a razão social do TOMADOR saindo igual
+  ao próprio endereço dele. Estrutura própria: cada campo é rótulo→valor
+  adjacente, mas em ORDEM VISUAL de 2 colunas (não top-to-bottom) — o
+  cabeçalho de seção "Tomador de Serviço" aparece deslocado no MEIO do
+  próprio bloco do tomador, então o fatiamento usa a 2ª ocorrência do
+  rótulo "CPF/CNPJ:" como âncora, não o cabeçalho. Duas grades "rótulos em
+  cima, valores embaixo" — a de valores tem 13 rótulos fixos mas só 10
+  valores nesta nota, porque ISSQN/IBS/CBS saem literalmente EM BRANCO
+  (Simples Nacional, ISS pago via guia única/DAS) — mapeados pelos 2
+  extremos fixos da lista (9 primeiros rótulos = 9 primeiros valores;
+  Valor Líquido = último valor, robusto ao nº de campos em branco no
+  meio). ISSQN mantido em 0,00 sempre (decisão do usuário: nunca
+  derivar de Base×Alíquota, mesmo critério do fix Aracaju/WebISS). Santos
+  cadastrada em `KNOWN_CITIES` (IBGE `3548500`, confirmado via API
+  oficial). Suíte 257→**261 verdes**; teste novo `test_santos_sp_layout.py`.
+
 - Novo layout **NFCom Salvador** (`nfcom_salvador`) — Empresa Baiana de
   Jornalismo S.A. (EBJ, CNPJ 14.583.041/0001-62, Salvador/BA), NFCom (Nota
   Fiscal de Serviço de Comunicação Eletrônica, padrão nacional SVRS,
