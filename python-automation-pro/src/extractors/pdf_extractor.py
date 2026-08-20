@@ -86,6 +86,7 @@ LAYOUT_SAO_JOSE_SC = 'sao_jose_sc'  # Prefeitura Municipal de São José/SC ("PR
 LAYOUT_BIOCONTROL = 'biocontrol_dedetizadora'  # BIO CONTROL DESINSETIZADORA LTDA (CNPJ 04.811.846/0001-62, Lauro de Freitas/BA) - template próprio "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO" (distinto tanto de LAYOUT_LAURO_FREITAS, a Prefeitura oficial, quanto de LAYOUT_PASSWORD_ENOTAS, a plataforma eNotas Gateway - 3º sistema diferente no MESMO município). PDF escaneado (OCR); blocos "Dados do Prestador"/"Dados do Tomador" em grade limpa de 2 linhas por campo (rótulo, depois valor) - ao contrário do padrão "prestador fixo" de outras faturas de locação (PJB/F&F/LMR/NFCom Salvador), aqui a extração é DINÂMICA para as duas entidades, pois o texto já sai limpo o bastante em zoom 3x padrão. Duas grades densas (linha "Tributação de Serviços" com o Código LC 116, e a linha dupla "Tributos Federais"/"Impostos sobre serviços ISSQN") saem CORROMPIDAS na leitura de página inteira (Código LC 116 "7.13" vira "743"; PIS/COFINS/IR saem com os valores trocados) - recuperadas por um recorte dedicado em zoom 8x de cada linha (`_ocr_recut_biocontrol`), validado contra a imagem real da nota nº 36345 (BONI TRANSPORTES -> tomador, R$5.200,00, dedetização/controle de pragas). Serviço mapeado para o item LC116 "7.13" (Dedetização/desinsetização/controle de pragas urbanas), confirmado tanto pela discriminação ("TERMONEBULIZAÇÃO... CONTROLE DE BARATAS, MOSCAS, FORMIGAS... E ROEDORES") quanto pelo recorte dedicado do Código LC 116. ISS não retido pelo tomador (pago pelo prestador via guia própria) mas o valor ainda sai informado na nota (5% = R$260,00) - extraído do recorte, não fabricado nem zerado.
 LAYOUT_DANFE_PRODUTO = 'danfe_produto'  # NF-e Modelo 55 (DANFE Estadual) - documento de PRODUTO/mercadoria tributado por ICMS/IPI, estruturalmente DIFERENTE de qualquer NFS-e (não tem "discriminação"/"código de serviço" único - tem tabela de N itens com NCM/CFOP, grade de ICMS e bloco "TRANSPORTADOR/VOLUMES TRANSPORTADOS"). Retorna um objeto `NfeProduto` em vez de `Nfse` (ver `parse()`/`_parse_danfe_produto`). Detecção ESTRUTURAL (não gated a nenhum emitente específico - decisão do usuário, pois notas de compra de mercadoria vêm de fornecedores variados, ao contrário do padrão "prestador fixo" de faturas de locação recorrentes): exige a combinação "DANFE" + "Documento Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA" - assinatura mandada pelo padrão nacional SEFAZ/CONFAZ para TODO Modelo 55, ausente de qualquer NFS-e. Checada bem no TOPO de `_detect_layout`/`_detect_layout_page`, antes até do check da DANFSe Nacional: o rótulo genérico "FATURA/DUPLICATA" (presente em qualquer DANFE) colidia com a marca da Localiza (`LAYOUT_LOCALIZA`), e "CHAVE DE ACESSO" colidiria com o fallback amplo da DANFSe Nacional - achado real ao revisar a nota nº 52.136 (GRAN COFFEE COM. LOC. E SERVICOS -> SINDICATO DOS DELEGADOS DE POLICIA, venda de café, R$595,00): sem esta detecção no topo, a nota caía inteira em `LAYOUT_LOCALIZA` e saía com tomador não identificado, valor zerado e o prestador hardcoded errado ("LOCALIZA RENT A CAR S/A" - nome de OUTRO emitente fixo). Emitente extraído do bloco livre (letterhead) impresso entre o canhoto/recibo e o box "DANFE" (CNPJ/IE vêm de rótulos isolados na grade, não do letterhead); destinatário da grade "DESTINATÁRIO/REMETENTE" (rótulos padronizados nacionalmente); tabela de itens modelada como lista (`ItemProduto`) - nesta nota só há 1 item, mas o parser da linha da tabela generaliza para N linhas repetidas. Grade "CÁLCULO DE IMPOSTO" tem um quirk de ordem: o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de rótulos) tem seu VALOR deslocado para o FIM do 2º bloco de valores (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) - mesma família geral de "labels dumped, depois values dumped" já vista em várias NFS-e, faceta nova aqui. Chave de acesso é a REAL do documento (extraída do código de barras/texto, não gerada por checksum como no `NfeTransformer` workaround) - ver `src/transformers/nfe_produto_transformer.py`.
 LAYOUT_SANTOS = 'santos_sp'  # Prefeitura Municipal de Santos/SP (plataforma Ginfes, santos.ginfes.com.br - mesma plataforma do LAYOUT_GUARULHOS, mas nota DIGITAL/pdfminer, não escaneada). Achado real: nota nº 16, IN.OUT MOVEIS E DECORACOES LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS LTDA, R$6.666,86, dedicado por município (não pela plataforma) para não colidir com futuras notas Ginfes de outras cidades. Blocos "Prestador de Serviço"/"Tomador de Serviço" com rótulo→valor adjacente (label, quebra, valor) para quase todo campo, mas em ORDEM VISUAL de 2 colunas (não top-to-bottom) - "Tomador de Serviço" (cabeçalho de seção) aparece no MEIO do próprio bloco do tomador (entre Nome/Razão Social e Endereço), então o fatiamento usa a 2ª ocorrência do rótulo "CPF/CNPJ:" como início do bloco tomador (mesmo princípio de "N-ésima ocorrência = N-ésima entidade" já usado em outros layouts), não o cabeçalho de seção. Endereço do prestador vem com o filler "Sem tipo de logradouro " prepended pela plataforma quando o logradouro não tem um tipo reconhecido (removido antes de gravar). Duas grades "rótulos em cima, valores embaixo" (padrão Ginfes/Monte Santo): "Identificação Prestação de Serviços"/"Detalhamento de Valores (R$)" - a 2ª tem 13 rótulos fixos (Valor do Serviço...Valor Líquido) mas só 10 valores nesta nota, porque ISSQN/IBS/CBS saem literalmente EM BRANCO (nenhum caractere, nem "0,00" nem "*") quando o prestador é optante do Simples Nacional (ISS pago via guia única/DAS, não itemizado) - mapeados por POSIÇÃO FIXA pelos 2 extremos (9 primeiros rótulos = 9 primeiros valores; Valor Líquido = ÚLTIMO valor, robusto a quantos dos 3 últimos rótulos estiverem em branco), com ISSQN mantido em 0,00 SEMPRE (decisão do usuário: nunca fabricar/derivar de Base×Alíquota mesmo quando ambos saem limpos - mesmo critério já usado no fix de Aracaju/WebISS). IBS/CBS (campos novos da Reforma Tributária) não têm tag no ABRASF 2.01 - descartados.
+LAYOUT_GOIANIA = 'goiania_go'  # Prefeitura Municipal de Goiânia/GO (plataforma ISSNet Online, issnetonline.com.br/goiania — MESMO fornecedor/marca "ISSNet" já usada por LAYOUT_CUIABA, cidade diferente). Achado real: nota nº 4, ID Producao Musical Ltda -> ELOS ESTUDIO E SERVICOS LTDA, R$600,00 (valor_servicos saía zerado, ValorIss/ValorIr saíam 600,00 fabricados/trocados, RazaoSocial do prestador saía "Série do Documento" - um rótulo solto do cabeçalho -, e RazaoSocial do tomador saía como o próprio endereço dele). CAUSA-RAIZ: a nota inteira colidia com `LAYOUT_CUIABA` porque o detector daquele layout casava a palavra solta "ISSNet" (sem exigir "Cuiabá" por perto) em QUALQUER documento que a contivesse - e "issnetonline.com.br/goiania" contém "issnet" como substring (mesma família de bug já documentada em `gotcha-layout-detection-collision.md`: nunca detectar por marca de PLATAFORMA/SaaS compartilhada por vários municípios, só pelo nome do município - mesma decisão já tomada para Mata de São João/SAATRI e Rosário da Limeira/FUTURIZE). Fix: a marca "ISSNet" de Cuiabá passou a exigir que NÃO seja seguida de "online" (`ISSNet(?!\s*[Oo]nline)`), preservando o fallback OCR de Cuiabá (nenhum mock real daquele layout tem "online" colado). PDF DIGITAL cujo `pdfminer.extract_text()` produz uma ordem de leitura completamente fora de ordem (linhas de colunas visuais diferentes intercaladas de forma não-monotônica - pior que o quirk "labels dumped, values dumped" de outros layouts: aqui nem um mapeamento por índice fixo é confiável) - usa `_reconstruir_texto_por_coordenadas` (mesma técnica de reconstrução por LTChar já usada em `camacari_sisloc`) para obter o texto na ordem visual real antes de qualquer extração de campo. Após a reconstrução, o bloco do PRESTADOR (coluna esquerda do cabeçalho) fica intercalado linha a linha com os METADADOS do cabeçalho (coluna direita: Data de Geração/Competência/Cód. Autenticidade), pois ambos compartilham a mesma faixa de Y - cada regex de campo do prestador pula exatamente 1 linha (a do metadado concorrente) até o valor real. Bloco do TOMADOR já vem limpo (rótulo\s*:\s*valor, sem essa intercalação). Bloco "Dados do Intermediário de Serviços" vem sempre vazio nesta plataforma (raiz do "Intermediário fantasma" no bug original, que inventava um intermediário a partir de texto solto de outra seção) - mapeado para `None`.
 LAYOUT_VINHEDO = 'vinhedo_sp'  # Prefeitura Municipal de Vinhedo/SP (plataforma Balker, vinhedo.balker.com.br). Achado real: nota nº 139, WEDO DECOR LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, R$1.049,79 (fallback genérico saía com valor_servicos zerado, valor_iss fabricado, UF do prestador "BA", município caindo no fallback Salvador/BA - Vinhedo ausente de KNOWN_CITIES -, e a razão social do TOMADOR saindo como "País: BRASIL"). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com rótulo→valor adjacente (label + dois-pontos, mesma linha ou linha seguinte) para quase todo campo - mas o cabeçalho de seção "TOMADOR DE SERVIÇOS" sai DESLOCADO no MEIO do próprio bloco do tomador (entre as Inscrições e o Endereço), mesmo quirk do Santos/SP; fatiamento usa a 2ª ocorrência de "Razão Social/Nome:" como início do bloco tomador. Data de Emissão em formato "DD/MMM/AAAA - HH:MM:SS" com mês abreviado em PT-BR ("28/JUL/2026"), único layout com esse formato - usa o dicionário `_MESES_PT` já existente. Grade de Retenções Federais + Base/Alíquota/ISS (2 linhas x 7 colunas, sem linhas de separação): o pdfminer emite cada VALOR defasado em 1 coluna em relação ao próprio rótulo (mesma família de quirk "labels dumped, values dumped", mas aqui por DESLOCAMENTO DE COLUNA em vez de por blocos separados) - ordem real observada no texto: INSS, IRRF, CSLL, PIS, COFINS, Outras Retenções, Base de Cálculo, Deduções, Alíquota, Vlr ISS, IBS, CBS, Vlr Líquido (mapeado por índice fixo, documentado no código). "Desc. Incondicional" nunca aparece impresso nesta plataforma (nem "0,00" nem placeholder) - mantido em 0,00 (default do model). IBS/CBS (Reforma Tributária) não têm tag no ABRASF 2.01 - descartados após a leitura.
 
 
@@ -345,7 +346,16 @@ class SPPdfExtractor:
             return LAYOUT_GUINCHO_CIDADE
         if re.search(r'B\.F\.\s*SERVICOS\s*AMBIENTAIS|B\.F\.\s*SERVIÇOS\s*AMBIENTAIS', t, re.IGNORECASE):
             return LAYOUT_BF_AMBIENTAIS
-        if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet', t, re.IGNORECASE):
+        # Goiânia/GO ANTES do check de Cuiabá abaixo: ambos compartilham a
+        # mesma plataforma ISSNet Online (issnetonline.com.br/<cidade>) - a
+        # marca bruta "ISSNet" colidia com QUALQUER município nessa
+        # plataforma (achado real: nota Goiânia nº 4 caindo inteira em
+        # LAYOUT_CUIABA). Detecção pelo nome do MUNICÍPIO, não pela marca da
+        # plataforma - mesma decisão já tomada para Mata de São João/SAATRI
+        # e Rosário da Limeira/FUTURIZE.
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+GOI[ÂA]NIA', t, re.IGNORECASE) or re.search(r'issnetonline\.com\.br/goiania', t, re.IGNORECASE):
+            return LAYOUT_GOIANIA
+        if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet(?!\s*[Oo]nline)', t, re.IGNORECASE):
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
@@ -581,7 +591,16 @@ class SPPdfExtractor:
             return LAYOUT_GUINCHO_CIDADE
         if re.search(r'B\.F\.\s*SERVICOS\s*AMBIENTAIS|B\.F\.\s*SERVIÇOS\s*AMBIENTAIS', t, re.IGNORECASE):
             return LAYOUT_BF_AMBIENTAIS
-        if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet', t, re.IGNORECASE):
+        # Goiânia/GO ANTES do check de Cuiabá abaixo: ambos compartilham a
+        # mesma plataforma ISSNet Online (issnetonline.com.br/<cidade>) - a
+        # marca bruta "ISSNet" colidia com QUALQUER município nessa
+        # plataforma (achado real: nota Goiânia nº 4 caindo inteira em
+        # LAYOUT_CUIABA). Detecção pelo nome do MUNICÍPIO, não pela marca da
+        # plataforma - mesma decisão já tomada para Mata de São João/SAATRI
+        # e Rosário da Limeira/FUTURIZE.
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+GOI[ÂA]NIA', t, re.IGNORECASE) or re.search(r'issnetonline\.com\.br/goiania', t, re.IGNORECASE):
+            return LAYOUT_GOIANIA
+        if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet(?!\s*[Oo]nline)', t, re.IGNORECASE):
             return LAYOUT_CUIABA
         if re.search(r'Data\s+Fato\s+Gerador|MUNICIPIO\s+DE\s+BARREIRAS', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
@@ -769,6 +788,12 @@ class SPPdfExtractor:
         elif layout == LAYOUT_CUIABA:
             m = re.search(r'Data\s+de\s+Compet[eê]ncia\s*\n\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
+        elif layout == LAYOUT_GOIANIA:
+            # Mesmo quirk de linha intercalada da emissão (ver
+            # `_extrair_data_emissao`): a linha entre o rótulo e o valor
+            # pertence à coluna do prestador (endereço), não ao cabeçalho.
+            m = re.search(r'Data\s+de\s+Compet[êe]ncia\s*\n[^\n]*\n\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m: result = _parse_dmy(m.group(1)) or None
         elif layout == LAYOUT_BARREIRAS:
             m = re.search(r'Data\s+Fato\s+Gerador\s*\n\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m: result = _parse_dmy(m.group(1)) or None
@@ -951,6 +976,17 @@ class SPPdfExtractor:
                                          int(m.group(4)), int(m.group(5)), int(m.group(6)))
                     except ValueError:
                         pass
+
+        if self.layout == LAYOUT_GOIANIA:
+            # "Data de Geração da NFS-e\nID Producao Musical Ltda\n27/07/2026
+            # 13:37:24" — o rótulo (coluna direita do cabeçalho) e o valor
+            # caem em linhas separadas na reconstrução por coordenada porque
+            # a linha intercalada pertence à coluna do PRESTADOR (esquerda),
+            # que compartilha a mesma faixa de Y.
+            m = re.search(r'Data\s+de\s+Gera[çc][ãa]o\s+da\s+NFS-e\s*\n[^\n]*\n\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
 
         if self.layout == LAYOUT_ARMAC_LOCACAO:
             # "Data Documento: | 10.07.2026" (datas com ponto no OCR da ARMAC).
@@ -1281,6 +1317,13 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_VINHEDO:
             # "Nº Nota\n139\nSerie 2" — rótulo/valor em linhas separadas.
             m = re.search(r'N[°º]?\s*Nota\s*\n+\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_GOIANIA:
+            # "Número da Nota Fiscal\nFone: ...\n4" — o texto reconstruído por
+            # coordenada intercala a linha do telefone (letterhead da coluna
+            # esquerda) entre o rótulo e o valor real (mesma faixa de Y).
+            m = re.search(r'N[uú]mero\s+da\s+Nota\s+Fiscal\s*\n[^\n]*\n\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_SANTOS:
@@ -1760,6 +1803,16 @@ class SPPdfExtractor:
                 if disc:
                     return disc
 
+        if self.layout == LAYOUT_GOIANIA:
+            # "Descrição dos Serviços\nReferente a gravacao de voz para o
+            # jingle..." — bloco de 1 linha entre o rótulo e a próxima linha
+            # em branco/seção.
+            m = re.search(r'Descri[çc][ãa]o\s+dos\s+Servi[çc]os\s*\n(.+?)\s*\n', t, re.IGNORECASE)
+            if m:
+                disc = m.group(1).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_MATA_SAO_JOAO:
             # "Discriminação do(s) Serviço(s)\n\nSERVIÇOS DE MARKETING DIGITAL\n\n
             # Classificação do Serviço (LEI 116/2003)..." — bloco entre o rótulo
@@ -2201,6 +2254,14 @@ class SPPdfExtractor:
             # operação: código "0000" (não é serviço da lista da LC116).
             return "0000"
 
+        if self.layout == LAYOUT_GOIANIA:
+            # "Atividade do Município ...\n1212 - 12.12 - Execução de
+            # música. -   2,01  1212 125031000 9001902" — item da LC116/2003
+            # ("12.12") é o 2º número da linha de valor, entre hifens.
+            m = re.search(r'Atividade\s+do\s+Munic[íi]pio[^\n]*\n\s*\d+\s*-\s*(\d{1,2})\.(\d{2})\s*-', t, re.IGNORECASE)
+            if m:
+                return m.group(1).zfill(2) + m.group(2)
+
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             # A nota imprime "Código Tributação do Município: 9901" e
             # "Código do Item Lista de Serviço (LC 116): 9901" — "9901" não é
@@ -2426,6 +2487,16 @@ class SPPdfExtractor:
             # (uma ou mais quebras de linha). 1ª ocorrência já é a correta em
             # ambas as plataformas (Vinhedo repete o mesmo valor no rodapé).
             m = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*\n+\s*([A-Z0-9]+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip().upper()
+
+        if self.layout == LAYOUT_GOIANIA:
+            # "Cód. de Autenticidade\nGO\ndestravacontabilidade@gmail.com
+            # 71B42E967" — o valor cai na MESMA linha do e-mail do prestador
+            # (coluna esquerda concorrente na mesma faixa de Y). O trecho
+            # entre o rótulo e o valor fica case-insensitive só até a
+            # captura (escopo `(?i:...)`) para o e-mail em minúsculas nunca
+            # ser confundido com o código (sempre maiúsculo/numérico).
+            m = re.search(r'(?i:C[óo]d\.\s*de\s+Autenticidade\s*\n(?:[^\n]*\n){1,3}?[^\n]*?)([A-Z0-9]{8,10})\s*\n', t)
             if m: return m.group(1).strip().upper()
 
         if self.layout == LAYOUT_BIOCONTROL:
@@ -2762,6 +2833,19 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_vinhedo(t, is_prestador)
+
+        if self.layout == LAYOUT_GOIANIA:
+            if is_intermediario:
+                # Bloco "Dados do Intermediário de Serviços" vem sempre vazio
+                # nesta plataforma (CNPJ/IM/Razão Social em branco) - a
+                # extração genérica antiga inventava um intermediário a
+                # partir de texto solto de outra seção (achado real: nota
+                # nº 4, "Intermediário fantasma" com CNPJ 0 e Razão Social
+                # "Goiânia - Goiás", vazada do rótulo "Município Incidência").
+                return None
+            if is_prestador:
+                return self._extrair_prestador_goiania(t)
+            return self._extrair_tomador_goiania(t)
 
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
             if is_intermediario:
@@ -4722,6 +4806,129 @@ class SPPdfExtractor:
         r'^(?:CPF/CNPJ|Inscri[çc][ãa]o(?:\s+Municipal)?|NIF|Nome/Raz[ãa]o\s+Social|'
         r'Endere[çc]o|Complemento|CEP|Munic[íi]pio|E-?mail|N[úu]mero|Bairro|UF|'
         r'Pa[íi]s|Telefone|Tomador\s+de\s+Servi[çc]o)\s*:?\s*$', re.IGNORECASE)
+
+    def _extrair_prestador_goiania(self, t: str) -> Entidade:
+        """Extrai o prestador de uma NFS-e de Goiânia/GO (plataforma ISSNet
+        Online), a partir do texto já reconstruído por coordenada.
+
+        O bloco "Dados do Prestador de Serviço" (coluna esquerda do
+        cabeçalho) fica intercalado LINHA A LINHA com os metadados da coluna
+        direita (Data de Geração/Competência/Cód. de Autenticidade), pois as
+        duas colunas compartilham a mesma faixa de Y — cada regex de campo
+        pula exatamente 1 linha (a do metadado concorrente) até o valor
+        real, em vez de rótulo/valor ficarem adjacentes como no bloco do
+        tomador (ver `_extrair_tomador_goiania`)."""
+        m_bloco = re.search(
+            r'Dados\s+do\s+Prestador\s+de\s+Servi[çc]o(.*?)Identifica[çc][ãa]o\s+da\s+Nota\s+Fiscal',
+            t, re.IGNORECASE | re.DOTALL)
+        bloco = m_bloco.group(1) if m_bloco else t
+
+        m_razao = re.search(r'Data\s+de\s+Gera[çc][ãa]o\s+da\s+NFS-e\s*\n(.+?)\s*\n', bloco, re.IGNORECASE)
+        razao_social = m_razao.group(1).strip() if m_razao else "Prestador Não Identificado"
+
+        m_end = re.search(r'Data\s+de\s+Compet[êe]ncia\s*\n(.+?)\s*\n', bloco, re.IGNORECASE)
+        endereco_raw = m_end.group(1).strip() if m_end else ''
+        # Número inline separado por vírgula (ex.: "Rua T 33,188 Lote: 4E -
+        # Quadra: 85 - Setor Bueno") — o complemento e o bairro (último
+        # segmento após " - ") vêm colados no resto da mesma linha.
+        m_num = re.match(r'^(.*?),\s*(\d+)\s*(.*)$', endereco_raw)
+        if m_num:
+            logradouro, numero, resto = m_num.group(1).strip(), m_num.group(2), m_num.group(3).strip(' -')
+        else:
+            logradouro, numero, resto = (endereco_raw or "Não informado"), "S/N", ''
+        if ' - ' in resto:
+            complemento, bairro = resto.rsplit(' - ', 1)
+        else:
+            complemento, bairro = resto, "Não informado"
+
+        m_cep = re.search(
+            r'CEP\s+(\d{5}-?\d{3})\s*-\s*Fone:\s*(\(\d+\)[\d-]+)\s*-\s*(.+?)/\s*\n[^\n]*\n\s*([A-Z]{2})\s*\n',
+            bloco, re.IGNORECASE)
+        cep, telefone, municipio, uf = m_cep.groups() if m_cep else ('00000000', None, 'Não informado', 'GO')
+
+        m_email = re.search(r'([\w.+-]+@[\w.-]+\.\w+)', bloco)
+        email = m_email.group(1) if m_email else None
+
+        m_im_cnpj = re.search(
+            r'Inscri[çc][ãa]o\s+Municipal\s+(\d+)\s*-\s*CPF/CNPJ[^\n]*\n\s*([\d./-]+)\s*\n',
+            bloco, re.IGNORECASE)
+        inscricao, cnpj_raw = m_im_cnpj.groups() if m_im_cnpj else (None, '00000000000000')
+        cnpj = re.sub(r'\D', '', cnpj_raw) or "00000000000000"
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=inscricao,
+            razao_social=razao_social,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento or None,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=re.sub(r'\D', '', cep) or "00000000",
+            ),
+            email=email,
+            telefone=telefone,
+        )
+
+    def _extrair_tomador_goiania(self, t: str) -> Entidade:
+        """Extrai o tomador de uma NFS-e de Goiânia/GO (plataforma ISSNet
+        Online). Diferente do bloco do prestador, aqui rótulo e valor ficam
+        SEMPRE adjacentes na mesma linha ("Rótulo : valor") — sem a
+        intercalação por coluna concorrente do bloco do prestador."""
+        m_bloco = re.search(
+            r'Dados\s+do\s+Tomador\s+de\s+Servi[çc]os(.*?)Dados\s+do\s+Intermedi[áa]rio',
+            t, re.IGNORECASE | re.DOTALL)
+        bloco = m_bloco.group(1) if m_bloco else t
+
+        m_cnpj = re.search(r'CNPJ/CPF\s*:[ \t]*([\d./-]+)', bloco, re.IGNORECASE)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "00000000000000"
+
+        m_im = re.search(r'\bIM\s*:[ \t]*([^\n]*?)[ \t]*\n', bloco, re.IGNORECASE)
+        inscricao = m_im.group(1).strip() or None if m_im else None
+
+        m_razao = re.search(r'Raz[ãa]o\s+Social\s*:[ \t]*(.+?)\s*\n', bloco, re.IGNORECASE)
+        razao_social = m_razao.group(1).strip() if m_razao else "Tomador Não Identificado"
+
+        m_end = re.search(r'Endere[çc]o\s*:[ \t]*(.+?)\s{2,}N[uú]mero\s*:[ \t]*(\S*)', bloco, re.IGNORECASE)
+        logradouro, numero = m_end.groups() if m_end else ("Não informado", "S/N")
+        numero = numero or "S/N"
+
+        m_comp = re.search(r'Complemento\s*:[ \t]*(.*?)\s{2,}Bairro\s*:[ \t]*(\S*)', bloco, re.IGNORECASE)
+        complemento, bairro = m_comp.groups() if m_comp else ('', "Não informado")
+        bairro = bairro or "Não informado"
+
+        m_cep = re.search(r'CEP\s*:[ \t]*([\d-]*)\s{2,}Cidade/UF\s*:[ \t]*(.+?)/\s*([A-Z]{2})', bloco, re.IGNORECASE)
+        cep, municipio, uf = m_cep.groups() if m_cep else ('00000000', "Não informado", "GO")
+
+        m_tel_email = re.search(r'Telefone\s*:[ \t]*([^\n]*?)\s*E-mail\s*:[ \t]*(\S*)', bloco, re.IGNORECASE)
+        telefone, email = m_tel_email.groups() if m_tel_email else (None, None)
+        telefone = telefone or None
+        email = email or None
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=inscricao,
+            razao_social=razao_social,
+            endereco=Endereco(
+                logradouro=logradouro.strip(),
+                numero=numero.strip(),
+                complemento=complemento.strip() or None,
+                bairro=bairro.strip(),
+                codigo_municipio=mun_cod,
+                municipio=municipio.strip(),
+                uf=uf,
+                cep=re.sub(r'\D', '', cep) or "00000000",
+            ),
+            email=email,
+            telefone=telefone,
+        )
 
     def _extrair_entidade_vinhedo(self, t: str, is_prestador: bool) -> Entidade:
         """Extrai prestador/tomador de uma NFS-e de Vinhedo/SP (plataforma Balker).
@@ -7609,6 +7816,70 @@ class SPPdfExtractor:
                 iss_retido=iss_retido,
                 valor_iss_retido=iss if iss_retido else 0.0,
                 valor_liquido_nfse=liquido or serv,
+            )
+
+        if self.layout == LAYOUT_GOIANIA:
+            # Grade "Detalhamento dos Tributos" (2 linhas): linha 1 = Vl.
+            # Total dos Serviços/Desconto Incondicionado/Deduções/Base de
+            # Cálculo/Total do ISSQN/ISSQN Retido(Sim-Não)/Desconto
+            # Condicionado; linha 2 = PIS/COFINS/INSS/IRRF/CSLL/Outras
+            # Retenções/Vl. ISSQN Retido/Vl. Líquido da Nota Fiscal. Cada
+            # linha de valores fica exatamente 1 linha abaixo do respectivo
+            # cabeçalho na reconstrução por coordenada — mapeado por ÍNDICE
+            # FIXO (mesma convenção de Santos/Vinhedo). Achado real: o
+            # `extract_text()` padrão (sem reconstrução) embaralha esta
+            # grade de forma NÃO-monotônica (nem um deslocamento fixo de
+            # coluna resolve, ao contrário do Vinhedo) — só a reconstrução
+            # por coordenada (`_reconstruir_texto_por_coordenadas`) produz
+            # uma ordem confiável.
+            m1 = re.search(r'Vl\.\s*Total\s+dos\s+Servi[çc]os[^\n]*\n(.+?)\n', t, re.IGNORECASE)
+            vals1 = re.findall(r'R\$\s*([\d.,]+)', m1.group(1)) if m1 else []
+            iss_retido = bool(re.search(r'\bSim\b', m1.group(1), re.IGNORECASE)) if m1 else False
+
+            m2 = re.search(r'PIS\s+COFINS\s+INSS\s+IRRF\s+CSLL[^\n]*\n(.+?)\n', t, re.IGNORECASE)
+            vals2 = re.findall(r'R\$\s*([\d.,]+)', m2.group(1)) if m2 else []
+
+            servicos = self._parse_valor(vals1[0]) if len(vals1) > 0 else 0.0
+            desconto_incond = self._parse_valor(vals1[1]) if len(vals1) > 1 else 0.0
+            deducoes = self._parse_valor(vals1[2]) if len(vals1) > 2 else 0.0
+            base = self._parse_valor(vals1[3]) if len(vals1) > 3 else 0.0
+            iss = self._parse_valor(vals1[4]) if len(vals1) > 4 else 0.0
+            desconto_cond = self._parse_valor(vals1[5]) if len(vals1) > 5 else 0.0
+
+            pis = self._parse_valor(vals2[0]) if len(vals2) > 0 else 0.0
+            cofins = self._parse_valor(vals2[1]) if len(vals2) > 1 else 0.0
+            inss = self._parse_valor(vals2[2]) if len(vals2) > 2 else 0.0
+            irrf = self._parse_valor(vals2[3]) if len(vals2) > 3 else 0.0
+            csll = self._parse_valor(vals2[4]) if len(vals2) > 4 else 0.0
+            outras_ret = self._parse_valor(vals2[5]) if len(vals2) > 5 else 0.0
+            iss_ret_valor = self._parse_valor(vals2[6]) if len(vals2) > 6 else 0.0
+            liquido = self._parse_valor(vals2[7]) if len(vals2) > 7 else servicos
+
+            # "Alíquota Item da LC116/2003 Cód. NBS Cód. CNAE" (cabeçalho) e
+            # "1212 - 12.12 - Execução de música. -   2,01  1212 125031000
+            # 9001902" (valor) — "2,01" é o único token no formato NN,NN
+            # (vírgula decimal) dessa linha; "12.12"/"1212"/os códigos NBS/
+            # CNAE usam ponto ou são inteiros puros.
+            m_aliq = re.search(r'Al[íi]quota\s+Item\s+da\s+LC116/2003[^\n]*\n.*?(\d{1,2},\d{2})', t, re.IGNORECASE)
+            aliquota = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
+
+            return Valores(
+                valor_servicos=servicos,
+                valor_deducoes=deducoes,
+                valor_pis=pis,
+                valor_cofins=cofins,
+                valor_csll=csll,
+                valor_inss=inss,
+                valor_ir=irrf,
+                outras_retencoes=outras_ret,
+                base_calculo=base or servicos,
+                aliquota=aliquota,
+                valor_iss=iss,
+                iss_retido=iss_retido,
+                valor_iss_retido=iss_ret_valor,
+                valor_liquido_nfse=liquido,
+                desconto_incondicionado=desconto_incond,
+                desconto_condicionado=desconto_cond,
             )
 
         if self.layout == LAYOUT_VINHEDO:
@@ -10827,13 +11098,14 @@ class SPPdfExtractor:
             # LAYOUT_DANFE_PRODUTO/`_parse_danfe_produto`.
             return self._parse_danfe_produto()
 
-        if self.layout == LAYOUT_CAMACARI_SISLOC:
+        if self.layout in (LAYOUT_CAMACARI_SISLOC, LAYOUT_GOIANIA):
             # A ordem de leitura do `extract_text()` padrão está quebrada
             # nesta plataforma (rótulos e valores em blocos separados no
             # fluxo do PDF) — reconstrói o texto por coordenada de caractere
             # antes de qualquer extração de campo. `self.layout` já está
-            # detectado (a marca "SISLOC"/"Benefix" sobrevive no texto
-            # quebrado), então é seguro trocar `raw_text` aqui.
+            # detectado (a marca "SISLOC"/"Benefix" ou "Goiânia"/"ISSNet
+            # Online" sobrevive no texto quebrado), então é seguro trocar
+            # `raw_text` aqui.
             texto_reconstruido = self._reconstruir_texto_por_coordenadas()
             if texto_reconstruido.strip():
                 self.raw_text = texto_reconstruido

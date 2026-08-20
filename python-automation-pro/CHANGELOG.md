@@ -15,6 +15,31 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Adicionado
 
+- Novo layout **Goiânia/GO** (`goiania_go`) — plataforma ISSNet Online
+  (issnetonline.com.br/goiania). Nota real nº 4 (ID Producao Musical Ltda →
+  ELOS ESTUDIO E SERVICOS LTDA, R$ 600,00) caía inteira em `LAYOUT_CUIABA`:
+  o detector daquele layout casava a palavra solta "ISSNet" (sem exigir
+  "Cuiabá" por perto) em qualquer documento que a contivesse, e
+  "issnetonline.com.br/goiania" contém "issnet" como substring — a nota
+  saía com `valor_servicos` zerado, `ValorIss`/`ValorIr` trocados (ambos
+  600,00; o real é ValorIss=12,06/ValorIr=0,00), razão social do prestador
+  como "Série do Documento" (rótulo solto do letterhead), razão social do
+  tomador igual ao próprio endereço dele, e um Intermediário fantasma
+  inventado a partir do rótulo "Município Incidência".
+- **Fix — colisão de detecção Goiânia/GO × Cuiabá/MT (`cuiaba_issnet`)**: a
+  marca "ISSNet" de Cuiabá passou a exigir que não seja seguida de "online"
+  (`ISSNet(?!\s*[Oo]nline)`); Goiânia agora detectada pelo nome do
+  MUNICÍPIO, não pela marca da plataforma (compartilhada por várias
+  cidades) — mesma decisão já tomada para Mata de São João/SAATRI e
+  Rosário da Limeira/FUTURIZE. PDF digital cuja ordem de leitura do
+  `extract_text()` padrão sai embaralhada de forma NÃO-monotônica (nem
+  índice fixo resolve, diferente do Vinhedo) — usa
+  `_reconstruir_texto_por_coordenadas` (mesma técnica do
+  `camacari_sisloc`) antes de extrair qualquer campo; após a
+  reconstrução, o bloco do PRESTADOR fica intercalado linha a linha com os
+  metadados do cabeçalho (mesma faixa de Y) — cada regex de campo pula 1
+  linha até o valor real. Suíte 265→268 verdes; teste novo
+  `test_goiania_go_layout.py`.
 - Novo layout **Vinhedo/SP** (`vinhedo_sp`) — plataforma Balker
   (vinhedo.balker.com.br). Nota real nº 139 (WEDO DECOR LTDA → NAUTICA
   INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, R$ 1.049,79) caía no
