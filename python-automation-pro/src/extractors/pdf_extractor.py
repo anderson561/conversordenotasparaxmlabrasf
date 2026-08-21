@@ -2011,8 +2011,19 @@ class SPPdfExtractor:
             # transparência fiscal do IBPT ("Valor aproximado dos tributos R$
             # X Fonte IBPT") — removida por não fazer parte da discriminação
             # real do serviço prestado.
+            #
+            # Achado real 2026-08-21 (nota 2418/LUNITECK): nesta digitalização
+            # os campos finais do bloco do PRESTADOR ("Inscrição Estadual"/
+            # "Email:", que deveriam vir ANTES de "DISCRIMINAÇÃO DOS
+            # SERVIÇOS") saem fisicamente DESLOCADOS para DEPOIS do cabeçalho
+            # de discriminação no texto OCR — sem parar antes deles, a
+            # captura engolia "SERVS.INFORMATICA MANT.ST.TEL. Inscrição
+            # Estadual O Erail:" inteiro como se fosse a descrição do
+            # serviço. Param também nesses 2 rótulos vazados, além do já
+            # existente "VALOR TOTAL DA NOTA".
             m = re.search(
-                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)(?=\n\s*VALOR\s+TOTAL\s+DA\s+NOTA|$)',
+                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)'
+                r'(?=\n\s*VALOR\s+TOTAL\s+DA\s+NOTA|\n\s*Inscri[çc][ãa]o\s+Estadual|\n\s*E-?\s*[Mm]ail|\n\s*Erail|$)',
                 t, re.IGNORECASE | re.DOTALL)
             if m:
                 texto = re.sub(r'\s+', ' ', m.group(1)).strip()
@@ -2736,15 +2747,50 @@ class SPPdfExtractor:
             # qualquer candidato legível, no sentinela 'XXXX-XXXX' — honesto
             # com a falta de dado, em vez de fabricar um código com o nome da
             # prefeitura.
-            m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
-            if m:
-                candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
-                candidato_invalido = (
+            #
+            # Achado real 2026-08-21 (nota 2418/LUNITECK, mesmo tipo de scan
+            # degradado): a lista de exclusão por igualdade EXATA vira um
+            # jogo de whack-a-mole — desta vez o OCR leu "PRESTADOR" como
+            # "ERESTADOR" (1º caractere trocado), que não bate nenhuma das
+            # palavras da lista mas ainda É o mesmo rótulo do documento, não
+            # um código. Em vez de continuar colecionando variantes exatas,
+            # o candidato também é rejeitado quando COMPARTILHA um sufixo OU
+            # prefixo de 6+ caracteres com qualquer rótulo conhecido — OCR
+            # tende a preservar o MEIO/FIM de uma palavra e corromper só a
+            # borda (aqui, "ERESTADOR"/"PRESTADOR" batem em "...RESTADOR"),
+            # e um código de verificação real (token essencialmente
+            # aleatório) tem probabilidade desprezível de coincidir por 6+
+            # caracteres com uma palavra do português do próprio documento.
+            def _parece_rotulo_documento_salvador(candidato: str) -> bool:
+                rotulos = (
                     'ALVADOR', 'PRESTADOR', 'TOMADOR',
                     'PREFEITURA', 'MUNICIPAL', 'SECRETARIA', 'FAZENDA',
                 )
-                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato not in candidato_invalido:
-                    return candidato
+                for rotulo in rotulos:
+                    if candidato == rotulo:
+                        return True
+                    if len(candidato) >= 6 and len(rotulo) >= 6 and (
+                        candidato[-6:] == rotulo[-6:] or candidato[:6] == rotulo[:6]
+                    ):
+                        return True
+                return False
+
+            m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
+            if m:
+                candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
+                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato):
+                    if not _parece_rotulo_documento_salvador(candidato):
+                        return candidato
+                    # Achado real 2026-08-21 (mesma nota 2418): quando o
+                    # candidato ADJACENTE ao rótulo já é reconhecido como
+                    # rótulo do documento (não um código), os padrões
+                    # GENÉRICOS mais abaixo (compartilhados por ~30 layouts,
+                    # que toleram espaço/tab dentro do candidato) são AINDA
+                    # mais permissivos e capturam um trecho pior, mais longo
+                    # ("ERESTADOR DE SERVIÇOS" → "ERESTADORDESERVI" depois de
+                    # remover os espaços) — encerra aqui com o sentinela
+                    # honesto em vez de deixar cair nesse fallback mais fraco.
+                    return 'XXXX-XXXX'
 
         if self.layout == LAYOUT_CUIABA:
             # ISSNet Cuiabá: o código de autenticidade (ex.: "3B3DC3576") aparece
@@ -5579,7 +5625,12 @@ class SPPdfExtractor:
             return m.group(1).strip() if m else None
 
         def _cnpj_cpf(bloco: str) -> str:
-            m = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', bloco)
+            # Separador `.` às vezes sai como `,` no OCR (achado real
+            # 2026-08-21, nota 2418/LUNITECK: "07,295.620/0001-44" — só o 1º
+            # ponto virou vírgula) — sem tolerar isso, o regex não casa NADA
+            # e o CNPJ do prestador cai inteiro no sentinela
+            # "00000000000000", mesmo com o valor real legível no texto.
+            m = re.search(r'(\d{2}[.,]\d{3}[.,]\d{3}/\d{4}-\d{2}|\d{3}[.,]\d{3}[.,]\d{3}-\d{2})', bloco)
             return re.sub(r'\D', '', m.group(1)) if m else '00000000000000'
 
         # Rótulo e valor às vezes vêm na MESMA linha ("Nome/Razão SAO PEDRO...",

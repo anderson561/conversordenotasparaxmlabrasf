@@ -524,6 +524,28 @@ sessão, de todos os layouts/fixes entregues está em
   `test_salvador_codigo_verificacao_nao_confunde_titulo.py` e
   `test_lauro_de_freitas_nfts_grade_partida.py`.
 
+- **Mesmo par Salvador/Lauro de Freitas — 3 bugs adicionais achados numa 2ª
+  nota da mesma dupla** (nº 2418, mesmo par LUNITECK → BONI TRANSPORTES),
+  reportado pelo usuário como "continua extraindo com erro". (1) Salvador: a
+  lista de exclusão do `CodigoVerificacao` por igualdade EXATA (`ALVADOR`/
+  `PRESTADOR`/`TOMADOR`/`PREFEITURA`/... ) não pega variantes do OCR que
+  corrompem só uma BORDA da palavra (aqui, "PRESTADOR" saiu "ERESTADOR") —
+  trocada por uma comparação de sufixo/prefixo de 6+ caracteres contra os
+  mesmos rótulos, e o candidato rejeitado agora encerra direto no sentinela
+  `XXXX-XXXX` em vez de cair no fallback genérico ainda mais permissivo
+  (que produzia um valor pior, "ERESTADORDESERVI", ao atravessar a palavra
+  seguinte). (2) Lauro de Freitas/NFTS: CNPJ do prestador saindo
+  `00000000000000` — o separador do CNPJ veio com VÍRGULA no lugar do 1º
+  PONTO ("07,295.620/0001-44"), e o regex exigia ponto literal nos 2
+  separadores; agora tolera `[.,]` nos dois. (3) Discriminação engolindo
+  rótulos vazados do bloco do PRESTADOR ("Inscrição Estadual"/"Email:")
+  que, nesta digitalização, saem fisicamente DESLOCADOS para DEPOIS do
+  cabeçalho "DISCRIMINAÇÃO DOS SERVIÇOS" — a captura agora também para
+  nesses 2 rótulos, além do já existente "VALOR TOTAL DA NOTA". Suíte
+  271→**273 verdes**; testes novos
+  `test_salvador_codigo_verificacao_rotulo_garblado.py` e
+  `test_lauro_de_freitas_cnpj_virgula_e_discriminacao_vazada.py`.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado
