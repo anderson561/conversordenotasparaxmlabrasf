@@ -546,6 +546,27 @@ sessão, de todos os layouts/fixes entregues está em
   `test_salvador_codigo_verificacao_rotulo_garblado.py` e
   `test_lauro_de_freitas_cnpj_virgula_e_discriminacao_vazada.py`.
 
+- **Mesma nota 2418 — `Numero` e `RazaoSocial` do tomador (Salvador) pedidos
+  explicitamente pelo usuário após os fixes acima ainda não cobrirem esses 2
+  campos.** `_extrair_numero`: rótulo "Número da Nota" saindo "Número da
+  Nóta" (acento espúrio no "o") não era reconhecido — regex ampliado pra
+  `N[oó]ta`. `RazaoSocial` do tomador saindo `"BE SERVIÇOS"` (resto do
+  próprio cabeçalho de seção "TOMADOR **DE** SERVIÇOS" garblado só na parte
+  final, "DE"→"BE" — o rótulo reconhecido consumia só a palavra "Tomador",
+  deixando o resto sobrar como se fosse a 1ª linha de conteúdo real): função
+  compartilhada `is_valid_razao` (usada por ~30 layouts) ganhou 2 rejeições
+  novas — linha inteira "`<sigla curta> SERVIÇOS`" (nenhuma razão social
+  real é só isso) e linha com "/" sem NENHUMA sequência de 2+ maiúsculas
+  seguidas (Title Case puro — o padrão do rótulo "Nome/Razão Social" quando
+  ele também garbla, ex. "Norma/Razab Sonia", contra o ALL-CAPS universal
+  das razões sociais reais deste corpus; restrito à combinação com "/" pra
+  não afetar razões legítimas em Title Case sem "/", como "Sao Pedro
+  Construtora Ltda"). CNPJ do tomador nesta página permanece não
+  recuperável (dígitos genuinamente ilegíveis no OCR, não um problema de
+  formatação/pontuação) — a nota irmã da pág.2 (Lauro de Freitas) já tem o
+  CNPJ correto. Suíte 273→**274 verdes**; teste novo
+  `test_salvador_numero_e_tomador_rotulo_garblado.py`.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado

@@ -1578,8 +1578,12 @@ class SPPdfExtractor:
             # coluna (ex.: "Número da Nota:\n\nPREFEITURA MUNICIPAL DO SALVADOR
             # 00004852") ou com um caractere solto colado ("R 00004852"). Por
             # isso buscamos o primeiro número plausível numa janela após o rótulo,
-            # em vez de exigir adjacência imediata.
-            m_lab = re.search(r'N[uú]mero\s+da\s+Nota', t, re.IGNORECASE)
+            # em vez de exigir adjacência imediata. "Nota" às vezes sai "Nóta"
+            # no OCR (achado real 2026-08-21, nota 2418/LUNITECK) — o acento
+            # espúrio no "o" quebrava o casamento exato e o rótulo inteiro não
+            # era reconhecido, caindo no sentinela "00000000" mesmo com o
+            # número real ("00002418") legível logo depois no texto.
+            m_lab = re.search(r'N[uú]mero\s+da\s+N[oó]ta', t, re.IGNORECASE)
             if m_lab:
                 janela = t[m_lab.end(): m_lab.end() + 80]
                 for m_num in re.finditer(r'\b(\d{4,10})\b', janela):
@@ -4191,6 +4195,27 @@ class SPPdfExtractor:
             # misturado às letras; nomes curtos só-letras (ex.: "CETREL") são razões sociais válidas.
             if re.match(r'^(?=[A-Z0-9-]{6,15}$)(?=.*\d)[A-Z0-9-]+$', line_clean, re.I): return False
             if '@' in line_clean.lower() or '.com' in line_clean.lower(): return False
+            # Achado real 2026-08-21 (nota 2418/LUNITECK, Salvador escaneado
+            # degradado): quando o cabeçalho "TOMADOR DE SERVIÇOS" garbla só a
+            # PARTE final ("TOMADOR BE SERVIÇOS.", "DE"→"BE"), o rótulo
+            # reconhecido ("Tomador") consome só a 1ª palavra e o resto do
+            # cabeçalho ("BE SERVIÇOS") sobra como se fosse a 1ª linha de
+            # conteúdo — nenhuma razão social real é só "<sigla curta>
+            # SERVIÇOS" sozinho.
+            if re.match(r'^[A-ZÀ-Ý]{1,3}\s+SERVI[ÇC][OÓ]S?\.?$', line_clean, re.I): return False
+            # Mesma nota: o rótulo "Nome/Razão Social" também sai garblado
+            # ("Norma/Razab Sonia") além do reconhecível pelo `_label_pats`
+            # acima — sobrevive como candidato e rouba a linha real (a
+            # empresa) que vem logo depois. Toda razão social real deste
+            # corpus é ALL-CAPS (tem alguma sequência de 2+ maiúsculas
+            # seguidas); um rótulo "Palavra/Palavra Palavra" em Title Case
+            # puro (só a inicial maiúscula, nunca 2 maiúsculas em seguida)
+            # é o padrão inconfundível de um rótulo de template, não de um
+            # nome de empresa — restrito à combinação "/" + Title-Case puro
+            # pra não afetar razões legítimas sem "/" que também usam Title
+            # Case (ex. "Sao Pedro Construtora Ltda", "Grupo FeF").
+            if '/' in line_clean and not re.search(r'[A-ZÀ-Ý]{2,}', line_clean):
+                return False
             return True
 
         if is_valid_razao(razao):
