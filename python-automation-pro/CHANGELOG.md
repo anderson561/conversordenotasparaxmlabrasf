@@ -495,6 +495,35 @@ sessão, de todos os layouts/fixes entregues está em
   Código de Autenticidade do Brasília. Suíte 268→**269 verdes**; teste
   novo em `test_brasilia_layout.py`.
 
+- **Salvador/BA (`salvador_ba`) e Lauro de Freitas/BA (`lauro_de_freitas_ba`,
+  variante NFTS): 2 bugs numa nota real de 2 páginas** (nº 2419, LUNITECK
+  SOLUÇÕES E DESENVOLVIMENTO EM TECNOLOGIA LTDA ME → BONI TRANSPORTES,
+  LOGÍSTICA E COMÉRCIO LTDA; pág.1 = NFS-e emitida pela Prefeitura de
+  Salvador/prestador, pág.2 = NFTS emitida pela Prefeitura de Lauro de
+  Freitas/tomador), reportado pelo usuário. (1) Salvador: `CodigoVerificacao`
+  saindo como a palavra **"PREFEITURA"** (do título "PREFEITURA MUNICIPAL DO
+  SALVADOR") numa digitalização degradada onde o valor real nunca sai
+  legível em NENHUM ponto do texto, nem mesmo com os 4 recuts dedicados já
+  existentes para esse layout — o rótulo "Verificação:" saía legível, mas o
+  `\s*` até o candidato atravessava várias linhas de ruído e capturava o
+  título do documento; mesmo bug de "ALVADOR"/"PRESTADOR"/"TOMADOR" (já
+  rejeitados), agora também rejeitando "PREFEITURA"/"MUNICIPAL"/
+  "SECRETARIA"/"FAZENDA" — cai honestamente no sentinela `XXXX-XXXX` quando
+  nada mais sobra. Os demais campos desta página (Número, Razão Social,
+  CNPJ) permanecem não recuperáveis nesta digitalização específica: os
+  próprios rótulos de seção saem irreconhecíveis no OCR, e a nota da pág.2
+  (mesma transação, mesmo CNPJ/valor) já cobre os dados corretos. (2) Lauro
+  de Freitas/NFTS: grade de valores (Base de Cálculo/Alíquota/Valor do ISS)
+  saindo ZERADA numa variante onde a grade sai PARTIDA em 3 pedaços não-
+  contíguos, em vez dos 5 rótulos+5 valores contíguos já cobertos — as 2
+  regras antigas nunca casavam, perdendo dados presentes e legíveis no
+  texto; e `Município`/`UF` do tomador vazando "UF; BA" inteiro para dentro
+  do campo Município quando o OCR lê "UF;" (ponto-e-vírgula) em vez de
+  "UF:" — corrigido tolerando `[:;]` nos 4 pontos onde o rótulo "UF" é
+  usado. Suíte 269→**271 verdes**; testes novos
+  `test_salvador_codigo_verificacao_nao_confunde_titulo.py` e
+  `test_lauro_de_freitas_nfts_grade_partida.py`.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado

@@ -2720,10 +2720,30 @@ class SPPdfExtractor:
             # próprio código. Rejeitamos esse valor explicitamente, pelo mesmo
             # motivo que "ALVADOR" já é rejeitado acima: é um rótulo do
             # documento, não um código.
+            #
+            # Achado real 2026-08-21 (nota 2419/LUNITECK, scan muito degradado):
+            # o mesmo problema se repete com o TÍTULO do documento em vez do
+            # rótulo da seção seguinte — "PREFEITURA" (de "PREFEITURA MUNICIPAL
+            # DO SALVADOR") ficava a várias linhas de distância de
+            # "Verificação:" (o valor real nunca sai legível em NENHUM ponto do
+            # texto), e o `\s*` entre rótulo e valor (tolerante a quebras de
+            # linha para casar notas onde o valor real vem 1-2 linhas abaixo)
+            # atravessava esse vão e capturava a 1ª palavra maiúscula depois,
+            # que é o título, não o código. Ampliamos a lista de palavras do
+            # PRÓPRIO documento (cabeçalho/título), rejeitadas pelo mesmo
+            # motivo de "ALVADOR"/"PRESTADOR"/"TOMADOR": quando nenhuma delas
+            # sobra, cai no fallback genérico abaixo e, na ausência de
+            # qualquer candidato legível, no sentinela 'XXXX-XXXX' — honesto
+            # com a falta de dado, em vez de fabricar um código com o nome da
+            # prefeitura.
             m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
             if m:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
-                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato not in ('ALVADOR', 'PRESTADOR', 'TOMADOR'):
+                candidato_invalido = (
+                    'ALVADOR', 'PRESTADOR', 'TOMADOR',
+                    'PREFEITURA', 'MUNICIPAL', 'SECRETARIA', 'FAZENDA',
+                )
+                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato not in candidato_invalido:
                     return candidato
 
         if self.layout == LAYOUT_CUIABA:
@@ -5584,11 +5604,18 @@ class SPPdfExtractor:
             # formatos sem regredir o caso "cada rótulo na própria linha".
             bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_prestador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_prestador)
-            municipio = (_campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_prestador)
-                         or _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_vazado)
+            # "UF" às vezes vem com ";" no lugar do ":" (ruído de OCR, achado
+            # real 2026-08-21, nota 2026326/NFTS LUNITECK -> BONI TRANSPORTES:
+            # "Município: LAURO DE FREITAS UF; BA") — com o lookahead antigo
+            # (só ":") o município engolia "UF; BA" inteiro, e a captura da UF
+            # (mesmo rótulo) não casava nada, caindo no default 'BA' (certo
+            # por coincidência aqui, mas o município saía errado). `[:;]`
+            # cobre os dois separadores nos dois regexes.
+            municipio = (_campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:;]|\n|$)', bloco_prestador)
+                         or _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:;]|\n|$)', bloco_vazado)
                          or 'LAURO DE FREITAS')
-            uf = (_campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_prestador)
-                  or _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_vazado)
+            uf = (_campo(r'\bUF\s*[:;]\s*([A-Z]{2})', bloco_prestador)
+                  or _campo(r'\bUF\s*[:;]\s*([A-Z]{2})', bloco_vazado)
                   or 'BA')
             email_pat = r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
             email = _campo(email_pat, bloco_prestador) or _campo(email_pat, bloco_vazado)
@@ -5599,8 +5626,8 @@ class SPPdfExtractor:
             endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n*\s*(.+)', bloco_tomador) or 'Não informado'
             bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_tomador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_tomador)
-            municipio = _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_tomador) or 'Não informado'
-            uf = _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_tomador) or 'BA'
+            municipio = _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:;]|\n|$)', bloco_tomador) or 'Não informado'
+            uf = _campo(r'\bUF\s*[:;]\s*([A-Z]{2})', bloco_tomador) or 'BA'
             email = _campo(r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_tomador)
 
         cep = re.sub(r'\D', '', cep_raw) if cep_raw else '00000000'
@@ -8367,8 +8394,36 @@ class SPPdfExtractor:
                     iss = self._parse_valor(nums_meio[1]) if len(nums_meio) >= 2 else 0.0
                     iss_retido = m_row_mei.group(4).strip().lower() == 'sim'
                 else:
-                    deducoes = base = aliquota = iss = 0.0
-                    iss_retido = False
+                    # Variante com a grade PARTIDA em 3 pedaços não-contíguos
+                    # (achado real 2026-08-21, nota 2026326/NFTS LUNITECK ->
+                    # BONI TRANSPORTES): esta digitalização quebra a linha de
+                    # rótulos em "Valor Total Deduções (R$) Base de Cálculo
+                    # (R$) Alíquota (%)" (só 3 dos 5 rótulos), com os 3
+                    # valores correspondentes logo abaixo — mas "Valor do ISS
+                    # (R$)" e "ISSQN Retido (R$)" saem em linhas PRÓPRIAS,
+                    # separadas por outro conteúdo no meio ("VALOR LÍQUIDO DA
+                    # NOTA FISCAL", "INFORMAÇÕES COMPLEMENTARES", a linha de
+                    # Competência). As 2 regras acima exigem os 5 rótulos
+                    # contíguos e nunca casam aqui, caindo no fallback zerado
+                    # de baixo — perdendo Base de Cálculo/Alíquota/ISS mesmo
+                    # eles estando presentes e legíveis no texto. Casamos os
+                    # 3 pedaços separadamente.
+                    m_ded_base_aliq = re.search(
+                        r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\)\s*'
+                        r'Al[íi]quota\s*\(%\)\s*\n\s*(?:R\$\s*)?([\d\.,]+)\s+(?:R\$\s*)?([\d\.,]+)\s+([\d\.,]+)',
+                        t, re.IGNORECASE
+                    )
+                    m_iss_split = re.search(r'Valor\s+do\s+ISS\s*\(R\$\)\s*\n\s*([\d\.,]+)', t, re.IGNORECASE)
+                    if m_ded_base_aliq and m_iss_split:
+                        deducoes = self._parse_valor(m_ded_base_aliq.group(1))
+                        base = self._parse_valor(m_ded_base_aliq.group(2))
+                        aliquota = self._parse_valor(m_ded_base_aliq.group(3)) / 100
+                        iss = self._parse_valor(m_iss_split.group(1))
+                        m_retido_split = re.search(r'ISSQN\s+Retido\s*\(R\$\)\s*\n\s*(Sim|N[ãa]o)', t, re.IGNORECASE)
+                        iss_retido = bool(m_retido_split) and m_retido_split.group(1).strip().lower() == 'sim'
+                    else:
+                        deducoes = base = aliquota = iss = 0.0
+                        iss_retido = False
 
             m_val_total = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s+FISCAL\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
             val_serv = self._parse_valor(m_val_total.group(1)) if m_val_total else base
