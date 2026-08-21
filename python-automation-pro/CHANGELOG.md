@@ -469,6 +469,32 @@ sessão, de todos os layouts/fixes entregues está em
   `Nfse.avisos`. Suíte 256→**257 verdes**; teste novo
   `test_danfse_nacional_aracaju_webiss.py`.
 
+### Corrigido
+
+- **Brasília/DF (`brasilia_df`): endereço/município/UF/e-mail/telefone do
+  TOMADOR (e do prestador) saindo corrompidos numa nota real** (nº 44, AFG
+  DIGITAL COMUNICACAO E PRODUCAO LTDA → ELOS ESTUDIO E SERVICOS LTDA,
+  R$ 4.950,00), reportado pelo usuário. Três bugs no extrator GENÉRICO de
+  entidade (compartilhado por ~30 layouts, não específicos do Brasília):
+  (1) a captura de Endereço não parava antes do rótulo "Cidade:" (só
+  reconhecia "Município"/"Municipio"), engolindo a linha inteira seguinte
+  dentro do campo Número (`"0 Cidade: Brasília Estado/Prov./Reg.: Distrito
+  Federal País: Brasil"`); (2) o casamento de Município/UF também não
+  reconhecia o rótulo "Cidade:" isolado (plataforma "ISS.NET - Sistema
+  Nota Control"), caindo no fallback de capital (Salvador/BA); (3) mesmo
+  reconhecendo o rótulo, "Estado/Prov./Reg.:" imprime o nome COMPLETO da
+  UF ("Distrito Federal"), não a sigla de 2 letras que a regex exigia —
+  novo dicionário `_UF_POR_NOME_ESTADO` resolve o nome completo. Achados
+  colaterais (bugs pré-existentes e independentes, não gated a este
+  layout): e-mail/telefone saíam sempre `None` porque a regex genérica não
+  tolerava o ":" impresso entre rótulo e valor, e a regex de Telefone
+  tinha um `{8,20}` com chave simples dentro de uma f-string — o Python
+  interpreta isso como a tupla `(8, 20)` e insere o literal `"(8, 20)"` na
+  regex em vez do quantificador, quebrando o casamento sem erro de
+  sintaxe. Removidos também 3 `print()` de debug esquecidos na extração do
+  Código de Autenticidade do Brasília. Suíte 268→**269 verdes**; teste
+  novo em `test_brasilia_layout.py`.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado

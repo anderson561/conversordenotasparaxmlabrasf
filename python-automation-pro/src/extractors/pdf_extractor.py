@@ -37,6 +37,26 @@ _MESES_PT = {
     'jul': 7, 'ago': 8, 'set': 9, 'out': 10, 'nov': 11, 'dez': 12,
 }
 
+# Nome por extenso -> sigla, para o rótulo "Estado/Prov./Reg.:" quando a
+# plataforma imprime o nome completo da unidade federativa em vez da sigla
+# de 2 letras (achado real: nota AFG Digital -> ELOS ESTUDIO, Brasília/DF,
+# "Estado/Prov./Reg.: Distrito Federal" — a regex original só reconhecia
+# `[A-Z]{2}` e nunca casava, deixando UF/município no fallback de capital).
+_UF_POR_NOME_ESTADO = {
+    'acre': 'AC', 'alagoas': 'AL', 'amapa': 'AP', 'amapá': 'AP',
+    'amazonas': 'AM', 'bahia': 'BA', 'ceara': 'CE', 'ceará': 'CE',
+    'distrito federal': 'DF', 'espirito santo': 'ES', 'espírito santo': 'ES',
+    'goias': 'GO', 'goiás': 'GO', 'maranhao': 'MA', 'maranhão': 'MA',
+    'mato grosso': 'MT', 'mato grosso do sul': 'MS',
+    'minas gerais': 'MG', 'para': 'PA', 'pará': 'PA', 'paraiba': 'PB',
+    'paraíba': 'PB', 'parana': 'PR', 'paraná': 'PR', 'pernambuco': 'PE',
+    'piaui': 'PI', 'piauí': 'PI', 'rio de janeiro': 'RJ',
+    'rio grande do norte': 'RN', 'rio grande do sul': 'RS',
+    'rondonia': 'RO', 'rondônia': 'RO', 'roraima': 'RR',
+    'santa catarina': 'SC', 'sao paulo': 'SP', 'são paulo': 'SP',
+    'sergipe': 'SE', 'tocantins': 'TO',
+}
+
 # Layouts detectáveis (ordem de prioridade)
 LAYOUT_CUIABA    = 'cuiaba_issnet'    # Cuiabá/MT via ISSNet
 LAYOUT_BARREIRAS = 'barreiras_ba'     # Barreiras/BA
@@ -2792,7 +2812,6 @@ class SPPdfExtractor:
             code = m_auth.group(1) + (m_auth.group(2) or '')
             code_clean = re.sub(r'[^0-9]', '', code).strip()
             if len(code_clean) >= 20:
-                print(f"DEBUG: Brasília CodAut match: '{code_clean}'")
                 return code_clean
 
         patterns = [
@@ -2813,10 +2832,8 @@ class SPPdfExtractor:
                     code = max(groups, key=len) if len(groups) > 1 else groups[0]
                     code_clean = re.sub(r'[^0-9]', '', code).strip()
                     if len(code_clean) >= 20:  # Código de autenticidade deve ter pelo menos 20 dígitos
-                        print(f"DEBUG: Brasília CodAut match: '{code_clean}'")
                         return code_clean
-        
-        print(f"DEBUG: Brasília - Código de Autenticidade não encontrado, retornando fallback")
+
         return 'XXXX-XXXX'
 
     def _extrair_entidade(self, tipo: str) -> Optional[Entidade]:
@@ -4191,8 +4208,16 @@ class SPPdfExtractor:
         }
 
         # Tenta extrair E-mail
+        # `relax()` só tolera espaço ENTRE os caracteres do próprio rótulo —
+        # não cobre o ":" que normalmente separa rótulo de valor ("E-mail:
+        # valor"), então sem o `:?` explícito abaixo esta regex nunca casava
+        # quando o rótulo tem o dois-pontos impresso (achado real: nota
+        # Brasília/DF AFG Digital -> ELOS ESTUDIO, "E-mail:
+        # atendimento@estudioelos.com.br" — e-mail saía sempre `None` para
+        # QUALQUER layout que passasse por este caminho genérico, não só
+        # Brasília, já que o bug está no extrator compartilhado).
         email = None
-        m_email = re.search(rf'{relax("E-mail")}\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{{2,}})', bloco_clean, re.IGNORECASE)
+        m_email = re.search(rf'{relax("E-mail")}\s*:?\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{{2,}})', bloco_clean, re.IGNORECASE)
         if m_email:
             email = m_email.group(1).strip()
 
@@ -4215,8 +4240,19 @@ class SPPdfExtractor:
 
         # Tenta extrair Telefone
         telefone = None
-        # Padrão para telefone: (XX) XXXX-XXXX ou similar
-        m_tel = re.search(rf'{relax("Telefone")}\s*([\(\)\d\s-]{8,20})', bloco_clean, re.IGNORECASE)
+        # Padrão para telefone: (XX) XXXX-XXXX ou similar. Dois bugs
+        # independentes aqui: (1) `relax()` não cobre o ":" do rótulo
+        # ("Telefone: valor") — sem o `:?` explícito, nunca casava com esse
+        # formato; (2) o quantificador `{8,20}` precisa de chaves DUPLICADAS
+        # numa f-string (`{{8,20}}`) — com chave simples, o Python interpreta
+        # `{8,20}` como uma expressão embutida (a tupla `(8, 20)`) e insere
+        # o literal `"(8, 20)"` na regex em vez do quantificador, quebrando
+        # o casamento silenciosamente (a regex nunca lança erro de sintaxe,
+        # só nunca casa nenhum telefone real). Bug pré-existente, não
+        # relacionado ao (1) — os dois juntos faziam este campo ficar
+        # sempre `None`, mesmo com o telefone impresso claramente na nota
+        # (achado real: nota Brasília/DF AFG Digital -> ELOS ESTUDIO).
+        m_tel = re.search(rf'{relax("Telefone")}\s*:?\s*([\(\)\d\s-]{{8,20}})', bloco_clean, re.IGNORECASE)
         if m_tel:
             telefone = m_tel.group(1).strip()
 
@@ -4239,20 +4275,38 @@ class SPPdfExtractor:
         # município via `IBGEResolver` — sintoma: prestador de São Paulo/SP
         # saía com município "Não informado" e UF "BA"). `Munic[íi]pio`
         # tolera as 2 grafias sem mudar o resto do padrão.
-        m_mun = re.search(rf'(?:Munic[íi]pio|{relax("Cidade/UF")})\s*([^0-9]+?)(?={relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|$)', bloco_clean, re.IGNORECASE)
+        # "Cidade\s*:" (rótulo isolado, distinto de "Cidade/UF" — a barra
+        # antes de "UF" separa os dois formatos sem ambiguidade) cobre a
+        # plataforma "ISS.NET - Sistema Nota Control" (achado real: Brasília/
+        # DF, prestador AFG Digital -> tomador ELOS ESTUDIO): "Cidade:
+        # Brasília   Estado/Prov./Reg.: Distrito Federal   País: Brasil" -
+        # sem esta alternativa, `m_mun` nunca casava e município/UF ficavam
+        # no fallback de capital (Salvador/BA) mesmo com o dado correto
+        # impresso na própria nota.
+        m_mun = re.search(rf'(?:Munic[íi]pio|Cidade\s*:|{relax("Cidade/UF")})\s*([^0-9]+?)(?={relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|$)', bloco_clean, re.IGNORECASE)
         if m_mun:
             mun_text = m_mun.group(1).strip()
             # Limpeza de possíveis sobras de labels
             mun_text = re.sub(r'^[:\s]+', '', mun_text)
-            
+
             clean_mun = mun_text
-            
-            # Checa se existe "Estado/Prov./Reg." no texto (Padrão Cuiabá/ISSNet)
-            m_estado_prov = re.search(r'Estado/Prov\./Reg\.?\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
+
+            # Checa se existe "Estado/Prov./Reg." no texto (Padrão Cuiabá/ISSNet
+            # e ISS.NET/Nota Control). O valor pode ser a sigla de 2 letras
+            # (Cuiabá) OU o nome completo da unidade federativa (achado real
+            # acima, "Distrito Federal") — tenta a sigla primeiro, cai para o
+            # dicionário `_UF_POR_NOME_ESTADO` quando não é 2 letras.
+            m_estado_prov = re.search(r'Estado/Prov\./Reg\.?\s*[:\s]\s*([A-Za-zÀ-ÿ ]+?)(?=\s{2,}|\s*Pa[íi]s\b|$)', mun_text, re.IGNORECASE)
             if m_estado_prov:
-                end_data['uf'] = m_estado_prov.group(1).upper()
-                clean_mun = re.sub(r'Estado/Prov\./Reg\.?\s*[:\s]\s*[A-Z]{2}', '', clean_mun, flags=re.IGNORECASE).strip()
-            
+                valor_estado = m_estado_prov.group(1).strip()
+                uf_resolvida = valor_estado.upper() if len(valor_estado) == 2 else _UF_POR_NOME_ESTADO.get(valor_estado.lower())
+                if uf_resolvida:
+                    end_data['uf'] = uf_resolvida
+                clean_mun = clean_mun[:m_estado_prov.start()].strip()
+            # "País: Brasil" pode sobrar colado depois do Estado/Prov (mesma
+            # linha, sem rótulo próprio na lookahead do `m_mun` acima).
+            clean_mun = re.sub(r'\bPa[íi]s\s*:.*$', '', clean_mun, flags=re.IGNORECASE).strip()
+
             # Checa se existe "UF: BA" ou "UF BA" no texto de município
             m_uf_in_mun = re.search(r'\bUF\s*[:\s]\s*([A-Z]{2})', mun_text, re.IGNORECASE)
             if m_uf_in_mun:
@@ -4279,7 +4333,12 @@ class SPPdfExtractor:
             end_data['municipio'] = clean_mun
 
         # Tenta extrair Logradouro, Número e Bairro
-        m_end = re.search(rf'(?:{relax("Endereço")}|{relax("Logradouro")})[:\s]*(.*?)(?={relax("Município")}|{relax("Municipio")}|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|{relax("Bairro")}|{relax("Complemento")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
+        # "Cidade\s*:" na lookahead (achado real Brasília/ISS.NET/Nota
+        # Control, ver `m_mun` abaixo): sem esse rótulo, a captura do
+        # Endereço não tinha onde parar e engolia a linha inteira seguinte
+        # ("Cidade: Brasília Estado/Prov./Reg.: Distrito Federal País:
+        # Brasil"), corrompendo o campo Número.
+        m_end = re.search(rf'(?:{relax("Endereço")}|{relax("Logradouro")})[:\s]*(.*?)(?={relax("Município")}|{relax("Municipio")}|Cidade\s*:|{relax("CEP")}|{relax("Telefone")}|{relax("E-mail")}|{relax("Bairro")}|{relax("Complemento")}|$)', bloco_clean, re.IGNORECASE | re.DOTALL)
         if m_end:
             partes_end = m_end.group(1).strip().lstrip(':').strip()
             if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) and partes_end:
