@@ -15,6 +15,36 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Competência com ano trocado em Salvador/BA (`salvador_ba`) e CNPJ
+  do tomador impresso ERRADO na própria nota** (mesma nota nº 00003327/
+  CONEX4 MULTIMÍDIA LIMITADA dos 2 fixes acima; software de importação do
+  usuário — Domínio Escrita Fiscal — rejeitava o lote com "CNPJ do arquivo
+  diferente do CNPJ da empresa ativa" e mostrava a data `01/07/2926`):
+  - `Competencia` saía `2926-07-01` — OCR lê "COMPETÊNCIA 07/2926" ("0"→"9"
+    no ano) — mesmo mês da Data de Emissão (já confiável, extraída de outro
+    trecho do documento), só o ano divergia. Corrigido usando o ano da Data
+    de Emissão quando o mês da competência bate mas o ano diverge — uma
+    competência legítima de outro ano sempre vem com mês diferente também
+    (nunca emitida meses depois sem que o mês mude), então o guard não
+    afeta competências de fato distintas (ex. nota de janeiro para
+    competência de dezembro do ano anterior).
+  - CNPJ do tomador (BONI TRANSPORTES) saía com o sentinela
+    `00000000000100`: diferente de TODOS os outros achados de CNPJ
+    corrompido desta base (sempre um erro de LEITURA de um valor impresso
+    certo), aqui o CNPJ está ERRADO NA PRÓPRIA IMAGEM da nota —
+    "04.565.293/0001-99" impresso (confirmado em zoom alto), que reprova o
+    dígito verificador. O usuário confirmou o CNPJ real como
+    "04.555.283/0001-99" — mesma raiz já vista em várias outras notas desta
+    base como tomador fixo/recorrente (notas 6508 e 2150, filiais
+    "0001"/"0003" da mesma empresa). Nenhum recorte/zoom recuperaria esse
+    valor (a sequência correta nunca esteve impressa nesta nota) —
+    corrigido em `_extrair_entidade` apenas quando o CNPJ extraído já
+    reprova o checksum E a razão social bate com "BONI TRANSPORTES", para
+    não mascarar CNPJs genuinamente diferentes de outras empresas com nome
+    parecido; nunca sobrescreve um CNPJ que já é válido.
+  Suíte 285→**289 verdes**; testes novos em `test_notas_layouts.py` e
+  `test_boni_transportes_cnpj_impresso_errado.py`.
+
 - **Fix — Número da nota em Salvador/BA (`salvador_ba`) saía com 1 dígito
   trocado quando o recorte dedicado do cabeçalho lia num zoom "azarado"**
   (nota real nº 00003327/CONEX4 MULTIMÍDIA LIMITADA → BONI TRANSPORTES,

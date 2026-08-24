@@ -943,6 +943,17 @@ class SPPdfExtractor:
                 if m:
                     mes, ano = m.group(1).split('/')
                     result = datetime(int(ano), int(mes), 1)
+            # Ano da Competência com dígito trocado pelo OCR (achado real,
+            # nota nº 00003327/CONEX4 MULTIMÍDIA LIMITADA: "COMPETÊNCIA
+            # 07/2926" em vez de "07/2026", "0"→"9" — mesmo mês da Data de
+            # Emissão, só o ano sai errado). Corrigido usando o ano da Data
+            # de Emissão (já confiável, extraída de um trecho diferente do
+            # documento) quando o mês bate mas o ano diverge — uma
+            # competência legitimamente de outro ano sempre tem MÊS
+            # diferente também (nunca emitida meses depois sem que o mês
+            # também mude), então esse guard não afeta os casos válidos.
+            if result and data_emissao and result.month == data_emissao.month and result.year != data_emissao.year:
+                result = datetime(data_emissao.year, result.month, 1)
         elif layout == LAYOUT_IACU_NFSE:
             # "- COMPETÊNCIA: 07/2026 (mês/ano)"
             m = re.search(r'COMPET[EÊ]NCIA\s*:?\s*(\d{2})/(\d{4})', t, re.IGNORECASE)
@@ -4300,6 +4311,24 @@ class SPPdfExtractor:
 
         if not razao:
             razao = f'{tipo} Não Identificado'
+
+        # CNPJ de BONI TRANSPORTES impresso ERRADO na PRÓPRIA nota (não é
+        # falha de OCR — achado real, nota nº 00003327/CONEX4 MULTIMÍDIA
+        # LIMITADA: a imagem da página, em zoom alto, mostra literalmente
+        # "04.565.293/0001-99" impresso, que reprova o dígito verificador do
+        # CNPJ; confirmado pelo usuário que o CNPJ real é "04.555.283/0001-99"
+        # — mesma raiz "04.555.283" já vista em várias outras notas desta
+        # base como tomador fixo/recorrente (ex. nota 6508, nota 2150/
+        # INSTITUIÇÃO ASSISTENCIAL, ambas com filiais "0001"/"0003" da MESMA
+        # empresa). Diferente de todos os outros achados de CNPJ corrompido
+        # desta base (sempre um erro de LEITURA de um valor impresso certo),
+        # aqui nenhum recorte/zoom recupera "04.555.283" porque essa
+        # sequência nunca esteve impressa — corrigido apenas quando o CNPJ
+        # extraído já reprova o checksum E a razão social bate com esta
+        # contraparte recorrente, para não mascarar CNPJs genuinamente
+        # diferentes de outras empresas com nome parecido.
+        if not self._validate_cnpj_cpf(cnpj) and 'BONI TRANSPORTES' in razao.upper():
+            cnpj = '04555283000199'
 
         # 5. Endereço e IBGE
         end_data = {
