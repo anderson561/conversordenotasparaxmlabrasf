@@ -29,13 +29,33 @@ sessão, de todos os layouts/fixes entregues está em
   apurado é prependado em `_ocr_page` ANTES do recorte de zoom único, para
   que `_extrair_numero` (1º match vence) prefira o valor por maioria. Valor
   da nota (R$ 690,00) já saía correto, nenhuma mudança necessária ali.
-  Achado colateral, fora do escopo pedido (não corrigido): CNPJ/CPF do
-  prestador e do tomador saem os DOIS com o mesmo sentinela
-  `00000000000100` nesta nota (bloco PRESTADOR com CNPJ ilegível na leitura
-  de página inteira — "00.291.063/001-70", fora do formato — dispara
-  fallback total, que hoje não distingue prestador de tomador); avisos
-  `Nfse.avisos` já sinalizam ambos como "não identificados". Suíte
-  281→**283 verdes**; teste novo `test_salvador_numero_zoom_ambiguo.py`.
+  Achado colateral, fora do escopo pedido (não corrigido nesta entry, ver
+  próxima): CNPJ/CPF do prestador e do tomador saíam os DOIS com o mesmo
+  sentinela `00000000000100` nesta nota. Suíte 281→**283 verdes**; teste
+  novo `test_salvador_numero_zoom_ambiguo.py`.
+
+- **Fix — CPF/CNPJ do prestador em Salvador/BA (`salvador_ba`) saía com o
+  sentinela `00000000000100`** (mesma nota nº 00003327/CONEX4 MULTIMÍDIA
+  LIMITADA do fix acima): o CNPJ real do prestador, `09.034.217/0001-97`
+  (confirmado pelo usuário e batendo com a nota irmã — pág. 2 do mesmo PDF,
+  que já extraía esse CNPJ corretamente), saía como ruído sem nenhum dígito
+  reconhecível na leitura de página inteira — só a Inscrição Municipal
+  vizinha sobrevivia ("00.291.063/001-70"). Sem CNPJ válido em lugar nenhum
+  do bloco (o próprio rótulo "PRESTADOR DE SERVIÇOS" sai "BRESTADOR DE
+  SERVIÇOS", "B" no lugar de "P" — nem o fatiamento genérico reconhece onde
+  o prestador começa), caía no fallback de sentinela compartilhado por
+  prestador E tomador. Corrigido com `_ocr_recut_prestador_cnpj_salvador`,
+  que reprocessa em zoom alto (8x) só a coluna esquerda da linha do CNPJ;
+  `_ocr_page` prepende o valor recuperado (já validado por checksum) antes
+  do resto do texto, para que a extração genérica de CNPJ (1º candidato
+  válido vence) encontre esta leitura limpa primeiro. Prependado em
+  `best_text` (não guardado só num atributo de instância): `parse_multiple`
+  cria um `sub_ext` novo por nota/bloco e só propaga pra ele `raw_text` e
+  poucos atributos específicos — um atributo novo não chegaria até a
+  chamada real de `_extrair_entidade`. CNPJ do TOMADOR permanece com o
+  sentinela nesta nota — fora do escopo pedido pelo usuário ("trate
+  exclusivamente o CNPJ [do prestador]"); avisado via `Nfse.avisos`. Suíte
+  283→**285 verdes**; teste novo `test_salvador_prestador_cnpj_ilegivel.py`.
 
 - **Fix — CNPJ do prestador em Simões Filho/BA (`simoes_filho_ba`) saía com 1
   dígito errado** (nota real nº 122/VITORIOS EMPILHADEIRAS, mesma nota do

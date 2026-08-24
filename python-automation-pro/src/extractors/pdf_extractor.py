@@ -9797,6 +9797,35 @@ class SPPdfExtractor:
                             if corrigido:
                                 best_text = best_text.replace(original, corrigido, 1)
 
+                    # CPF/CNPJ do prestador ilegível A PONTO DE NEM FORMAR o
+                    # padrão de CNPJ (falha distinta da acima — lá o candidato
+                    # já está bem pontuado, só erra 1 dígito) — achado real,
+                    # nota nº 00003327/CONEX4 MULTIMÍDIA LIMITADA: nenhum
+                    # candidato aparece no bloco do PRESTADOR, então o gate
+                    # acima nunca dispara pra essa posição. Não há como gatear
+                    # por "rótulo PRESTADOR reconhecível" (mesma classe de
+                    # degradação do achado da marca d'água abaixo: nesta
+                    # nota o próprio rótulo sai "BRESTADOR DE SERVIÇOS", "B"
+                    # no lugar de "P" — um regex de gate cairia na mesma
+                    # armadilha da extração real). Roda sempre nesta seção
+                    # (mesmo custo de uma chamada extra de OCR já pago pelo
+                    # `numero_votado` acima) e só usa o resultado quando o
+                    # recorte realmente devolve um CNPJ com checksum válido —
+                    # nunca sobrescreve uma leitura já correta com lixo.
+                    #
+                    # Prependado diretamente em `best_text` (não guardado só
+                    # num atributo de instância, ao contrário de outros
+                    # recortes desta classe): `parse_multiple` cria um
+                    # `sub_ext = SPPdfExtractor(...)` NOVO por nota/bloco e só
+                    # propaga pra ele `raw_text` (fatiado de `best_text`) e
+                    # uns poucos atributos específicos — um atributo novo
+                    # aqui nunca chegaria até a chamada real de
+                    # `_extrair_entidade`, que roda no `sub_ext`, não no `self`
+                    # que executou este `_ocr_page`.
+                    prestador_cnpj = self._ocr_recut_prestador_cnpj_salvador(page)
+                    if prestador_cnpj:
+                        best_text = f"CPF/CNPJ:\n{prestador_cnpj}\n\n{best_text}"
+
                     # Marca d'água diagonal cobrindo a página inteira (achado
                     # real, nota nº 00039029, prestador A LIMPCANO ->
                     # tomador SOHO RESTAURANTE): o padrão de pontos do
@@ -10863,6 +10892,48 @@ class SPPdfExtractor:
                 # pode ter recuperado o 2º separador como espaço, não ponto) -
                 # devolve sempre no formato que a extração/regex downstream
                 # (`_extrair_entidade`, que exige pontuação estrita) reconhece.
+                d = re.sub(r'\D', '', m.group(0))
+                return f"{d[0:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:14]}"
+            return None
+        except Exception:
+            return None
+
+    def _ocr_recut_prestador_cnpj_salvador(self, page) -> Optional[str]:
+        """Recorta e reprocessa em zoom alto (8x) a linha do "CPF/CNPJ" do
+        PRESTADOR da nota Salvador/BA, para o caso em que a leitura de página
+        inteira sai degradada A PONTO DE NEM FORMAR o padrão de CNPJ (não é o
+        caso "1 dígito trocado dentro de formatação válida" já coberto por
+        `_ocr_recut_cnpj_invalido_salvador`) — achado real, nota nº
+        00003327/CONEX4 MULTIMÍDIA LIMITADA: o valor real "09.034.217/0001-97"
+        (confirmado contra a imagem e contra a nota irmã, pág. 2 do mesmo PDF,
+        que já extrai esse CNPJ corretamente) sai como ruído sem nenhum
+        dígito reconhecível na leitura padrão — só a Inscrição Municipal
+        vizinha ("00.291.063/001-70") sobrevive. `_ocr_recut_cnpj_invalido_
+        salvador` não ajuda aqui: seu gatilho exige um candidato bem
+        formatado (só o dígito verificador errado); aqui não há candidato
+        NENHUM. Recorte fixo (não dinâmico via `image_to_data`, ao contrário
+        do recut de dígito trocado) da região logo abaixo do cabeçalho
+        "PRESTADOR DE SERVIÇOS" — coluna esquerda apenas (até 45% da
+        largura), para não misturar com a Inscrição Municipal da coluna
+        direita, testado estável nos zooms 6/8/10x."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            w, h = img.size
+            crop = img.crop((0, int(h * 0.14), int(w * 0.45), int(h * 0.19)))
+            txt = pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            # Tolerante a espaço no lugar do 1º OU do 2º ponto (achado real
+            # nesta mesma nota: "09 034.217/0001-97", espaço em vez de ponto
+            # entre o 1º e o 2º grupo — a janela mais alta usada aqui, versus
+            # a janela mais estreita testada manualmente, muda a segmentação
+            # do PSM 6 o suficiente para essa troca aparecer).
+            m = re.search(r'\d{2}[ \t.]\d{3}[ \t.]\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
+            if m and self._validate_cnpj_cpf(re.sub(r'\D', '', m.group(0))):
                 d = re.sub(r'\D', '', m.group(0))
                 return f"{d[0:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:14]}"
             return None
