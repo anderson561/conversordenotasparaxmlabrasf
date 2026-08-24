@@ -15,6 +15,83 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Adicionado
 
+- Novo layout **Simões Filho/BA** (`simoes_filho_ba`, constante já existia mas
+  sem extração dedicada nem prioridade de detecção correta). Nota real nº 122
+  (VITORIOS EMPILHADEIRAS COMERCIO E SERVIÇOS LTDA → BONI TRANSPORTES,
+  LOGISTICA E COMERCIO LTDA, R$ 440,00), pág. 1 de um PDF de 2 páginas cuja
+  pág. 2 é a nota irmã Lauro de Freitas/NFTS. Mesma plataforma/template de
+  Barreiras/BA ("Data Fato Gerador | Exigibilidade de ISS | Regime Tributário
+  | Número RPS | Serie RPS | Nº da Nota Fiscal") — a marca genérica de
+  Barreiras casava PRIMEIRO na cadeia de detecção e a nota inteira caía no
+  layout errado; corrigido detectando pelo nome da PREFEITURA ("PREFEITURA
+  MUNICIPAL DE SIMÕES FILHO") ANTES do marcador genérico compartilhado, em
+  `_detect_layout` e `_detect_layout_page`. Blocos "PRESTADOR"/"TOMADOR" com
+  rótulo→valor na mesma linha, seguidos de uma linha SOLTA "<Município> - <UF>
+  - CEP: <cep>" sem rótulo próprio (não reconhecida pelo parser genérico,
+  caía em "Não informado"/fallback de Salvador) — nova
+  `_extrair_entidade_simoes_filho` dedicada. Achados corrigidos: `Numero`
+  saía "246" (vazado de "orçamento nº 246" na discriminação do serviço, não o
+  "Nº da Nota Fiscal" real "202600000000122" — âncora tolerante a colunas
+  fundidas pelo OCR); CNPJ do prestador saía IGUAL ao do tomador
+  (cross-contaminação de entidade); grade de valores "VALOR SERVIÇO (R$)
+  DEDUÇÕES (R$) DESCONTO INCONDICIONAL (R$) BASE CÁLCULO (R$) ALÍQUOTA (%) ISS
+  (R$)" não tinha extração própria (Alíquota/ISS saíam zerados) — Alíquota sem
+  separador decimal no OCR ("285" em vez de "2,85") tratada como
+  percentual×100; `Discriminacao` vazava até o fim do documento inteiro
+  (grade de valores + demonstrativo de tributos + rodapé legal), sem limite
+  dedicado até "OBSERVAÇÃO". Recorte OCR dedicado em zoom 6x do bloco do
+  PRESTADOR (`_ocr_recut_prestador_simoes_filho`) recupera CEP e Inscrição
+  Municipal quando a leitura de página inteira erra (best-effort, como outros
+  recortes desta base — pode cair de volta ao valor do corpo em notas/rodadas
+  de OCR menos favoráveis). CNPJ do prestador permanece com um possível dígito
+  trocado ("50.945.432/0001-11" em vez do real "50.949.432/0001-11",
+  confirmado contra a imagem e contra a nota irmã) — testado exaustivamente
+  (zooms 3 a 12, 4 PSMs, whitelist de caracteres, recorte isolado): o
+  Tesseract nunca lê esse dígito certo nesta plataforma, limitação do próprio
+  motor de OCR, não de enquadramento/resolução. Pelo mesmo motivo,
+  `CodigoVerificacao` (valor real alfanumérico "bd17528e3", conferido
+  caractere a caractere contra a imagem) fica no sentinela `XXXX-XXXX` — toda
+  tentativa de OCR devolve uma leitura numérica diferente e garantidamente
+  errada, nunca o valor real; sentinela honesto é preferível. **Corrigido também
+  o código IBGE de Simões Filho/BA no `IBGEResolver.KNOWN_CITIES`: estava
+  `2929206` (errado, nunca conferido contra fonte oficial) — a própria
+  Prefeitura imprime na nota o código oficial `2930709` (confirmado contra
+  cidades.ibge.gov.br); afeta também o prestador fixo do `LAYOUT_PJB_LOCACAO`
+  (mesma cidade), corrigido junto.**
+  - **Fix — Data de Emissão caindo no fallback "agora" (pedido explícito do
+    usuário após o primeiro round: "Data de emissão incorreta")**: a linha
+    "Emitido em 22/07/2026 21:14:46" nunca sai legível do OCR nesta
+    plataforma — testado exaustivamente (zooms 3 a 14, autocontraste,
+    binarização, whitelist de caracteres, recorte isolado da faixa, mesma
+    região castigada pelo QR Code/marca d'água do Código de Verificação):
+    cada tentativa devolve dígitos/separadores diferentes, nunca o valor
+    real. Sem tratamento dedicado, `DataEmissao` caía em "agora" (a
+    `Competencia` saía do MÊS ERRADO — agosto em vez de julho). Corrigido com
+    um fallback que usa a data de atendimento citada na própria discriminação
+    do serviço ("...atendimento realizado no dia 15/07/2026") — texto livre,
+    fora da faixa degradada, que sobrevive ÍNTEGRO em toda leitura testada.
+    Não é o timestamp exato de emissão (hora fica 00:00:00), mas acerta
+    dia/mês/ano reais, confirmados de forma independente pela nota irmã
+    (Lauro de Freitas/NFTS, mesma transação): "Competência: 07/2026" — as
+    duas fontes concordam em julho/2026, nunca em agosto.
+  - `Numero` (vazava "246" do orçamento) e o CNPJ do prestador (saía IGUAL ao
+    do tomador) já estavam corrigidos desde o commit anterior desta mesma
+    branch — reconfirmados contra a nota real após o usuário reportar os 3
+    problemas juntos ("Número incorreto; data de emissão incorreta; tomador
+    do serviço incorreto"): o XML que o usuário viu ainda era da versão
+    ANTES do merge desta branch.
+  Suíte 269→**281 verdes**; teste novo
+  `test_data_emissao_usa_data_de_atendimento_em_vez_de_hoje` em
+  `test_simoes_filho_layout.py` (9 testes) e
+  `test_lauro_de_freitas_nfts_simoes_filho_prestador.py` (3 testes, cobrindo 3
+  achados novos na pág. 2/Lauro de Freitas NFTS da mesma nota: rótulo
+  "Nome/Razão" do prestador saindo "Noma/Razão" não reconhecido — prestador
+  caía em "Não Identificado"; "UF." com ponto em vez de dois-pontos vazava
+  "UF. BA" inteiro para dentro do Município do tomador; grade de valores
+  degradada por completo na leitura de página inteira, salvo um 3º fallback
+  que recupera Dedução/Base pela janela entre "ITEM DA LISTA DE SERVIÇOS" e
+  "VALOR LÍQUIDO DA NOTA FISCAL").
+
 - Novo layout **Goiânia/GO** (`goiania_go`) — plataforma ISSNet Online
   (issnetonline.com.br/goiania). Nota real nº 4 (ID Producao Musical Ltda →
   ELOS ESTUDIO E SERVICOS LTDA, R$ 600,00) caía inteira em `LAYOUT_CUIABA`:

@@ -177,6 +177,13 @@ class SPPdfExtractor:
         # como atributo escalar antes de chamar `sub_ext.parse()`.
         self._password_enotas_tomador_recut_por_pagina = {}
         self._password_enotas_prestador_im_recut_por_pagina = {}
+        # Recorte dedicado do bloco do PRESTADOR (Simões Filho/BA), sem o
+        # rótulo "PRESTADOR" (o crop começa em "Razão Social:") — não pode
+        # ser localizado pela mesma fatia "PRESTADOR...TOMADOR" usada no
+        # texto principal, por isso é guardado à parte e consultado primeiro
+        # por `_extrair_entidade_simoes_filho` (ver `_ocr_recut_prestador_
+        # simoes_filho`).
+        self._simoes_filho_prestador_recut = ''
         # Ângulo (0/90/180/270) escolhido pelo _ocr_page ao corrigir a rotação
         # de fotos/scans — reaproveitado por recortes dedicados (ex.: caixa de
         # cabeçalho do SP2) para renderizar a região na mesma orientação.
@@ -377,6 +384,18 @@ class SPPdfExtractor:
             return LAYOUT_GOIANIA
         if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet(?!\s*[Oo]nline)', t, re.IGNORECASE):
             return LAYOUT_CUIABA
+        # Simões Filho/BA ANTES de Barreiras: as duas prefeituras usam a MESMA
+        # plataforma/template ("Data Fato Gerador | Exigibilidade de ISS |
+        # Regime Tributário | Número RPS | Serie RPS | Nº da Nota Fiscal"),
+        # então a marca genérica de Barreiras casava primeiro e a nota de
+        # Simões Filho inteira caía no layout errado (achado real, nota nº
+        # 122/VITORIOS EMPILHADEIRAS -> BONI TRANSPORTES: Numero saía "246"
+        # vazado de "orçamento nº 246" na discriminação, CNPJ do prestador
+        # saía IGUAL ao do tomador, Município de ambas as entidades caía no
+        # fallback de Salvador). Detecção pelo nome da PREFEITURA (marca
+        # específica, não a estrutura genérica compartilhada).
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+SIM[OÕ]ES\s+FILHO', t, re.IGNORECASE):
+            return LAYOUT_SIMOES_FILHO
         if re.search(r'Data\s+Fato\s+Gerador', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
         # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA), emitida
@@ -622,6 +641,10 @@ class SPPdfExtractor:
             return LAYOUT_GOIANIA
         if re.search(r'Prefeitura Municipal de Cuiab[aá]|ISSNet(?!\s*[Oo]nline)', t, re.IGNORECASE):
             return LAYOUT_CUIABA
+        # Simões Filho/BA ANTES de Barreiras — mesma colisão de template
+        # documentada em `_detect_layout` (ver comentário lá).
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+SIM[OÕ]ES\s+FILHO', t, re.IGNORECASE):
+            return LAYOUT_SIMOES_FILHO
         if re.search(r'Data\s+Fato\s+Gerador|MUNICIPIO\s+DE\s+BARREIRAS', t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
         # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA), emitida
@@ -1033,6 +1056,32 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
+        if self.layout == LAYOUT_SIMOES_FILHO:
+            # "Emitido em 22/07/2026 21:14:46" — testado exaustivamente (zooms
+            # 3 a 14, autocontraste, binarização, whitelist de caracteres,
+            # recorte isolado): o Tesseract NUNCA lê essa linha certo nesta
+            # plataforma (mesma faixa castigada pela marca d'água/QR Code do
+            # Código de Verificação, achado real nota nº 122/VITORIOS
+            # EMPILHADEIRAS) — cada tentativa devolve dígitos/separadores
+            # diferentes, nenhum confiável o bastante pra virar dado.
+            m = re.search(r'Emitido\s+em\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+            # Fallback: em vez de cair para "agora" (mês errado na
+            # Competência), usa a data de atendimento citada na própria
+            # discriminação do serviço ("...atendimento realizado no dia
+            # 15/07/2026") — texto livre, sem a interferência da marca
+            # d'água, e que sobrevive ÍNTEGRO em toda leitura testada. Não é
+            # o timestamp exato de emissão (a hora fica 00:00:00), mas ancora
+            # o MÊS/ANO corretos, confirmados de forma independente pela nota
+            # irmã (Lauro de Freitas/NFTS, mesma transação): "Competência:
+            # 07/2026" — ambos concordam em julho/2026, nunca agosto.
+            m_atend = re.search(r'atendimento\s+realizado\s+no\s+dis?\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m_atend:
+                res = _parse_dmy(m_atend.group(1))
+                if res: return res
+
         if self.layout == LAYOUT_BIOCONTROL:
             # "Data de Emissão Competência Local da Prestação..." (rótulos)
             # seguido de "06/07/2026 07:46:49 07/2026 Lauro de Freitas..."
@@ -1395,6 +1444,22 @@ class SPPdfExtractor:
             # casar com "Número de RPS" (identificador intermediário distinto,
             # valor diferente do número da nota).
             m = re.search(r'N[úu]mero\s+da\s+Nota\s*\n+\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_SIMOES_FILHO:
+            # A extração genérica pegava "orçamento nº 246" de dentro do
+            # texto livre da discriminação do serviço (achado real, nota nº
+            # 122/VITORIOS EMPILHADEIRAS) — um número de orçamento do
+            # PRESTADOR, não o número oficial da nota. O número real fica na
+            # célula "Nº da Nota Fiscal" de uma tabela cuja leitura por OCR
+            # funde as colunas vizinhas numa linha só ("Tpode Recolhimento |
+            # Simples Tocal de Frostação Tocal de Recolhimento
+            # 202600000000122") — o valor sobrevive intacto (só o rótulo e as
+            # colunas ao redor saem corrompidos), então a âncora é o rótulo
+            # seguido de uma janela tolerante até a 1ª sequência longa de
+            # dígitos (13 a 17, cobre o formato observado: competência de 4
+            # dígitos + sequencial zero-padded).
+            m = re.search(r'N[ºo]\.?\s*da\s+Not[ae]\s+Fiscal.{0,250}?(\d{13,17})', t, re.IGNORECASE | re.DOTALL)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_BIOCONTROL:
@@ -1812,6 +1877,21 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_SIMOES_FILHO:
+            # Sem um limite dedicado, o genérico varria o documento inteiro
+            # até o fim (achado real, nota nº 122/VITORIOS EMPILHADEIRAS):
+            # a discriminação real vinha seguida da grade de valores inteira,
+            # do demonstrativo de tributos federais e do rodapé legal. Corta
+            # em "OBSERVAÇÃO" (rótulo fixo do template, mesmo quando o campo
+            # em si vem vazio nesta nota).
+            m = re.search(
+                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)\s*\n\s*OBSERVA[ÇC][ÃA]O',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_BIOCONTROL:
             # "Detalhamento dos Serviços\nTERMONEBULIZACAO, ATOMIZACAO,
             # CONTROLE DE BARATAS...\n\nRetencao para a Previdencia Social..."
@@ -2533,6 +2613,22 @@ class SPPdfExtractor:
         if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_FF_LOCACAO):
             return "FATURA"
 
+        if self.layout == LAYOUT_SIMOES_FILHO:
+            # Testado exaustivamente (zooms 3 a 12, 4 PSMs, whitelist de
+            # caracteres, recorte isolado da faixa) contra a nota real nº 122
+            # (VITORIOS EMPILHADEIRAS): o valor real, alfanumérico
+            # ("bd17528e3", conferido caractere a caractere contra a imagem
+            # renderizada), NUNCA é lido corretamente pelo Tesseract — todas
+            # as combinações devolvem uma leitura puramente numérica
+            # diferente a cada tentativa ("31752883", "752883", "31732883",
+            # "01752883"...), nenhuma batendo com o valor real. Diferente do
+            # Código de Verificação do Salvador/BA (onde um recorte dedicado
+            # resolve de forma confiável), aqui não há recorte/zoom que
+            # recupere o valor - devolver qualquer uma dessas leituras
+            # divergentes seria pior que o sentinela (pareceria um código
+            # válido, mas garantidamente errado).
+            return "XXXX-XXXX"
+
         if self.layout == LAYOUT_SAO_PAULO_2:
             # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
             # INVESTIMENTOS LTDA): quando `_ocr_header_box_sao_paulo` recupera
@@ -2887,6 +2983,11 @@ class SPPdfExtractor:
                 return self._extrair_prestador_sao_jose(t)
             else:
                 return self._extrair_tomador_sao_jose(t)
+
+        if self.layout == LAYOUT_SIMOES_FILHO:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_simoes_filho(is_prestador)
 
         if self.layout == LAYOUT_BIOCONTROL:
             if is_intermediario:
@@ -5142,6 +5243,128 @@ class SPPdfExtractor:
             telefone=telefone,
         )
 
+    def _extrair_entidade_simoes_filho(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador de uma NFS-e de Simões Filho/BA.
+
+        Blocos "PRESTADOR"/"TOMADOR" com rótulo→valor na MESMA linha (Razão
+        Social/Nome Fantasia/Endereço/E-mail/Inscrição Estadual/Inscrição
+        Municipal/CPF-CNPJ), seguidos por uma 2ª linha SOLTA (sem rótulo
+        próprio) com "<Município> - <UF> - CEP<:|.> <cep>" logo após o
+        Endereço — mesma plataforma/template de Barreiras/BA (daí a colisão
+        de detecção corrigida em `_detect_layout`), mas essa 2ª linha solta
+        não é reconhecida pelo parser genérico (cai em "Não informado"/
+        fallback de Salvador) e o CNPJ do prestador, quando o separador sai
+        corrompido pelo OCR, vazava o CNPJ do TOMADOR para as duas entidades
+        (achados reais, nota nº 122/VITORIOS EMPILHADEIRAS -> BONI
+        TRANSPORTES).
+
+        CNPJ tolerante a separador quebrado por OCR (espaço no lugar de um
+        ponto, ex. "50.945 432/0001-11" — mesmo padrão de outras correções
+        desta base, achado Lauro de Freitas 2026-08-21). Município
+        normalizado por substring estável (sobrevive à troca de acento/vogal
+        do OCR) em vez de comparação exata, para casar com o
+        `IBGEResolver.KNOWN_CITIES`.
+        """
+        t = self.raw_text
+        if is_prestador:
+            m_bloco = re.search(r'\bPRESTADOR\b(.*?)(?=\bTOMADOR\b|\Z)', t, re.IGNORECASE | re.DOTALL)
+            cnpj_cpf, razao_social = "00000000000000", "Prestador Não Identificado"
+            uf_default = "BA"
+        else:
+            m_bloco = re.search(
+                r'\bTOMADOR\b(.*?)(?=SERVI[ÇC]O\s+NACIONAL|SERVI[ÇC]O\s+NBS|DISCRIMINA[ÇC][ÃA]O|\Z)',
+                t, re.IGNORECASE | re.DOTALL)
+            cnpj_cpf, razao_social = "00000000000000", "Tomador Não Identificado"
+            uf_default = "BA"
+        bloco = m_bloco.group(1) if m_bloco else ''
+        if is_prestador:
+            # O recorte dedicado (sem o rótulo "PRESTADOR", começa direto em
+            # "Razão Social:") não é alcançado pela fatia acima — concatenado
+            # NA FRENTE do bloco para que as regexes abaixo (1º match vence)
+            # prefiram sua leitura mais limpa de Endereço/Município/CEP/
+            # Inscrição Municipal (ver `_ocr_recut_prestador_simoes_filho`).
+            recut = getattr(self, '_simoes_filho_prestador_recut', '') or ''
+            if recut.strip():
+                bloco = f"{recut}\n{bloco}"
+
+        logradouro, numero, bairro, complemento = "Não informado", "S/N", "Não informado", None
+        municipio, uf, cep = "Não informado", uf_default, "00000000"
+        email = None
+        inscricao_municipal = None
+
+        m_razao = re.search(r'Raz[ãa]o\s+Social\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+        if m_razao:
+            razao_social = m_razao.group(1).strip().rstrip('.').strip() or razao_social
+
+        # "En[dc]ere[çc]o" tolera o rótulo saindo "Encereço" no corpo (achado
+        # real, nota nº 122/VITORIOS EMPILHADEIRAS: "Endereço"->"Encereço",
+        # "d"->"c" — o recorte dedicado lê o rótulo certo, mas esta regex
+        # também precisa funcionar sem ele, ex. em testes com texto mockado).
+        m_end = re.search(
+            r'En[dc]ere[çc]o\s*:\s*([^\n]+)\n+\s*([^\n]+?)\s*-\s*([A-Z]{2})\s*-\s*CEP\s*[.:]\s*([\d-]+)',
+            bloco, re.IGNORECASE)
+        if m_end:
+            linha_endereco = m_end.group(1).strip()
+            partes = [p.strip() for p in linha_endereco.split(',') if p.strip()]
+            if partes:
+                logradouro = partes[0]
+                resto = []
+                for p in partes[1:]:
+                    if numero == 'S/N' and re.match(r'^\d+$', p):
+                        numero = p
+                    else:
+                        resto.append(p)
+                if resto:
+                    ultimo = resto[-1]
+                    if ' - ' in ultimo:
+                        resto[-1], bairro = (x.strip() for x in ultimo.rsplit(' - ', 1))
+                    else:
+                        bairro = ultimo
+                    complemento = ', '.join(resto) if resto else None
+
+            municipio_raw = m_end.group(2).strip()
+            if re.search(r'SIM.?ES', municipio_raw, re.IGNORECASE):
+                municipio = 'Simões Filho'
+            elif re.search(r'FREITAS', municipio_raw, re.IGNORECASE):
+                municipio = 'Lauro de Freitas'
+            else:
+                municipio = municipio_raw
+            uf = m_end.group(3).strip().upper()
+            cep = re.sub(r'\D', '', m_end.group(4))
+
+        m_email = re.search(r'E-?\s*mail\s*:\s*(\S+@\S+?\.\S+?)(?:\s*-\s*Fone|\s|$)', bloco, re.IGNORECASE)
+        if m_email:
+            email = m_email.group(1).strip().rstrip('.,')
+
+        m_im = re.search(r'Inscri[çc][ãa]o\s+Municipal\s*[;:]?\s*(\d+)', bloco, re.IGNORECASE)
+        if m_im:
+            inscricao_municipal = m_im.group(1).strip()
+
+        m_cnpj = re.search(
+            r'CPF\s*/?\s*CNPJ\s*[;:]?\s*(\d{2}[.\s]\d{3}[.\s]\d{3}\s*/\s*\d{4}\s*-\s*\d{2})',
+            bloco, re.IGNORECASE)
+        if m_cnpj:
+            cnpj_cpf = re.sub(r'\D', '', m_cnpj.group(1))
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+        return Entidade(
+            cnpj_cpf=cnpj_cpf,
+            inscricao_municipal=inscricao_municipal,
+            razao_social=razao_social,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+            email=email,
+        )
+
     def _extrair_prestador_sao_jose(self, t: str) -> Entidade:
         """Extrai o prestador de uma NFS-e de São José/SC.
 
@@ -5574,7 +5797,10 @@ class SPPdfExtractor:
         if is_prestador:
             cnpj = _cnpj_cpf(bloco_prestador)
             insc = _campo(r'Inscri[çc][aã]o\s*\n*\s*(\d+)', bloco_prestador)
-            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n*\s*(.+)', bloco_prestador) or 'Prestador Não Identificado'
+            # "Nom[ae]" tolera o rótulo saindo "Noma/Razão" no OCR (achado
+            # real, nota nº 20265323/VITORIOS EMPILHADEIRAS: "Nome"→"Noma"
+            # sem nenhum outro sinal de degradação por perto).
+            razao = _campo(r'Nom[ae]\s*/\s*Raz[ãa]o\s*\n*\s*(.+)', bloco_prestador) or 'Prestador Não Identificado'
             endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n*\s*(.+)', bloco_prestador) or 'Não informado'
             # Bairro/Município às vezes compartilham a MESMA linha ("Bairro:
             # Centro Município: LAURO DE FREITAS UF: BA") — a captura genérica
@@ -5584,23 +5810,27 @@ class SPPdfExtractor:
             # formatos sem regredir o caso "cada rótulo na própria linha".
             bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_prestador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_prestador)
-            municipio = (_campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_prestador)
-                         or _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_vazado)
+            # Lookahead tolera "UF." (ponto no lugar dos dois-pontos, achado
+            # real nota nº 20265323/VITORIOS EMPILHADEIRAS) além de "UF:" —
+            # sem isso, "LAURO DE FREITAS UF. BA" (mesma linha) vazava o
+            # "UF. BA" inteiro para dentro do valor do Município.
+            municipio = (_campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:.]|\n|$)', bloco_prestador)
+                         or _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:.]|\n|$)', bloco_vazado)
                          or 'LAURO DE FREITAS')
-            uf = (_campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_prestador)
-                  or _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_vazado)
+            uf = (_campo(r'\bUF\s*[:.]\s*([A-Z]{2})', bloco_prestador)
+                  or _campo(r'\bUF\s*[:.]\s*([A-Z]{2})', bloco_vazado)
                   or 'BA')
             email_pat = r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
             email = _campo(email_pat, bloco_prestador) or _campo(email_pat, bloco_vazado)
         else:
             cnpj = _cnpj_cpf(bloco_vazado)
             insc = None
-            razao = _campo(r'Nome\s*/\s*Raz[ãa]o\s*\n*\s*(.+)', bloco_tomador) or 'Tomador Não Identificado'
+            razao = _campo(r'Nom[ae]\s*/\s*Raz[ãa]o\s*\n*\s*(.+)', bloco_tomador) or 'Tomador Não Identificado'
             endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n*\s*(.+)', bloco_tomador) or 'Não informado'
             bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_tomador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_tomador)
-            municipio = _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*:|\n|$)', bloco_tomador) or 'Não informado'
-            uf = _campo(r'\bUF\s*:\s*([A-Z]{2})', bloco_tomador) or 'BA'
+            municipio = _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:.]|\n|$)', bloco_tomador) or 'Não informado'
+            uf = _campo(r'\bUF\s*[:.]\s*([A-Z]{2})', bloco_tomador) or 'BA'
             email = _campo(r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_tomador)
 
         cep = re.sub(r'\D', '', cep_raw) if cep_raw else '00000000'
@@ -7475,6 +7705,54 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout == LAYOUT_SIMOES_FILHO:
+            # Grade "VALOR SERVIÇO (R$) DEDUÇÕES (R$) DESCONTO INCONDICIONAL
+            # (R$) BASE CÁLCULO (R$) ALÍQUOTA (%) ISS (R$)" com os 6 valores
+            # numa única linha logo abaixo, na MESMA ordem dos rótulos —
+            # capturado como os 6 primeiros números entre o início do rótulo
+            # e "DEMONSTRATIVO" (janela sem nenhum outro número solto,
+            # validado contra a nota real nº 122/VITORIOS EMPILHADEIRAS).
+            # Alíquota sai sem separador decimal no OCR ("285" em vez de
+            # "2,85") em notas de baixa qualidade — 3-4 dígitos puros são
+            # tratados como percentual*100 (mesma faixa 2-5% do regime
+            # Simples Nacional exibida no rodapé fixo deste template).
+            m_bloco = re.search(r'VALOR\s+SERVI[ÇC]O.*?(?:DEMONSTRATIVO|\Z)', t, re.IGNORECASE | re.DOTALL)
+            nums = re.findall(r'\d+[.,]\d+|\d+', m_bloco.group(0)) if m_bloco else []
+
+            if len(nums) >= 6:
+                valor_servicos = self._parse_valor(nums[0])
+                valor_deducoes = self._parse_valor(nums[1])
+                desconto_incondicionado = self._parse_valor(nums[2])
+                base_calculo = self._parse_valor(nums[3])
+                aliq_raw = nums[4]
+                if re.match(r'^\d{3,4}$', aliq_raw):
+                    aliquota = self._parse_valor(aliq_raw) / 10000
+                else:
+                    aliquota = self._parse_valor(aliq_raw) / 100
+                valor_iss = self._parse_valor(nums[5])
+            else:
+                valor_servicos = valor_deducoes = desconto_incondicionado = 0.0
+                base_calculo = aliquota = valor_iss = 0.0
+
+            return Valores(
+                valor_servicos=valor_servicos,
+                valor_deducoes=valor_deducoes,
+                valor_pis=0.0,
+                valor_cofins=0.0,
+                valor_inss=0.0,
+                valor_ir=0.0,
+                valor_csll=0.0,
+                iss_retido=False,
+                valor_iss=valor_iss,
+                valor_iss_retido=0.0,
+                outras_retencoes=0.0,
+                base_calculo=base_calculo,
+                aliquota=aliquota,
+                valor_liquido_nfse=valor_servicos,
+                desconto_incondicionado=desconto_incondicionado,
+                desconto_condicionado=0.0,
+            )
+
         if self.layout == LAYOUT_BIOCONTROL:
             # Fonte: linhas canônicas prependidas pelo recorte dedicado
             # (`_ocr_recut_biocontrol`) - a leitura de página inteira
@@ -8367,7 +8645,45 @@ class SPPdfExtractor:
                     iss = self._parse_valor(nums_meio[1]) if len(nums_meio) >= 2 else 0.0
                     iss_retido = m_row_mei.group(4).strip().lower() == 'sim'
                 else:
-                    deducoes = base = aliquota = iss = 0.0
+                    # 3ª variante: a leitura de página inteira derruba TUDO
+                    # depois dos 2 primeiros valores (Alíquota/Valor do
+                    # ISS/ISSQN Retido somem por completo, mesmo em zoom
+                    # mais alto — achado real, nota nº 20265323/VITORIOS
+                    # EMPILHADEIRAS pág.2, testado nos zooms 3/5/6 sem
+                    # diferença). Só os 2 primeiros números (Dedução/Base,
+                    # sempre presentes) são recuperados aqui; Alíquota/ISS
+                    # ficam no sentinela 0,00 nesta página específica — a
+                    # nota irmã (pág.1, layout Simões Filho) tem os valores
+                    # completos e corretos para a mesma transação.
+                    m_row_parcial = re.search(
+                        r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\).*?'
+                        r'([\d\.,]+)\s+([\d\.,]+)',
+                        t, re.IGNORECASE | re.DOTALL
+                    )
+                    if m_row_parcial:
+                        deducoes = self._parse_valor(m_row_parcial.group(1))
+                        base = self._parse_valor(m_row_parcial.group(2))
+                    else:
+                        # Nem o cabeçalho "Valor Total Deduções (R$) Base de
+                        # Cálculo (R$)" sobrevive nesta leitura (some por
+                        # completo, achado real: mesma nota, outra chamada de
+                        # OCR não-determinística) — último recurso: os 2
+                        # últimos números em formato monetário (X.XXX,XX)
+                        # ANTES de "VALOR LÍQUIDO DA NOTA FISCAL" são,
+                        # comprovadamente nesta plataforma, Dedução e Base
+                        # de Cálculo nessa ordem (a descrição do serviço e o
+                        # código de item LC 116 não usam vírgula decimal,
+                        # então não há ambiguidade na janela).
+                        m_janela = re.search(
+                            r'ITEM\s+DA\s+LISTA\s+DE\s+SERVI[ÇC]OS.*?VALOR\s+L[ÍI]QUIDO\s+DA\s+NOTA\s+FISCAL',
+                            t, re.IGNORECASE | re.DOTALL)
+                        nums_janela = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', m_janela.group(0)) if m_janela else []
+                        if len(nums_janela) >= 2:
+                            deducoes = self._parse_valor(nums_janela[-2])
+                            base = self._parse_valor(nums_janela[-1])
+                        else:
+                            deducoes = base = 0.0
+                    aliquota = iss = 0.0
                     iss_retido = False
 
             m_val_total = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s+FISCAL\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
@@ -9489,6 +9805,20 @@ class SPPdfExtractor:
                         if grade_text:
                             best_text = f"{grade_text}\n{best_text}"
 
+                # Simões Filho/BA: recorta e reprocessa em zoom alto o bloco do
+                # PRESTADOR (Endereço/CEP/Inscrição Municipal) — a leitura de
+                # página inteira erra CEP e Inscrição Municipal (ver docstring
+                # de `_ocr_recut_prestador_simoes_filho`; o CNPJ nesta mesma
+                # faixa NÃO é recuperável por este mecanismo, ver mesma
+                # docstring). Prependado para que a extração de entidade
+                # (busca o 1º "CPF/CNPJ" do texto para o prestador) ache esta
+                # versão antes da versão mais abaixo.
+                if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+SIM[OÕ]ES\s+FILHO', best_text, re.IGNORECASE):
+                    prestador_sf = self._ocr_recut_prestador_simoes_filho(page)
+                    if prestador_sf.strip():
+                        self._simoes_filho_prestador_recut = prestador_sf
+                        best_text = f"{prestador_sf}\n{best_text}"
+
                 # PASSWORD/eNotas Gateway (Lauro de Freitas/BA) ESCANEADO: achado
                 # real, nota TÉSSERA HOSPITALITY (RPS 988, pág.4 do lote Guarajuba
                 # Suítes 07/2026) — 1ª nota ESCANEADA desta plataforma (PASSWORD e
@@ -9894,6 +10224,46 @@ class SPPdfExtractor:
                     return tentativa
 
             return texto_original
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_prestador_simoes_filho(page) -> str:
+        """Recorta e reprocessa em zoom alto (6x) o bloco do PRESTADOR da nota
+        Simões Filho/BA (Endereço/CEP/Inscrição Municipal/CPF-CNPJ). A leitura
+        de página inteira (zoom 3, padrão) erra o CEP ("49716-435" em vez do
+        real "43716-435") e a Inscrição Municipal ("28201" em vez de
+        "26201") — um recorte isolado da faixa (sem o resto da página ao
+        redor, que atrapalha a segmentação do Tesseract) em zoom 6
+        recupera os dois corretamente, validado contra a nota real nº 122
+        (VITORIOS EMPILHADEIRAS).
+
+        O CNPJ do prestador nesta mesma faixa ("50.949.432/0001-11") NÃO é
+        recuperado por este recorte — testado exaustivamente (zooms 3 a 12,
+        4 PSMs diferentes, whitelist de caracteres): o Tesseract lê
+        consistentemente "50.945.432/0001-11" (dígito "9"→"5" no meio do
+        número, reprova o checksum do CNPJ) em TODAS as combinações, mesmo
+        quando o crop isolado é idêntico ao usado aqui — não é um problema
+        de resolução/enquadramento, é uma limitação do próprio modelo de
+        reconhecimento do Tesseract para esse glifo específico neste
+        documento. Mantido como está (mesmo com o dígito errado) seguindo a
+        mesma política já usada para outros CNPJs comprovadamente
+        corrompidos nesta base: um CNPJ com formatação válida mas 1 dígito
+        possivelmente errado é preferível a um sentinela quando os demais
+        14 dígitos e a origem (bloco correto) são confiáveis — sentinela
+        fica reservado para dígitos genuinamente AUSENTES (grupo inteiro
+        faltando), não para "possivelmente 1 dígito trocado"."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            w, h = img.size
+            crop = img.crop((0, int(h * 0.24), w, int(h * 0.30)))
+            return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
         except Exception:
             return ""
 

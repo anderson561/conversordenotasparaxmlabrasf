@@ -39,7 +39,14 @@ class IBGEResolver:
 
     KNOWN_CITIES = {
         "CAMACARI": "2905701", "CAMAÇARI": "2905701",
-        "SIMOES FILHO": "2929206", "SIMÕES FILHO": "2929206",
+        # Achado real 2026-08-24 (nota nº 122/VITORIOS EMPILHADEIRAS, layout
+        # Simões Filho/BA): o código anterior (2929206) estava ERRADO — a
+        # própria Prefeitura Municipal de Simões Filho imprime na nota o
+        # código oficial "2930709 - Simões Filho - BA" (campo "Local de
+        # Recolhimento"), confirmado contra a fonte oficial do IBGE
+        # (cidades.ibge.gov.br/brasil/ba/simoes-filho). Afeta também o
+        # prestador fixo do LAYOUT_PJB_LOCACAO (mesma cidade).
+        "SIMOES FILHO": "2930709", "SIMÕES FILHO": "2930709",
         "LAURO DE FREITAS": "2919207",
         "FEIRA DE SANTANA": "2910800",
         "BARREIRAS": "2903201",
