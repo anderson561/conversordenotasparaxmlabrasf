@@ -52,15 +52,37 @@ sessão, de todos os layouts/fixes entregues está em
   `CodigoVerificacao` (valor real alfanumérico "bd17528e3", conferido
   caractere a caractere contra a imagem) fica no sentinela `XXXX-XXXX` — toda
   tentativa de OCR devolve uma leitura numérica diferente e garantidamente
-  errada, nunca o valor real; sentinela honesto é preferível. Data de Emissão
-  pela mesma razão cai no fallback de "agora" (sinalizado via `Nfse.avisos`,
-  mecanismo genérico já existente). **Corrigido também o código IBGE de
-  Simões Filho/BA no `IBGEResolver.KNOWN_CITIES`: estava `2929206` (errado,
-  nunca conferido contra fonte oficial) — a própria Prefeitura imprime na nota
-  o código oficial `2930709` (confirmado contra cidades.ibge.gov.br); afeta
-  também o prestador fixo do `LAYOUT_PJB_LOCACAO` (mesma cidade), corrigido
-  junto.** Suíte 269→**280 verdes**; testes novos
-  `test_simoes_filho_layout.py` (8 testes) e
+  errada, nunca o valor real; sentinela honesto é preferível. **Corrigido também
+  o código IBGE de Simões Filho/BA no `IBGEResolver.KNOWN_CITIES`: estava
+  `2929206` (errado, nunca conferido contra fonte oficial) — a própria
+  Prefeitura imprime na nota o código oficial `2930709` (confirmado contra
+  cidades.ibge.gov.br); afeta também o prestador fixo do `LAYOUT_PJB_LOCACAO`
+  (mesma cidade), corrigido junto.**
+  - **Fix — Data de Emissão caindo no fallback "agora" (pedido explícito do
+    usuário após o primeiro round: "Data de emissão incorreta")**: a linha
+    "Emitido em 22/07/2026 21:14:46" nunca sai legível do OCR nesta
+    plataforma — testado exaustivamente (zooms 3 a 14, autocontraste,
+    binarização, whitelist de caracteres, recorte isolado da faixa, mesma
+    região castigada pelo QR Code/marca d'água do Código de Verificação):
+    cada tentativa devolve dígitos/separadores diferentes, nunca o valor
+    real. Sem tratamento dedicado, `DataEmissao` caía em "agora" (a
+    `Competencia` saía do MÊS ERRADO — agosto em vez de julho). Corrigido com
+    um fallback que usa a data de atendimento citada na própria discriminação
+    do serviço ("...atendimento realizado no dia 15/07/2026") — texto livre,
+    fora da faixa degradada, que sobrevive ÍNTEGRO em toda leitura testada.
+    Não é o timestamp exato de emissão (hora fica 00:00:00), mas acerta
+    dia/mês/ano reais, confirmados de forma independente pela nota irmã
+    (Lauro de Freitas/NFTS, mesma transação): "Competência: 07/2026" — as
+    duas fontes concordam em julho/2026, nunca em agosto.
+  - `Numero` (vazava "246" do orçamento) e o CNPJ do prestador (saía IGUAL ao
+    do tomador) já estavam corrigidos desde o commit anterior desta mesma
+    branch — reconfirmados contra a nota real após o usuário reportar os 3
+    problemas juntos ("Número incorreto; data de emissão incorreta; tomador
+    do serviço incorreto"): o XML que o usuário viu ainda era da versão
+    ANTES do merge desta branch.
+  Suíte 269→**281 verdes**; teste novo
+  `test_data_emissao_usa_data_de_atendimento_em_vez_de_hoje` em
+  `test_simoes_filho_layout.py` (9 testes) e
   `test_lauro_de_freitas_nfts_simoes_filho_prestador.py` (3 testes, cobrindo 3
   achados novos na pág. 2/Lauro de Freitas NFTS da mesma nota: rótulo
   "Nome/Razão" do prestador saindo "Noma/Razão" não reconhecido — prestador

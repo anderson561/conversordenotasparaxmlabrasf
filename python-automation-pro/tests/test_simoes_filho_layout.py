@@ -189,6 +189,28 @@ def test_valores_grade_com_aliquota_sem_separador_decimal():
         os.remove(dummy_path)
 
 
+def test_data_emissao_usa_data_de_atendimento_em_vez_de_hoje():
+    """A linha "Emitido em 22/07/2026 21:14:46" nunca sai legível do OCR
+    nesta plataforma (testado exaustivamente — zooms, PSMs, binarização,
+    recorte isolado). Sem um fallback dedicado, a extração genérica cairia no
+    sentinela "agora" (mês errado na Competência). A data de atendimento
+    citada na própria discriminação ("...no dia 15/07/2026") é o único sinal
+    de data limpo e confiável nesta nota — usada como proxy, confirmada de
+    forma independente pela Competência "07/2026" da nota irmã (Lauro de
+    Freitas/NFTS, mesma transação)."""
+    extractor, dummy_path = _novo_extrator()
+    try:
+        extractor.layout = LAYOUT_SIMOES_FILHO
+        data = extractor._extrair_data_emissao()
+        assert data.year == 2026
+        assert data.month == 7
+        assert data.day == 15
+        # Não deve mais cair no sentinela "agora" (mês/ano de hoje).
+        assert not extractor._data_emissao_fallback
+    finally:
+        os.remove(dummy_path)
+
+
 def test_discriminacao_nao_engole_a_grade_de_valores_e_rodape():
     extractor, dummy_path = _novo_extrator()
     try:

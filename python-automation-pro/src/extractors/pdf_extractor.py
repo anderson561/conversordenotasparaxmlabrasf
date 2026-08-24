@@ -1056,6 +1056,32 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
+        if self.layout == LAYOUT_SIMOES_FILHO:
+            # "Emitido em 22/07/2026 21:14:46" — testado exaustivamente (zooms
+            # 3 a 14, autocontraste, binarização, whitelist de caracteres,
+            # recorte isolado): o Tesseract NUNCA lê essa linha certo nesta
+            # plataforma (mesma faixa castigada pela marca d'água/QR Code do
+            # Código de Verificação, achado real nota nº 122/VITORIOS
+            # EMPILHADEIRAS) — cada tentativa devolve dígitos/separadores
+            # diferentes, nenhum confiável o bastante pra virar dado.
+            m = re.search(r'Emitido\s+em\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+            # Fallback: em vez de cair para "agora" (mês errado na
+            # Competência), usa a data de atendimento citada na própria
+            # discriminação do serviço ("...atendimento realizado no dia
+            # 15/07/2026") — texto livre, sem a interferência da marca
+            # d'água, e que sobrevive ÍNTEGRO em toda leitura testada. Não é
+            # o timestamp exato de emissão (a hora fica 00:00:00), mas ancora
+            # o MÊS/ANO corretos, confirmados de forma independente pela nota
+            # irmã (Lauro de Freitas/NFTS, mesma transação): "Competência:
+            # 07/2026" — ambos concordam em julho/2026, nunca agosto.
+            m_atend = re.search(r'atendimento\s+realizado\s+no\s+dis?\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m_atend:
+                res = _parse_dmy(m_atend.group(1))
+                if res: return res
+
         if self.layout == LAYOUT_BIOCONTROL:
             # "Data de Emissão Competência Local da Prestação..." (rótulos)
             # seguido de "06/07/2026 07:46:49 07/2026 Lauro de Freitas..."
