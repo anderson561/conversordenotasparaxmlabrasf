@@ -121,7 +121,11 @@ def test_prestador_e_tomador_nao_compartilham_cnpj():
         tomador = extractor._extrair_entidade('Tomador')
         # BUG CORRIGIDO: prestador saía com o MESMO CNPJ do tomador.
         assert prestador.cnpj_cpf != tomador.cnpj_cpf
-        assert prestador.cnpj_cpf == "50945432000111"
+        # BUG CORRIGIDO: o bloco PRESTADOR sai com o dígito "9" de "949" lido
+        # como "5" pelo Tesseract ("945", falha no dígito verificador do
+        # CNPJ) — recuperado via a citação do mesmo CNPJ na seção de forma
+        # de pagamento ("Pix CNPJ: 50.949.432/0001-11"), que sai correta.
+        assert prestador.cnpj_cpf == "50949432000111"
         assert "VITORIOS EMPILHADEIRAS" in prestador.razao_social
         assert tomador.cnpj_cpf == "04555283000199"
         assert "BONI TRANSPORTES" in tomador.razao_social
