@@ -107,6 +107,7 @@ LAYOUT_BIOCONTROL = 'biocontrol_dedetizadora'  # BIO CONTROL DESINSETIZADORA LTD
 LAYOUT_DANFE_PRODUTO = 'danfe_produto'  # NF-e Modelo 55 (DANFE Estadual) - documento de PRODUTO/mercadoria tributado por ICMS/IPI, estruturalmente DIFERENTE de qualquer NFS-e (não tem "discriminação"/"código de serviço" único - tem tabela de N itens com NCM/CFOP, grade de ICMS e bloco "TRANSPORTADOR/VOLUMES TRANSPORTADOS"). Retorna um objeto `NfeProduto` em vez de `Nfse` (ver `parse()`/`_parse_danfe_produto`). Detecção ESTRUTURAL (não gated a nenhum emitente específico - decisão do usuário, pois notas de compra de mercadoria vêm de fornecedores variados, ao contrário do padrão "prestador fixo" de faturas de locação recorrentes): exige a combinação "DANFE" + "Documento Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA" - assinatura mandada pelo padrão nacional SEFAZ/CONFAZ para TODO Modelo 55, ausente de qualquer NFS-e. Checada bem no TOPO de `_detect_layout`/`_detect_layout_page`, antes até do check da DANFSe Nacional: o rótulo genérico "FATURA/DUPLICATA" (presente em qualquer DANFE) colidia com a marca da Localiza (`LAYOUT_LOCALIZA`), e "CHAVE DE ACESSO" colidiria com o fallback amplo da DANFSe Nacional - achado real ao revisar a nota nº 52.136 (GRAN COFFEE COM. LOC. E SERVICOS -> SINDICATO DOS DELEGADOS DE POLICIA, venda de café, R$595,00): sem esta detecção no topo, a nota caía inteira em `LAYOUT_LOCALIZA` e saía com tomador não identificado, valor zerado e o prestador hardcoded errado ("LOCALIZA RENT A CAR S/A" - nome de OUTRO emitente fixo). Emitente extraído do bloco livre (letterhead) impresso entre o canhoto/recibo e o box "DANFE" (CNPJ/IE vêm de rótulos isolados na grade, não do letterhead); destinatário da grade "DESTINATÁRIO/REMETENTE" (rótulos padronizados nacionalmente); tabela de itens modelada como lista (`ItemProduto`) - nesta nota só há 1 item, mas o parser da linha da tabela generaliza para N linhas repetidas. Grade "CÁLCULO DE IMPOSTO" tem um quirk de ordem: o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de rótulos) tem seu VALOR deslocado para o FIM do 2º bloco de valores (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) - mesma família geral de "labels dumped, depois values dumped" já vista em várias NFS-e, faceta nova aqui. Chave de acesso é a REAL do documento (extraída do código de barras/texto, não gerada por checksum como no `NfeTransformer` workaround) - ver `src/transformers/nfe_produto_transformer.py`.
 LAYOUT_SANTOS = 'santos_sp'  # Prefeitura Municipal de Santos/SP (plataforma Ginfes, santos.ginfes.com.br - mesma plataforma do LAYOUT_GUARULHOS, mas nota DIGITAL/pdfminer, não escaneada). Achado real: nota nº 16, IN.OUT MOVEIS E DECORACOES LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS LTDA, R$6.666,86, dedicado por município (não pela plataforma) para não colidir com futuras notas Ginfes de outras cidades. Blocos "Prestador de Serviço"/"Tomador de Serviço" com rótulo→valor adjacente (label, quebra, valor) para quase todo campo, mas em ORDEM VISUAL de 2 colunas (não top-to-bottom) - "Tomador de Serviço" (cabeçalho de seção) aparece no MEIO do próprio bloco do tomador (entre Nome/Razão Social e Endereço), então o fatiamento usa a 2ª ocorrência do rótulo "CPF/CNPJ:" como início do bloco tomador (mesmo princípio de "N-ésima ocorrência = N-ésima entidade" já usado em outros layouts), não o cabeçalho de seção. Endereço do prestador vem com o filler "Sem tipo de logradouro " prepended pela plataforma quando o logradouro não tem um tipo reconhecido (removido antes de gravar). Duas grades "rótulos em cima, valores embaixo" (padrão Ginfes/Monte Santo): "Identificação Prestação de Serviços"/"Detalhamento de Valores (R$)" - a 2ª tem 13 rótulos fixos (Valor do Serviço...Valor Líquido) mas só 10 valores nesta nota, porque ISSQN/IBS/CBS saem literalmente EM BRANCO (nenhum caractere, nem "0,00" nem "*") quando o prestador é optante do Simples Nacional (ISS pago via guia única/DAS, não itemizado) - mapeados por POSIÇÃO FIXA pelos 2 extremos (9 primeiros rótulos = 9 primeiros valores; Valor Líquido = ÚLTIMO valor, robusto a quantos dos 3 últimos rótulos estiverem em branco), com ISSQN mantido em 0,00 SEMPRE (decisão do usuário: nunca fabricar/derivar de Base×Alíquota mesmo quando ambos saem limpos - mesmo critério já usado no fix de Aracaju/WebISS). IBS/CBS (campos novos da Reforma Tributária) não têm tag no ABRASF 2.01 - descartados.
 LAYOUT_GOIANIA = 'goiania_go'  # Prefeitura Municipal de Goiânia/GO (plataforma ISSNet Online, issnetonline.com.br/goiania — MESMO fornecedor/marca "ISSNet" já usada por LAYOUT_CUIABA, cidade diferente). Achado real: nota nº 4, ID Producao Musical Ltda -> ELOS ESTUDIO E SERVICOS LTDA, R$600,00 (valor_servicos saía zerado, ValorIss/ValorIr saíam 600,00 fabricados/trocados, RazaoSocial do prestador saía "Série do Documento" - um rótulo solto do cabeçalho -, e RazaoSocial do tomador saía como o próprio endereço dele). CAUSA-RAIZ: a nota inteira colidia com `LAYOUT_CUIABA` porque o detector daquele layout casava a palavra solta "ISSNet" (sem exigir "Cuiabá" por perto) em QUALQUER documento que a contivesse - e "issnetonline.com.br/goiania" contém "issnet" como substring (mesma família de bug já documentada em `gotcha-layout-detection-collision.md`: nunca detectar por marca de PLATAFORMA/SaaS compartilhada por vários municípios, só pelo nome do município - mesma decisão já tomada para Mata de São João/SAATRI e Rosário da Limeira/FUTURIZE). Fix: a marca "ISSNet" de Cuiabá passou a exigir que NÃO seja seguida de "online" (`ISSNet(?!\s*[Oo]nline)`), preservando o fallback OCR de Cuiabá (nenhum mock real daquele layout tem "online" colado). PDF DIGITAL cujo `pdfminer.extract_text()` produz uma ordem de leitura completamente fora de ordem (linhas de colunas visuais diferentes intercaladas de forma não-monotônica - pior que o quirk "labels dumped, values dumped" de outros layouts: aqui nem um mapeamento por índice fixo é confiável) - usa `_reconstruir_texto_por_coordenadas` (mesma técnica de reconstrução por LTChar já usada em `camacari_sisloc`) para obter o texto na ordem visual real antes de qualquer extração de campo. Após a reconstrução, o bloco do PRESTADOR (coluna esquerda do cabeçalho) fica intercalado linha a linha com os METADADOS do cabeçalho (coluna direita: Data de Geração/Competência/Cód. Autenticidade), pois ambos compartilham a mesma faixa de Y - cada regex de campo do prestador pula exatamente 1 linha (a do metadado concorrente) até o valor real. Bloco do TOMADOR já vem limpo (rótulo\s*:\s*valor, sem essa intercalação). Bloco "Dados do Intermediário de Serviços" vem sempre vazio nesta plataforma (raiz do "Intermediário fantasma" no bug original, que inventava um intermediário a partir de texto solto de outra seção) - mapeado para `None`.
+LAYOUT_BARUERI = 'barueri_sp'  # Prefeitura Municipal de Barueri/SP (barueri.sp.gov.br/nfe). Achado real: nota nº 0380578, ALELO INSTITUIÇÃO DE PAGAMENTO S.A. (CNPJ 04.740.876/0001-25) -> CLINICA PNEUMOLOGICA PROF ALMERIO MACHADO (Salvador/BA), R$2,74 de tarifa (fatura de "agenciamento, corretagem ou intermediação" cobrada pela Alelo sobre um benefício-alimentação de R$430,00 repassado ao tomador). PDF DIGITAL (pdfminer, sem OCR). Bloco "Prestador de Serviços" com razão social + 2 linhas de endereço (logradouro/número/complemento, depois bairro) ANTES dos rótulos "CNPJ/CPF"/"Inscrição Municipal"/"Telefone"/"e-mail" (Telefone/e-mail ficam em branco nesta nota — nenhum valor colado neles, só o próximo cabeçalho de seção). Bloco "Nome Tomador de Serviços" tem cada rótulo adjacente ao próprio valor (não é "labels dumped, depois values dumped") - EXCETO "CEP"/"Bairro", que saem como 2 rótulos consecutivos com um ÚNICO valor combinado logo abaixo ("40150-130 Graça", sem separador). Só a grade de item que vem depois (Qtde/Descrição do Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total) segue o padrão "6 rótulos dumped, depois os 6 valores na MESMA ordem" (mesma família de Monte Santo/Ginfes/Santos), usada para extrair descrição/código de serviço/alíquota. "VALOR LIQUIDO DA NOTA" impresso no rodapé (R$432,74) inclui o REPASSE a terceiros (R$430,00, o crédito do benefício-alimentação que a Alelo só está repassando, não é receita de serviço) somado à tarifa — usar esse valor como `ValorServicos`/`ValorLiquidoNfse` sobrestimaria em ~150x o valor tributável do serviço. `ValorServicos`/`BaseCalculo` = "TOTAL DE TARIFA" (R$2,74, bate com a "Valor Total" da grade do item); `Aliquota` = "Alíquota" da grade (2,00% → 0.02); `ValorIr` = "IRRF" da grade de retenções federais (labels-dumped/values-dumped: IRRF/PIS-PASEP/COFINS/CSLL, depois os 4 valores); `ValorIss` mantido em 0,00 (nenhum valor de ISS impresso separadamente — "TOTAL DE IMPOSTOS" bate exatamente com o IRRF sozinho, sem sobra pro ISS; não fabricado). Repasse a terceiros descartado do XML (não é ValorDeducoes nem faz parte do serviço tributável) — sinalizado em `Nfse.avisos` para o usuário conferir manualmente se precisa de tratamento contábil à parte.
 LAYOUT_VINHEDO = 'vinhedo_sp'  # Prefeitura Municipal de Vinhedo/SP (plataforma Balker, vinhedo.balker.com.br). Achado real: nota nº 139, WEDO DECOR LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, R$1.049,79 (fallback genérico saía com valor_servicos zerado, valor_iss fabricado, UF do prestador "BA", município caindo no fallback Salvador/BA - Vinhedo ausente de KNOWN_CITIES -, e a razão social do TOMADOR saindo como "País: BRASIL"). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com rótulo→valor adjacente (label + dois-pontos, mesma linha ou linha seguinte) para quase todo campo - mas o cabeçalho de seção "TOMADOR DE SERVIÇOS" sai DESLOCADO no MEIO do próprio bloco do tomador (entre as Inscrições e o Endereço), mesmo quirk do Santos/SP; fatiamento usa a 2ª ocorrência de "Razão Social/Nome:" como início do bloco tomador. Data de Emissão em formato "DD/MMM/AAAA - HH:MM:SS" com mês abreviado em PT-BR ("28/JUL/2026"), único layout com esse formato - usa o dicionário `_MESES_PT` já existente. Grade de Retenções Federais + Base/Alíquota/ISS (2 linhas x 7 colunas, sem linhas de separação): o pdfminer emite cada VALOR defasado em 1 coluna em relação ao próprio rótulo (mesma família de quirk "labels dumped, values dumped", mas aqui por DESLOCAMENTO DE COLUNA em vez de por blocos separados) - ordem real observada no texto: INSS, IRRF, CSLL, PIS, COFINS, Outras Retenções, Base de Cálculo, Deduções, Alíquota, Vlr ISS, IBS, CBS, Vlr Líquido (mapeado por índice fixo, documentado no código). "Desc. Incondicional" nunca aparece impresso nesta plataforma (nem "0,00" nem placeholder) - mantido em 0,00 (default do model). IBS/CBS (Reforma Tributária) não têm tag no ABRASF 2.01 - descartados após a leitura.
 
 
@@ -481,6 +482,8 @@ class SPPdfExtractor:
             return LAYOUT_SANTOS
         if re.search(r'PREFEITURA MUNICIPAL DE VINHEDO', t, re.IGNORECASE):
             return LAYOUT_VINHEDO
+        if re.search(r'PREFEITURA MUNICIPAL DE BARUERI', t, re.IGNORECASE):
+            return LAYOUT_BARUERI
         if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
             return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
@@ -727,6 +730,8 @@ class SPPdfExtractor:
             return LAYOUT_SANTOS
         if re.search(r'PREFEITURA MUNICIPAL DE VINHEDO', t, re.IGNORECASE):
             return LAYOUT_VINHEDO
+        if re.search(r'PREFEITURA MUNICIPAL DE BARUERI', t, re.IGNORECASE):
+            return LAYOUT_BARUERI
         if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
             return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
@@ -1015,6 +1020,20 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
+        if self.layout == LAYOUT_BARUERI:
+            # "Data Emissão\n06/01/2026\nCódigo Autenticidade\n\nHora
+            # Emissão\n08:21" — a caixa de cabeçalho é uma grade 2 colunas x 3
+            # linhas lida por COLUNA (pdfminer): col.1 = Data Emissão/valor/
+            # Código Autenticidade(rótulo), col.2 = Hora Emissão/valor/valor
+            # do código — "Data Emissão" e "Hora Emissão" NUNCA ficam
+            # adjacentes um ao outro, cada rótulo tem seu valor logo abaixo
+            # dentro da PRÓPRIA coluna.
+            m_data = re.search(r'Data\s+Emiss[ãa]o\s*\n+\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            m_hora = re.search(r'Hora\s+Emiss[ãa]o\s*\n+\s*(\d{2}:\d{2})', t, re.IGNORECASE)
+            if m_data:
+                res = _parse_dmy(m_data.group(1), m_hora.group(1) if m_hora else None)
+                if res: return res
+
         if self.layout == LAYOUT_VINHEDO:
             # "Data de Emissão\n28/JUL/2026 - 14:24:50" — único layout com mês
             # abreviado em PT-BR nesta posição (a maioria usa DD/MM/YYYY
@@ -1393,6 +1412,13 @@ class SPPdfExtractor:
 
     def _extrair_numero(self) -> str:
         t = self.raw_text
+
+        if self.layout == LAYOUT_BARUERI:
+            # "Número da Nota\n0380578\nSérie da Nota\nNúmero RPS\n..." — ancorado
+            # no rótulo próprio pra não casar com "Número RPS" (identificador do
+            # RPS que originou a nota, valor diferente).
+            m = re.search(r'N[uú]mero\s+da\s+Nota\s*\n+\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_VINHEDO:
             # "Nº Nota\n139\nSerie 2" — rótulo/valor em linhas separadas.
@@ -1888,6 +1914,30 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_BARUERI:
+            # A grade do item tem 5 rótulos dumped juntos (Descrição do
+            # Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total),
+            # DEPOIS os 5 valores na mesma ordem — "Descrição do Serviço" não
+            # é seguido do próprio valor, e sim do próximo rótulo ("Código
+            # Serviço"). Não há bloco de texto livre "DISCRIMINAÇÃO" com a
+            # descrição do serviço em si nesta plataforma (esse cabeçalho
+            # introduz só o RESUMO de valores/repasse). Complementado com a
+            # linha "ALELO ALIMENTACAO = R$ ..." pra dar contexto do repasse
+            # (ver aviso em `parse()`).
+            m_grid = re.search(
+                r'Descri[çc][ãa]o\s+do\s+Servi[çc]o\s*\n+\s*C[óo]digo\s+Servi[çc]o\s*\n+\s*'
+                r'Al[íi]quota\s*\n+\s*Valor\s+Unit[áa]rio\s*\n+\s*Valor\s+Total\s*\n+(.*)',
+                t, re.IGNORECASE | re.DOTALL)
+            desc = "Serviços prestados conforme nota fiscal."
+            if m_grid:
+                valores_grid = [l.strip() for l in m_grid.group(1).split('\n') if l.strip()]
+                if valores_grid:
+                    desc = valores_grid[0]
+            m_repasse = re.search(r'(ALELO\s+ALIMENTACAO\s*=\s*R\$\s*[\d.,]+)', t, re.IGNORECASE)
+            if m_repasse:
+                desc = f"{desc} ({m_repasse.group(1).strip()})"
+            return desc
+
         if self.layout == LAYOUT_SIMOES_FILHO:
             # Sem um limite dedicado, o genérico varria o documento inteiro
             # até o fim (achado real, nota nº 122/VITORIOS EMPILHADEIRAS):
@@ -2331,6 +2381,26 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_BARUERI:
+            # Mesma grade "5 rótulos dumped, depois 5 valores" da
+            # discriminação (ver `_extrair_discriminacao`) — "Código
+            # Serviço" não é seguido do próprio valor, e sim do rótulo
+            # "Alíquota". "100202220" é um código municipal estendido; os 4
+            # primeiros dígitos ("1002") batem com o formato LC116 (NN.NN) e
+            # com a descrição impressa ("Agenciamento, corretagem ou
+            # intermediação de contratos quaisquer...", item 10.02/10.05 da
+            # lista). Extraído como impresso (4 primeiros dígitos), sem
+            # reclassificar manualmente.
+            m_grid = re.search(
+                r'Descri[çc][ãa]o\s+do\s+Servi[çc]o\s*\n+\s*C[óo]digo\s+Servi[çc]o\s*\n+\s*'
+                r'Al[íi]quota\s*\n+\s*Valor\s+Unit[áa]rio\s*\n+\s*Valor\s+Total\s*\n+(.*)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m_grid:
+                valores_grid = [l.strip() for l in m_grid.group(1).split('\n') if l.strip()]
+                if len(valores_grid) >= 2:
+                    m_cod = re.search(r'(\d{4})', valores_grid[1])
+                    if m_cod: return m_cod.group(1)
+
         if self.layout == LAYOUT_VINHEDO:
             # "Código do Serviço: Ativ. Serviço: 7.19 - Acompanhamento..." —
             # item LC116 (NN.NN) após o rótulo "Ativ. Serviço:".
@@ -2592,6 +2662,18 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_BARUERI:
+            # "Código Autenticidade" aparece 2x: a 1ª (caixa de cabeçalho,
+            # grade 2 colunas lida por coluna) tem "Hora Emissão" colado logo
+            # abaixo do rótulo, não o valor real; a 2ª (rodapé) tem o valor
+            # ("153Z.3080.1301.6770899-S") diretamente adjacente. Itera todas
+            # as ocorrências e aceita a 1ª cujo valor seguinte já pareça um
+            # código de verdade (tem dígito, "Hora Emissão" não tem).
+            for m in re.finditer(r'C[óo]digo\s+Autenticidade\s*\n+\s*([^\n]+)', t, re.IGNORECASE):
+                candidato = m.group(1).strip()
+                if re.match(r'^[A-Z0-9][A-Z0-9.\-]{6,}$', candidato, re.IGNORECASE) and re.search(r'\d', candidato):
+                    return candidato.upper()
+
         if self.layout in (LAYOUT_SANTOS, LAYOUT_VINHEDO):
             # "Código de Verificação\nAKBT3QZT1" (Santos) / "Código de
             # Verificação\n\n1156785ZOC" (Vinhedo) — rótulo próprio, adjacente
@@ -2999,6 +3081,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_simoes_filho(is_prestador)
+
+        if self.layout == LAYOUT_BARUERI:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_barueri(is_prestador)
 
         if self.layout == LAYOUT_BIOCONTROL:
             if is_intermediario:
@@ -5270,6 +5357,129 @@ class SPPdfExtractor:
             ),
             email=email,
             telefone=telefone,
+        )
+
+    def _extrair_entidade_barueri(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador de uma NFS-e de Barueri/SP.
+
+        PDF digital (pdfminer, sem OCR) com uma peculiaridade de ordem de
+        leitura: quase todo rótulo tem seu valor logo abaixo (sem outro
+        rótulo interposto), MAS "CEP"/"Bairro" do tomador saem como 2
+        rótulos consecutivos com um ÚNICO valor combinado logo abaixo
+        ("40150-130 Graça" — CEP e bairro colados numa linha só, sem
+        separador) e "CNPJ/CPF"/"Inscrição Municipal" do PRESTADOR saem
+        cada um seguido do rótulo "Telefone"/"e-mail" (ambos em branco
+        nesta nota) ANTES do próprio valor.
+
+        Bloco do prestador (razão social + 2 linhas de endereço) vem em
+        ORDEM FIXA logo após o rótulo "Prestador de Serviços", ANTES de
+        qualquer rótulo de campo — mapeado por posição (1ª linha = razão,
+        2ª = logradouro/número/complemento, 3ª = bairro/distrito, 4ª =
+        CEP/cidade/UF), não por rótulo próprio (só "CNPJ/CPF" e "Inscrição
+        Municipal" têm rótulo aqui).
+        """
+        t = self.raw_text
+        if is_prestador:
+            m_bloco = re.search(
+                r'Prestador\s+de\s+Servi[çc]os\s*\n+(.*?)\n\s*Nome\s+Tomador',
+                t, re.IGNORECASE | re.DOTALL)
+            cnpj_cpf, razao_social = "00000000000000", "Prestador Não Identificado"
+            uf_default = "SP"
+        else:
+            m_bloco = re.search(
+                r'Nome\s+Tomador\s+de\s+Servi[çc]os\s*\n+(.*?)(?=Qtde|DISCRIMINA[ÇC][ÃA]O|\Z)',
+                t, re.IGNORECASE | re.DOTALL)
+            cnpj_cpf, razao_social = "00000000000000", "Tomador Não Identificado"
+            uf_default = "BA"
+        bloco = m_bloco.group(1) if m_bloco else ''
+
+        logradouro, numero, bairro, complemento = "Não informado", "S/N", "Não informado", None
+        municipio, uf, cep = "Não informado", uf_default, "00000000"
+        email = None
+        inscricao_municipal = None
+
+        if is_prestador:
+            linhas = [l.strip() for l in bloco.split('\n') if l.strip()]
+            if len(linhas) >= 4:
+                razao_social = linhas[0]
+                m_end = re.match(r'^(.*?),\s*(\d+)\s*-?\s*(.*)$', linhas[1])
+                if m_end:
+                    logradouro = m_end.group(1).strip()
+                    numero = m_end.group(2)
+                    complemento = m_end.group(3).strip() or None
+                else:
+                    logradouro = linhas[1]
+                bairro = linhas[2].split('/')[-1].strip() or linhas[2]
+                m_cep = re.search(r'CEP\s*([\d\-]+)\s*-\s*(.+?)\s*-\s*([A-Z]{2})', linhas[3], re.IGNORECASE)
+                if m_cep:
+                    cep = re.sub(r'\D', '', m_cep.group(1))
+                    municipio = m_cep.group(2).strip()
+                    uf = m_cep.group(3).upper()
+
+            m_cnpj = re.search(r'CNPJ\s*/\s*CPF\s*\n+(?:Telefone\s*\n+)?\s*([\d./\-]+)', bloco, re.IGNORECASE)
+            if m_cnpj:
+                cnpj_cpf = re.sub(r'\D', '', m_cnpj.group(1))
+            m_im = re.search(r'Inscri[çc][ãa]o\s+Municipal\s*\n+(?:e-?\s*mail\s*\n+)?\s*([\d.\-]+)', bloco, re.IGNORECASE)
+            if m_im:
+                inscricao_municipal = m_im.group(1).strip()
+        else:
+            m_razao = re.match(r'\s*([^\n]+)', bloco)
+            if m_razao:
+                razao_social = m_razao.group(1).strip()
+
+            m_cnpj = re.search(r'CPF\s*/\s*CNPJ\s*\n+\s*([\d./\-]+)', bloco, re.IGNORECASE)
+            if m_cnpj:
+                cnpj_cpf = re.sub(r'\D', '', m_cnpj.group(1))
+
+            m_end = re.search(r'Endere[çc]o\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_end:
+                partes = [p.strip() for p in m_end.group(1).split(',')]
+                logradouro = partes[0] if partes and partes[0] else logradouro
+                if len(partes) > 1:
+                    m_num = re.search(r'(\d+)', partes[1])
+                    if m_num:
+                        numero = m_num.group(1)
+
+            # CEP e Bairro saem colados numa linha só, sem separador
+            # ("40150-130 Graça") — os 2 rótulos ficam consecutivos ACIMA.
+            m_cep_bairro = re.search(r'CEP\s*\n+\s*Bairro\s*\n+\s*([\d\-]+)\s+(.+)', bloco, re.IGNORECASE)
+            if m_cep_bairro:
+                cep = re.sub(r'\D', '', m_cep_bairro.group(1))
+                bairro = m_cep_bairro.group(2).strip()
+
+            m_compl = re.search(r'Complemento\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_compl:
+                complemento = m_compl.group(1).strip() or None
+
+            m_cidade = re.search(r'Cidade\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_cidade:
+                municipio = m_cidade.group(1).strip()
+
+            m_uf = re.search(r'\bUF\s*\n+\s*([A-Z]{2})\b', bloco, re.IGNORECASE)
+            if m_uf:
+                uf = m_uf.group(1).upper()
+
+            m_email = re.search(r'E-?\s*mail\s*\n+\s*(\S+@\S+)', bloco, re.IGNORECASE)
+            if m_email:
+                email = m_email.group(1).strip()
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+        return Entidade(
+            cnpj_cpf=cnpj_cpf,
+            inscricao_municipal=inscricao_municipal,
+            razao_social=razao_social,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+            email=email,
         )
 
     def _extrair_entidade_simoes_filho(self, is_prestador: bool) -> Entidade:
@@ -7758,6 +7968,63 @@ class SPPdfExtractor:
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
+
+        if self.layout == LAYOUT_BARUERI:
+            # "TOTAL DE TARIFA = R$ 2,74" no resumo bate com o "Valor Total"
+            # da grade do item — usado como ValorServicos/BaseCalculo (a
+            # taxação real do serviço prestado). "VALOR LIQUIDO DA NOTA" do
+            # rodapé (R$432,74) NÃO é usado aqui: inclui R$430,00 de repasse
+            # a terceiros (crédito de benefício-alimentação repassado ao
+            # tomador, não é receita do serviço) — ver aviso em `parse()`.
+            m_tarifa = re.search(r'TOTAL\s+DE\s+TARIFA\s*=\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            valor_servicos = self._parse_valor(m_tarifa.group(1)) if m_tarifa else 0.0
+
+            # Grade do item: 5 rótulos dumped juntos (Descrição do Serviço/
+            # Código Serviço/Alíquota/Valor Unitário/Valor Total), DEPOIS os
+            # 5 valores na mesma ordem (ver `_extrair_discriminacao`) —
+            # "Alíquota" não é seguido do próprio valor, e sim do rótulo
+            # "Valor Unitário".
+            aliquota = 0.0
+            m_grid = re.search(
+                r'Descri[çc][ãa]o\s+do\s+Servi[çc]o\s*\n+\s*C[óo]digo\s+Servi[çc]o\s*\n+\s*'
+                r'Al[íi]quota\s*\n+\s*Valor\s+Unit[áa]rio\s*\n+\s*Valor\s+Total\s*\n+(.*)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m_grid:
+                valores_grid = [l.strip() for l in m_grid.group(1).split('\n') if l.strip()]
+                if len(valores_grid) >= 3:
+                    aliquota = self._parse_valor(valores_grid[2]) / 100
+
+            # Retenções federais: rótulos IRRF/PIS-PASEP/COFINS/CSLL dumped
+            # juntos, DEPOIS os 4 valores na mesma ordem (achado real: "TOTAL
+            # DE IMPOSTOS = R$ 0,04" bate exatamente com o IRRF sozinho —
+            # nenhum valor de ISS impresso separadamente nesta nota, mantido
+            # em 0,00, não fabricado via Base×Alíquota).
+            m_ret = re.search(
+                r'IRRF\s*\n+\s*([\d,]+)\s*\n+\s*PIS/PASEP\s*\n+\s*([\d,]+)\s*\n+\s*COFINS\s*\n+\s*([\d,]+)\s*\n+\s*CSLL\s*\n+\s*([\d,]+)',
+                t, re.IGNORECASE)
+            if m_ret:
+                valor_ir = self._parse_valor(m_ret.group(1))
+                valor_pis = self._parse_valor(m_ret.group(2))
+                valor_cofins = self._parse_valor(m_ret.group(3))
+                valor_csll = self._parse_valor(m_ret.group(4))
+            else:
+                valor_ir = valor_pis = valor_cofins = valor_csll = 0.0
+
+            valor_liquido = valor_servicos - valor_ir - valor_pis - valor_cofins - valor_csll
+
+            return Valores(
+                valor_servicos=valor_servicos,
+                valor_deducoes=0.0,
+                valor_pis=valor_pis,
+                valor_cofins=valor_cofins,
+                valor_inss=0.0,
+                valor_ir=valor_ir,
+                valor_csll=valor_csll,
+                valor_iss=0.0,
+                base_calculo=valor_servicos,
+                aliquota=aliquota,
+                valor_liquido_nfse=valor_liquido,
+            )
 
         if self.layout == LAYOUT_SIMOES_FILHO:
             # Grade "VALOR SERVIÇO (R$) DEDUÇÕES (R$) DESCONTO INCONDICIONAL
@@ -11836,6 +12103,18 @@ class SPPdfExtractor:
                 "Eletrônica), não sujeito a ISS - campos de Base de Cálculo/"
                 "Alíquota/Valor do ISS mantidos zerados propositalmente"
             )
+        if self.layout == LAYOUT_BARUERI:
+            m_repasse = re.search(
+                r'VALORES\s+DE\s+REPASSE\s+A\s+TERCEIROS\s*\n+(?:Observa[çc][õo]es\s*\n+)?\s*R\$\s*([\d.,]+)',
+                self.raw_text, re.IGNORECASE)
+            if m_repasse:
+                avisos.append(
+                    f"Nota inclui R$ {m_repasse.group(1)} de repasse a terceiros "
+                    "(ex.: crédito de benefício-alimentação) que NÃO entrou no "
+                    "Valor dos Serviços/Valor Líquido do XML - apenas a tarifa "
+                    "cobrada pelo prestador é considerada valor tributável; "
+                    "confira se esse repasse precisa de tratamento contábil à parte"
+                )
         if self.layout == LAYOUT_NACIONAL and re.search(r'\*{3,}', self.raw_text):
             # Achado real (Aracaju/SE, WebISS, nota 2026000000014): a
             # própria prefeitura imprime "*****" no lugar de Base de Cálculo

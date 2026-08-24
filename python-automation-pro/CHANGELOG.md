@@ -106,6 +106,40 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Adicionado
 
+- Novo layout **Barueri/SP** (`barueri_sp`, barueri.sp.gov.br/nfe). Nota real
+  nº 0380578, ALELO INSTITUIÇAO DE PAGAMENTO S.A. → CLINICA PNEUMOLOGICA PROF
+  ALMERIO MACHADO (Salvador/BA), R$ 2,74 de tarifa (fatura de "agenciamento,
+  corretagem ou intermediação" cobrada pela Alelo sobre um benefício-
+  alimentação de R$ 430,00 repassado ao tomador). PDF digital (pdfminer, sem
+  OCR). Peculiaridades de ordem de leitura por campo (nenhuma delas segue o
+  padrão único de outro layout já suportado): a caixa de cabeçalho é uma
+  grade 2 colunas × 3 linhas lida por COLUNA, então "Data Emissão" e "Hora
+  Emissão" nunca ficam adjacentes um ao outro; "Código Autenticidade" aparece
+  2× no documento — a 1ª ocorrência tem "Hora Emissão" colado logo abaixo (não
+  o valor real), corrigido iterando todas as ocorrências e aceitando a 1ª cujo
+  valor seguinte já pareça um código de verdade (tem dígito); o bloco do
+  PRESTADOR (razão social + 2 linhas de endereço) vem em ORDEM FIXA antes de
+  qualquer rótulo de campo, mapeado por posição; "CEP"/"Bairro" do TOMADOR
+  saem como 2 rótulos consecutivos com um único valor combinado logo abaixo
+  ("40150-130 Graça", sem separador); a grade do item (Descrição do
+  Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total) e a grade de
+  retenções federais (IRRF/PIS-PASEP/COFINS/CSLL) seguem o padrão "N rótulos
+  dumped, depois os N valores na mesma ordem" já visto em Monte Santo/Ginfes/
+  Santos. Decisão de modelagem do usuário: "VALOR LIQUIDO DA NOTA" impresso no
+  rodapé (R$ 432,74) inclui o repasse a terceiros (R$ 430,00, crédito de
+  benefício-alimentação que a Alelo só está repassando, não é receita de
+  serviço) somado à tarifa — usar esse valor como `ValorServicos`/
+  `ValorLiquidoNfse` sobrestimaria em ~150× o valor tributável real.
+  `ValorServicos`/`BaseCalculo` = "TOTAL DE TARIFA" (R$ 2,74, bate com o
+  "Valor Total" da grade do item); `ValorIss` mantido em 0,00 (nenhum valor de
+  ISS impresso separadamente — "TOTAL DE IMPOSTOS" bate exatamente com o IRRF
+  sozinho, não fabricado); o repasse é descartado do XML (não é
+  `ValorDeducoes` nem faz parte do serviço tributável) e sinalizado em
+  `Nfse.avisos` para o usuário conferir manualmente se precisa de tratamento
+  contábil à parte. Código de serviço extraído como impresso (4 primeiros
+  dígitos de "100202220" → "1002"), sem reclassificação manual. Testes novos
+  em `tests/test_barueri_sp_layout.py`.
+
 - Novo layout **Simões Filho/BA** (`simoes_filho_ba`, constante já existia mas
   sem extração dedicada nem prioridade de detecção correta). Nota real nº 122
   (VITORIOS EMPILHADEIRAS COMERCIO E SERVIÇOS LTDA → BONI TRANSPORTES,
