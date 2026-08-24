@@ -49,7 +49,7 @@ def test_extract_pjb_locacao_layout(monkeypatch):
         assert nfse.prestador.endereco.logradouro == 'Via Acesso II BR 324'
         assert nfse.prestador.endereco.numero == "S/N"
         assert nfse.prestador.endereco.municipio == 'Simões Filho'
-        assert nfse.prestador.endereco.codigo_municipio == "2929206"
+        assert nfse.prestador.endereco.codigo_municipio == "2930709"
         assert nfse.prestador.endereco.uf == "BA"
         assert nfse.prestador.endereco.cep == "43700000"
 
