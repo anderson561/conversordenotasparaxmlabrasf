@@ -13,6 +13,25 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Fix — CNPJ do prestador em Simões Filho/BA (`simoes_filho_ba`) saía com 1
+  dígito errado** (nota real nº 122/VITORIOS EMPILHADEIRAS, mesma nota do
+  entry abaixo): o registro anterior deste CHANGELOG documentava
+  `50.945.432/0001-11` como "limitação do motor de OCR" após teste
+  exaustivo (zooms 3-12, 4 PSMs, whitelist de caracteres) — aceito como
+  best-effort por acreditar-se irrecuperável. O usuário confirmou o CNPJ
+  real como `50.949.432/0001-11` ("945" deveria ser "949"). Corrigido sem
+  depender de melhorar a leitura da MESMA região degradada: o mesmo CNPJ do
+  prestador é citado de novo, fora do bloco PRESTADOR, na seção de forma de
+  pagamento da discriminação ("Condições de pagamento ... Pix CNPJ:
+  50.949.432/0001-11") — essa segunda ocorrência sempre saiu correta em
+  toda leitura de OCR testada nesta sessão. `_extrair_entidade_simoes_filho`
+  agora valida o dígito verificador do CNPJ lido no bloco PRESTADOR e, se
+  falhar, usa essa citação alternativa (também validada) como fallback.
+  Suíte 281 verdes; `test_prestador_e_tomador_nao_compartilham_cnpj`
+  atualizado para o valor correto.
+
 ### Adicionado
 
 - Novo layout **Simões Filho/BA** (`simoes_filho_ba`, constante já existia mas
@@ -43,12 +62,10 @@ sessão, de todos os layouts/fixes entregues está em
   PRESTADOR (`_ocr_recut_prestador_simoes_filho`) recupera CEP e Inscrição
   Municipal quando a leitura de página inteira erra (best-effort, como outros
   recortes desta base — pode cair de volta ao valor do corpo em notas/rodadas
-  de OCR menos favoráveis). CNPJ do prestador permanece com um possível dígito
-  trocado ("50.945.432/0001-11" em vez do real "50.949.432/0001-11",
-  confirmado contra a imagem e contra a nota irmã) — testado exaustivamente
-  (zooms 3 a 12, 4 PSMs, whitelist de caracteres, recorte isolado): o
-  Tesseract nunca lê esse dígito certo nesta plataforma, limitação do próprio
-  motor de OCR, não de enquadramento/resolução. Pelo mesmo motivo,
+  de OCR menos favoráveis). ~~CNPJ do prestador permanece com um possível
+  dígito trocado~~ — **corrigido, ver entry "Fix — CNPJ do prestador" no topo
+  deste arquivo** (o dígito era mesmo recuperável, via a citação do CNPJ na
+  seção de pagamento). Pelo mesmo motivo,
   `CodigoVerificacao` (valor real alfanumérico "bd17528e3", conferido
   caractere a caractere contra a imagem) fica no sentinela `XXXX-XXXX` — toda
   tentativa de OCR devolve uma leitura numérica diferente e garantidamente

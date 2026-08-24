@@ -5264,6 +5264,14 @@ class SPPdfExtractor:
         normalizado por substring estável (sobrevive à troca de acento/vogal
         do OCR) em vez de comparação exata, para casar com o
         `IBGEResolver.KNOWN_CITIES`.
+
+        CNPJ do prestador com dígito ilegível ao Tesseract (achado real, nota
+        nº 122/VITORIOS EMPILHADEIRAS: "949" lido como "945" em todo teste
+        tentado — zooms, PSMs, binarização, whitelist) é recuperado via
+        dígito verificador: quando o valor lido no bloco PRESTADOR falha na
+        validação de CNPJ, usa-se o mesmo CNPJ citado de novo na seção de
+        forma de pagamento ("Pix CNPJ: ..."), que sai correto e passa na
+        validação.
         """
         t = self.raw_text
         if is_prestador:
@@ -5345,6 +5353,23 @@ class SPPdfExtractor:
             bloco, re.IGNORECASE)
         if m_cnpj:
             cnpj_cpf = re.sub(r'\D', '', m_cnpj.group(1))
+
+        # Achado real (nota nº 122/VITORIOS EMPILHADEIRAS): o dígito "9" de
+        # "949" no bloco PRESTADOR sai lido como "5" ("945") em TODO teste de
+        # OCR tentado (zooms 3-14, PSMs 4/6/7/8/11/13, grayscale/autocontraste/
+        # binarização, whitelist de caracteres) — limitação do Tesseract para
+        # este glifo específico nesta posição, não um problema de corte/zoom.
+        # O MESMO CNPJ do prestador é citado de novo, corretamente, na seção
+        # de forma de pagamento ("Condições de pagamento ... Pix CNPJ: ..."),
+        # fora do bloco PRESTADOR (por isso não cai na regex acima) — usada
+        # aqui como fonte alternativa apenas quando o valor lido no bloco
+        # PRESTADOR falha no dígito verificador do CNPJ.
+        if is_prestador and cnpj_cpf and not self._validate_cnpj_cpf(cnpj_cpf):
+            m_pix = re.search(r'Pix\s+CNPJ\s*[;:]?\s*(\d{2}[.\s]\d{3}[.\s]\d{3}\s*/\s*\d{4}\s*-\s*\d{2})', t, re.IGNORECASE)
+            if m_pix:
+                cnpj_pix = re.sub(r'\D', '', m_pix.group(1))
+                if self._validate_cnpj_cpf(cnpj_pix):
+                    cnpj_cpf = cnpj_pix
 
         mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
 
