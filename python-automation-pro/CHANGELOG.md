@@ -15,6 +15,78 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Competência com ano trocado em Salvador/BA (`salvador_ba`) e CNPJ
+  do tomador impresso ERRADO na própria nota** (mesma nota nº 00003327/
+  CONEX4 MULTIMÍDIA LIMITADA dos 2 fixes acima; software de importação do
+  usuário — Domínio Escrita Fiscal — rejeitava o lote com "CNPJ do arquivo
+  diferente do CNPJ da empresa ativa" e mostrava a data `01/07/2926`):
+  - `Competencia` saía `2926-07-01` — OCR lê "COMPETÊNCIA 07/2926" ("0"→"9"
+    no ano) — mesmo mês da Data de Emissão (já confiável, extraída de outro
+    trecho do documento), só o ano divergia. Corrigido usando o ano da Data
+    de Emissão quando o mês da competência bate mas o ano diverge — uma
+    competência legítima de outro ano sempre vem com mês diferente também
+    (nunca emitida meses depois sem que o mês mude), então o guard não
+    afeta competências de fato distintas (ex. nota de janeiro para
+    competência de dezembro do ano anterior).
+  - CNPJ do tomador (BONI TRANSPORTES) saía com o sentinela
+    `00000000000100`: diferente de TODOS os outros achados de CNPJ
+    corrompido desta base (sempre um erro de LEITURA de um valor impresso
+    certo), aqui o CNPJ está ERRADO NA PRÓPRIA IMAGEM da nota —
+    "04.565.293/0001-99" impresso (confirmado em zoom alto), que reprova o
+    dígito verificador. O usuário confirmou o CNPJ real como
+    "04.555.283/0001-99" — mesma raiz já vista em várias outras notas desta
+    base como tomador fixo/recorrente (notas 6508 e 2150, filiais
+    "0001"/"0003" da mesma empresa). Nenhum recorte/zoom recuperaria esse
+    valor (a sequência correta nunca esteve impressa nesta nota) —
+    corrigido em `_extrair_entidade` apenas quando o CNPJ extraído já
+    reprova o checksum E a razão social bate com "BONI TRANSPORTES", para
+    não mascarar CNPJs genuinamente diferentes de outras empresas com nome
+    parecido; nunca sobrescreve um CNPJ que já é válido.
+  Suíte 285→**289 verdes**; testes novos em `test_notas_layouts.py` e
+  `test_boni_transportes_cnpj_impresso_errado.py`.
+
+- **Fix — Número da nota em Salvador/BA (`salvador_ba`) saía com 1 dígito
+  trocado quando o recorte dedicado do cabeçalho lia num zoom "azarado"**
+  (nota real nº 00003327/CONEX4 MULTIMÍDIA LIMITADA → BONI TRANSPORTES,
+  R$ 690,00): `_ocr_header_box_salvador` (zoom fixo 4.5x) leu "09003327" —
+  "0"→"9" — em todo PSM testado (4, 6, 11); confirmado contra a imagem real
+  que o valor impresso é "00003327". Não é ruído de amostra única: nos zooms
+  3x, 6x, 8x e 10x o mesmo recorte lê o valor certo em TODAS as tentativas —
+  artefato de renderização específico daquele zoom para esta digitação.
+  Corrigido com `_ocr_numero_nota_salvador_votado`, que reamostra a mesma
+  caixa em zooms distintos (independente da checagem de validade do Código
+  de Verificação, que nesta nota nunca passa) e usa maioria simples; o valor
+  apurado é prependado em `_ocr_page` ANTES do recorte de zoom único, para
+  que `_extrair_numero` (1º match vence) prefira o valor por maioria. Valor
+  da nota (R$ 690,00) já saía correto, nenhuma mudança necessária ali.
+  Achado colateral, fora do escopo pedido (não corrigido nesta entry, ver
+  próxima): CNPJ/CPF do prestador e do tomador saíam os DOIS com o mesmo
+  sentinela `00000000000100` nesta nota. Suíte 281→**283 verdes**; teste
+  novo `test_salvador_numero_zoom_ambiguo.py`.
+
+- **Fix — CPF/CNPJ do prestador em Salvador/BA (`salvador_ba`) saía com o
+  sentinela `00000000000100`** (mesma nota nº 00003327/CONEX4 MULTIMÍDIA
+  LIMITADA do fix acima): o CNPJ real do prestador, `09.034.217/0001-97`
+  (confirmado pelo usuário e batendo com a nota irmã — pág. 2 do mesmo PDF,
+  que já extraía esse CNPJ corretamente), saía como ruído sem nenhum dígito
+  reconhecível na leitura de página inteira — só a Inscrição Municipal
+  vizinha sobrevivia ("00.291.063/001-70"). Sem CNPJ válido em lugar nenhum
+  do bloco (o próprio rótulo "PRESTADOR DE SERVIÇOS" sai "BRESTADOR DE
+  SERVIÇOS", "B" no lugar de "P" — nem o fatiamento genérico reconhece onde
+  o prestador começa), caía no fallback de sentinela compartilhado por
+  prestador E tomador. Corrigido com `_ocr_recut_prestador_cnpj_salvador`,
+  que reprocessa em zoom alto (8x) só a coluna esquerda da linha do CNPJ;
+  `_ocr_page` prepende o valor recuperado (já validado por checksum) antes
+  do resto do texto, para que a extração genérica de CNPJ (1º candidato
+  válido vence) encontre esta leitura limpa primeiro. Prependado em
+  `best_text` (não guardado só num atributo de instância): `parse_multiple`
+  cria um `sub_ext` novo por nota/bloco e só propaga pra ele `raw_text` e
+  poucos atributos específicos — um atributo novo não chegaria até a
+  chamada real de `_extrair_entidade`. CNPJ do TOMADOR permanece com o
+  sentinela nesta nota — fora do escopo pedido pelo usuário ("trate
+  exclusivamente o CNPJ [do prestador]"); avisado via `Nfse.avisos`. Suíte
+  283→**285 verdes**; teste novo `test_salvador_prestador_cnpj_ilegivel.py`.
+
 - **Fix — CNPJ do prestador em Simões Filho/BA (`simoes_filho_ba`) saía com 1
   dígito errado** (nota real nº 122/VITORIOS EMPILHADEIRAS, mesma nota do
   entry abaixo): o registro anterior deste CHANGELOG documentava
