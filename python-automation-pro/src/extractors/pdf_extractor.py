@@ -9733,6 +9733,16 @@ class SPPdfExtractor:
                     header_text = self._ocr_header_box_salvador(page)
                     if header_text.strip():
                         best_text = f"{header_text}\n{best_text}"
+                    # Nº da nota por maioria entre vários zooms (ver
+                    # `_ocr_numero_nota_salvador_votado`) — corrige o caso em
+                    # que o zoom único de `_ocr_header_box_salvador` acerta o
+                    # Código de Verificação mas erra 1 dígito do Número (achado
+                    # real, nota nº 09003327/CONEX4 MULTIMÍDIA). Prependido
+                    # ANTES do resto para que `_extrair_numero` (1º match
+                    # vence) prefira este valor apurado por maioria.
+                    numero_votado = self._ocr_numero_nota_salvador_votado(page)
+                    if numero_votado.strip():
+                        best_text = f"Número da Nota:\n{numero_votado}\n\n{best_text}"
                     # Recut do bloco do TOMADOR em zoom alto SÓ quando ele sai sem
                     # um CNPJ bem-formado no zoom 3 (scans de baixa qualidade
                     # corrompem CNPJ/razão do tomador — ex.: nota nº 46). Notas
@@ -10193,6 +10203,56 @@ class SPPdfExtractor:
             pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_numero_nota_salvador_votado(page) -> str:
+        """Recorta a mesma caixa de cabeçalho de `_ocr_header_box_salvador`
+        (Número da Nota) em VÁRIOS zooms distintos e devolve o dígito por
+        maioria simples entre as leituras.
+
+        Achado real (nota nº 09003327/CONEX4 MULTIMÍDIA -> BONI TRANSPORTES,
+        confirmado contra a imagem): o zoom 4.5x (usado por
+        `_ocr_header_box_salvador`) lê consistentemente "09003327" — dígito
+        "0"→"9" trocado — em TODO PSM testado (4, 6, 11), sinal de que é um
+        artefato de renderização daquele zoom específico para esta digitação,
+        não ruído aleatório de amostra única. Nos zooms 3x, 6x, 8x e 10x (que
+        `_ocr_header_box_salvador` não tenta, pois já para na 1ª tentativa
+        cujo Código de Verificação pareça válido — o que nesta nota nunca
+        acontece) o valor sai correto ("00003327") em TODOS. Por isso a
+        maioria é apurada numa amostra própria e independente da validação de
+        código, em vez de reaproveitar as tentativas já computadas por
+        aquela função (cujo conjunto de zooms, nesta nota, tem maioria
+        ERRADA: 2 leituras em 4.5x contra 1 em 8x)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            def _tentativa(zoom, psm):
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                w, h = img.size
+                crop = img.crop((int(w * 0.60), 0, w, int(h * 0.16)))
+                return pytesseract.image_to_string(crop, lang='por', config=f'--psm {psm}')
+
+            candidatos = []
+            for zoom, psm in ((3.0, 6), (4.5, 6), (6.0, 6), (8.0, 4)):
+                texto = _tentativa(zoom, psm)
+                m = re.search(r'N[uú]mero\s+da\s+Nota\D{0,20}(\d{4,10})', texto, re.IGNORECASE)
+                if m:
+                    candidatos.append(m.group(1))
+
+            if not candidatos:
+                return ""
+            contagem = Counter(candidatos)
+            valor, votos = contagem.most_common(1)[0]
+            if votos > len(candidatos) / 2:
+                return valor
+            return candidatos[0]
         except Exception:
             return ""
 

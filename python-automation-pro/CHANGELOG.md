@@ -15,6 +15,28 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Número da nota em Salvador/BA (`salvador_ba`) saía com 1 dígito
+  trocado quando o recorte dedicado do cabeçalho lia num zoom "azarado"**
+  (nota real nº 00003327/CONEX4 MULTIMÍDIA LIMITADA → BONI TRANSPORTES,
+  R$ 690,00): `_ocr_header_box_salvador` (zoom fixo 4.5x) leu "09003327" —
+  "0"→"9" — em todo PSM testado (4, 6, 11); confirmado contra a imagem real
+  que o valor impresso é "00003327". Não é ruído de amostra única: nos zooms
+  3x, 6x, 8x e 10x o mesmo recorte lê o valor certo em TODAS as tentativas —
+  artefato de renderização específico daquele zoom para esta digitação.
+  Corrigido com `_ocr_numero_nota_salvador_votado`, que reamostra a mesma
+  caixa em zooms distintos (independente da checagem de validade do Código
+  de Verificação, que nesta nota nunca passa) e usa maioria simples; o valor
+  apurado é prependado em `_ocr_page` ANTES do recorte de zoom único, para
+  que `_extrair_numero` (1º match vence) prefira o valor por maioria. Valor
+  da nota (R$ 690,00) já saía correto, nenhuma mudança necessária ali.
+  Achado colateral, fora do escopo pedido (não corrigido): CNPJ/CPF do
+  prestador e do tomador saem os DOIS com o mesmo sentinela
+  `00000000000100` nesta nota (bloco PRESTADOR com CNPJ ilegível na leitura
+  de página inteira — "00.291.063/001-70", fora do formato — dispara
+  fallback total, que hoje não distingue prestador de tomador); avisos
+  `Nfse.avisos` já sinalizam ambos como "não identificados". Suíte
+  281→**283 verdes**; teste novo `test_salvador_numero_zoom_ambiguo.py`.
+
 - **Fix — CNPJ do prestador em Simões Filho/BA (`simoes_filho_ba`) saía com 1
   dígito errado** (nota real nº 122/VITORIOS EMPILHADEIRAS, mesma nota do
   entry abaixo): o registro anterior deste CHANGELOG documentava
