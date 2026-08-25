@@ -15,6 +15,32 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Competência com ano trocado pelo OCR generalizado para TODOS os
+  layouts (`_extrair_competencia`), guard que só rodava em `LAYOUT_SALVADOR`**
+  (nota real nº 202600000016746, MAG COMERCIO VAREJISTA, layout Lauro de
+  Freitas/BA 3ª variante; achado real 2026-08-25): o XML saía com
+  `<Competencia>2025-07-24</Competencia>` (ano errado) mesmo com
+  `<DataEmissao>2026-07-24T10:27:01</DataEmissao>` já correta no mesmo
+  documento — o OCR lê "Competência: 24/07/2025" em vez do real
+  "24/07/2026" (mesmo dígito trocado "6"→"5" já visto antes em Salvador,
+  "0"→"9"). A correção para essa MESMA classe de erro (usar o ano da Data
+  de Emissão quando o mês da competência bate mas o ano diverge — uma
+  competência legítima de outro mês/ano sempre vem com mês diferente
+  também) já existia, mas só dentro do branch `elif layout ==
+  LAYOUT_SALVADOR`; `LAYOUT_LAURO_FREITAS` não tem branch próprio em
+  `_extrair_competencia`, cai direto no fallback genérico
+  (`_extrair_competencia_generica`), que nunca passava por essa validação.
+  Como o raciocínio do guard não é específico de nenhum layout, movido do
+  branch do Salvador para o fim da função, rodando incondicionalmente
+  depois de QUALQUER branch (inclusive o fallback genérico) já ter
+  tentado — corrige a mesma classe de bug em qualquer um dos ~44 layouts
+  que ainda não tinham essa proteção, não só o que motivou o achado. Suíte
+  303→**305 verdes**; teste novo
+  `test_competencia_ano_ocr_trocado_generalizado.py` (2 casos: guard
+  disparando fora de Salvador + guard NÃO disparando quando o mês
+  realmente diverge, preservando competências de mês/ano anteriores
+  legítimas).
+
 - **Fix — Zoom único não confiável na 3ª variante do Lauro de Freitas/BA
   (`_ocr_recut_lauro_freitas_v3`), causando PDF "ignorado" (0 notas
   reconhecidas) em algumas notas do MESMO template já coberto** (nota real

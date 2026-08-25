@@ -954,17 +954,6 @@ class SPPdfExtractor:
                 if m:
                     mes, ano = m.group(1).split('/')
                     result = datetime(int(ano), int(mes), 1)
-            # Ano da Competência com dígito trocado pelo OCR (achado real,
-            # nota nº 00003327/CONEX4 MULTIMÍDIA LIMITADA: "COMPETÊNCIA
-            # 07/2926" em vez de "07/2026", "0"→"9" — mesmo mês da Data de
-            # Emissão, só o ano sai errado). Corrigido usando o ano da Data
-            # de Emissão (já confiável, extraída de um trecho diferente do
-            # documento) quando o mês bate mas o ano diverge — uma
-            # competência legitimamente de outro ano sempre tem MÊS
-            # diferente também (nunca emitida meses depois sem que o mês
-            # também mude), então esse guard não afeta os casos válidos.
-            if result and data_emissao and result.month == data_emissao.month and result.year != data_emissao.year:
-                result = datetime(data_emissao.year, result.month, 1)
         elif layout == LAYOUT_IACU_NFSE:
             # "- COMPETÊNCIA: 07/2026 (mês/ano)"
             m = re.search(r'COMPET[EÊ]NCIA\s*:?\s*(\d{2})/(\d{4})', t, re.IGNORECASE)
@@ -1020,6 +1009,22 @@ class SPPdfExtractor:
                     result = None
 
         if result is None: result = _extrair_competencia_generica(t)
+        # Ano da Competência com dígito trocado pelo OCR (achado real,
+        # Salvador nota nº 00003327/CONEX4 MULTIMÍDIA: "COMPETÊNCIA 07/2926"
+        # em vez de "07/2026", "0"→"9"; e Lauro de Freitas 3ª variante nota
+        # nº 202600000016746: "Competência: 24/07/2025" em vez de
+        # "24/07/2026" — mesmo mês da Data de Emissão, só o ano sai errado).
+        # Corrigido usando o ano da Data de Emissão (já confiável, extraída
+        # de um trecho diferente do documento) quando o mês bate mas o ano
+        # diverge — uma competência legitimamente de outro ano sempre tem
+        # MÊS diferente também (nunca emitida meses depois sem que o mês
+        # também mude), então esse guard não afeta os casos válidos.
+        # Generalizado pra TODOS os layouts (nasceu só em LAYOUT_SALVADOR,
+        # mas o raciocínio não é específico de nenhum layout) — a mesma
+        # classe de erro de OCR (1 dígito do ano trocado) pode acontecer em
+        # qualquer plataforma.
+        if result and data_emissao and result.month == data_emissao.month and result.year != data_emissao.year:
+            result = datetime(data_emissao.year, result.month, 1)
         if result is None: result = datetime(data_emissao.year, data_emissao.month, 1)
         return result
 
