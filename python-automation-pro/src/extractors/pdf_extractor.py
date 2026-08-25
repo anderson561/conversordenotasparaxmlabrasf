@@ -1427,7 +1427,11 @@ class SPPdfExtractor:
     def _scavenge_all_cnpjs(self) -> List[str]:
         t = self.raw_text
         # Encontra padrões de dígitos espalhados que pareçam CNPJ (11-14 dígitos purgados)
-        candidates = re.findall(r'\d\s*[\d\.\s/\\-]{10,80}\d', t)
+        # Tolera vírgula misturada aos separadores (mesma confusão de OCR
+        # tratada na captura primária de `_extrair_entidade`) — o checksum
+        # exigido logo abaixo já filtra os falsos positivos que isso poderia
+        # introduzir (valores monetários com vírgula, por ex.).
+        candidates = re.findall(r'\d\s*[\d\.,\s/\\-]{10,80}\d', t)
         purged = []
         for c in candidates:
             p = re.sub(r'\D', '', c)
@@ -4298,9 +4302,21 @@ class SPPdfExtractor:
         # Tenta capturar CNPJ validando o checksum para evitar pegar datas ou números
         # Os separadores aceitam espaço em volta: o OCR intercala espaço espúrio
         # antes do dígito verificador ("48.310.477/0001 -08") e o número era descartado.
+        # Também aceita VÍRGULA no lugar do 1º/2º ponto ("61,235.378/0001-69")
+        # — confusão de OCR já documentada para outro contexto nesta mesma
+        # função (ver limpeza de razão do LAYOUT_NACIONAL, "49.244,210..."
+        # logo abaixo) mas nunca tolerada aqui na captura do CNPJ em si;
+        # achado real, nota nº 00000061/MCLA CONSTRUÇÕES: os dígitos do CNPJ
+        # do prestador saem CORRETOS ("61,235.378/0001-69", checksum válido),
+        # só o separador vira vírgula — sem essa tolerância o candidato nunca
+        # batia no regex, caindo no scavenge/sentinela e, em cascata, na
+        # guarda de "BONI TRANSPORTES" (que não deveria ter disparado pro
+        # prestador). O mesmo achado real também mostra espaço espúrio ANTES
+        # (não só depois) desse separador ("61,235 .378/0001-69") — tolerado
+        # com o mesmo `[ \t]*` já usado em volta do dígito verificador.
         matches = re.findall(
-            r'(\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}'
-            r'|\d{3}\.\d{3}\.\d{3}[ \t]*-[ \t]*\d{2})',
+            r'(\d{2}[ \t]*[.,][ \t]*\d{3}[ \t]*[.,][ \t]*\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}'
+            r'|\d{3}[ \t]*[.,][ \t]*\d{3}[ \t]*[.,][ \t]*\d{3}[ \t]*-[ \t]*\d{2})',
             bloco
         )
         # Em grades DANFSe Nacional escaneadas, a coluna "CNPJ/CPF/NIF" é
@@ -4385,7 +4401,15 @@ class SPPdfExtractor:
             relax("Nome Empresarial")
         )
         stop_patterns = (
-            relax("Endereço") + "|" + relax("ndere") + "|" + relax("Município") + "|" + relax("Cidade/UF") + "|" + relax("CEP") + "|" +
+            relax("Endereço") + "|" + relax("ndere") + "|" +
+            # Tolera a vogal interna trocada por OCR ("Endera�o" em vez de
+            # "Endereço") que nem `relax("Endereço")` nem `relax("ndere")`
+            # cobrem (ambos exigem "e" naquela posição) — achado real, nota
+            # nº 00000061/MCLA CONSTRUÇÕES: sem essa tolerância, a captura da
+            # razão social não para no rótulo do endereço e engole a rua/
+            # bairro/cidade inteiros como se fossem parte do nome da empresa.
+            r'Ender\w{0,3}[çc]o' + "|" +
+            relax("Município") + "|" + relax("Cidade/UF") + "|" + relax("CEP") + "|" +
             relax("Logradouro") + "|" + relax("Compl") + "|" +
             relax("CPF/CNPJ") + "|" + relax("CNPJ") + "|" + relax("CPF") + "|" +
             relax("Inscrição Municipal") + "|" + relax("IM :") + "|" + relax("Inscrição Estadual") + "|" +
@@ -4455,6 +4479,14 @@ class SPPdfExtractor:
             if re.match(r'^\d{2}/\d{2}/\d{4}', line_clean) or re.match(r'^\d{2}:\d{2}', line_clean): return False
             if re.match(r'^[0-9\.\s/\\:-]+$', line_clean): return False
             if re.search(r'Nome\s*/\s*Nome', line_clean, re.I): return False
+            # Achado real, nota nº 00000006/RC INFORMÁTICA E ACESSÓRIOS LTDA
+            # (Salvador/BA): o próprio rótulo "Nome/Razão Social" sai garblado
+            # a ponto de nenhum outro filtro reconhecer — a "/" vira "i"
+            # ("NomeiRazão Socia'") e o "l" final de "Social" some — mas ainda
+            # "parece" uma linha de texto normal o bastante pra passar por
+            # razão social de verdade, roubando a linha real (a empresa) que
+            # vem logo depois no bloco.
+            if re.match(r'^Nome[iI\s/]{0,2}Raz[ãa]o\s+Socia', line_clean, re.I): return False
             # Só rejeita como "código" (ex.: verificação/autenticidade) se houver dígito
             # misturado às letras; nomes curtos só-letras (ex.: "CETREL") são razões sociais válidas.
             if re.match(r'^(?=[A-Z0-9-]{6,15}$)(?=.*\d)[A-Z0-9-]+$', line_clean, re.I): return False
@@ -9093,6 +9125,7 @@ class SPPdfExtractor:
             else:
                 inss = pis = cofins = ir = csll = outras = 0.0
                 liquido = val_serv
+            liquido_herdou_val_serv = not m_grid
 
             # Sociedade de Uniprofissionais com "ISS RECOLHIDO POR QUOTA
             # PROFISSIONAL ALÍQUOTA FIXA": a própria nota deixa Base de
@@ -9130,6 +9163,33 @@ class SPPdfExtractor:
                     iss = self._parse_valor(m_grid5.group(4))
                 else:
                     deducoes, base, aliq, iss = 0.0, val_serv, 0.0, 0.0
+                    # Recorte dedicado da célula "Base de Cálculo" (ver
+                    # `_ocr_recut_base_calculo_grade_salvador`, chamado em
+                    # `_ocr_page`) — só consultado quando a grade de 5
+                    # valores falhou inteira acima; nunca sobrescreve uma
+                    # leitura já bem-sucedida de `m_grid5`.
+                    m_base_recut = re.search(r'BASE_CALCULO_RECUPERADA:\s*([\d\.,]+)', t)
+                    if m_base_recut:
+                        base = self._parse_valor(m_base_recut.group(1))
+
+            # "VALOR TOTAL DA NOTA" é uma leitura de UMA linha só; "Base de
+            # Cálculo" vem de uma grade PRÓPRIA. Quando Deduções = 0,
+            # Base de Cálculo == Valor dos Serviços por definição (mesma
+            # identidade contábil já usada no LAYOUT_SAO_PAULO_2, "base =
+            # val_serv - deducoes") — se as duas leituras divergem aqui, a
+            # grade (2 valores lidos juntos, formatação de tabela) é mais
+            # confiável que a linha isolada do cabeçalho. Achado real, nota
+            # nº 00000061/MCLA CONSTRUÇÕES: "VALOR TOTAL DA NOTA = R$6.875,81"
+            # sai consistentemente ERRADO (confirmado contra a imagem em zoom
+            # 20x: o valor real é R$6.878,81) mesmo numa releitura dedicada
+            # ultra-zoom daquela linha isolada (`_ocr_recut_valor_total_
+            # marca_agua_salvador`) — defeito inerente à linha, não
+            # recuperável ali; a grade de "Base de Cálculo", lida à parte,
+            # bate com a imagem.
+            if deducoes == 0.0 and base and base != val_serv:
+                val_serv = base
+                if liquido_herdou_val_serv:
+                    liquido = val_serv
 
             return Valores(
                 valor_servicos=val_serv,
@@ -10331,6 +10391,11 @@ class SPPdfExtractor:
                 # encontrem esta versão limpa antes de qualquer ocorrência
                 # ambígua no restante do documento.
                 if re.search(r'PREFEITURA\s+MUNICIPAL\s+DO\s+SALVADOR|Nota\s+Salvador', best_text, re.IGNORECASE):
+                    # Cópia do texto ANTES de qualquer recorte Salvador-específico
+                    # prepender algo — usada só pelo gatilho da marca d'água mais
+                    # abaixo (ver comentário lá), que precisa avaliar o texto REAL
+                    # da página, não o acumulado com prepends sintéticos.
+                    best_text_ocr_original = best_text
                     header_text = self._ocr_header_box_salvador(page)
                     if header_text.strip():
                         best_text = f"{header_text}\n{best_text}"
@@ -10373,7 +10438,53 @@ class SPPdfExtractor:
                     # Passa a exigir também checksum válido, não só formatação.
                     m_cnpj_tom = re.search(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', m_tom.group(1)) if m_tom else None
                     cnpj_tom_ok = bool(m_cnpj_tom and self._validate_cnpj_cpf(m_cnpj_tom.group(0)))
-                    if m_tom and not cnpj_tom_ok:
+                    # `m_tom` também vem `None` quando o cabeçalho "TOMADOR DE
+                    # SERVIÇOS" não sobrevive NEM corrompido (achado real, nota
+                    # nº 00000061/MCLA CONSTRUÇÕES: vira "vVIÇOS", sem a palavra
+                    # "TOMADOR" reconhecível) — `cnpj_tom_ok` já sai `False`
+                    # nesse caso (m_cnpj_tom nem é calculado), então basta
+                    # remover a exigência de `m_tom` para o recut disparar
+                    # também aqui, não só quando o cabeçalho é achado mas o
+                    # CNPJ dentro dele sai malformado.
+                    # Mesma degradação (cabeçalho "TOMADOR DE SERVIÇOS" perdido
+                    # por completo): a linha "Nome/Razão Social" do PRESTADOR
+                    # também costuma sumir junto (achado real, nota nº
+                    # 00000061/MCLA CONSTRUÇÕES) — sem ela E sem o rótulo
+                    # "TOMADOR" como delimitador, o bloco genérico do
+                    # prestador não tem onde parar e vaza a razão social do
+                    # TOMADOR para as duas entidades. Recupera só a razão
+                    # (não um cabeçalho novo) e EMENDA na posição certa — logo
+                    # antes do 1º "Endereço" do documento, que é sempre o do
+                    # prestador — em vez de prepender solta, que inverteria a
+                    # ordem de leitura assumida pelos delimitadores de bloco.
+                    # Roda ANTES do recut do tomador logo abaixo: aquele
+                    # PREPENDA um bloco novo (com seu próprio "Endereço:" do
+                    # TOMADOR) à FRENTE de `best_text` — se a emenda da razão
+                    # do prestador rodasse depois, o 1º "Endereço" já seria o
+                    # do tomador (prependado), e a razão do prestador seria
+                    # emendada no bloco ERRADO (achado real desta mesma nota,
+                    # capturado ao testar a ordem original: prestador e
+                    # tomador saíam TROCADOS).
+                    if not m_tom:
+                        prestador_razao = self._ocr_recut_prestador_razao_salvador(page)
+                        if prestador_razao:
+                            # Tolera a MESMA vogal trocada que corrompe esta
+                            # nota ("Endera�o:" em vez de "Endereço:", achado
+                            # real nesta mesma nota) — sem essa tolerância o
+                            # regex não achava o 1º "Endereço" (o do
+                            # PRESTADOR) e caía no 2º (o do TOMADOR, cuja
+                            # grafia sobrevive melhor), emendando a razão do
+                            # prestador no bloco ERRADO.
+                            m_endereco1 = re.search(r'Ender\w{0,3}[çc]o', best_text, re.IGNORECASE)
+                            if m_endereco1:
+                                pos = m_endereco1.start()
+                                best_text = (
+                                    best_text[:pos]
+                                    + f"Nome/Razão Social\n{prestador_razao}\n"
+                                    + best_text[pos:]
+                                )
+
+                    if not cnpj_tom_ok:
                         tomador_text = self._ocr_tomador_salvador(page, best_angle)
                         if tomador_text.strip():
                             best_text = f"{tomador_text}\n{best_text}"
@@ -10388,10 +10499,35 @@ class SPPdfExtractor:
                     # reais são "...688..." e "...885...", o OCR trocou um dígito
                     # no MEIO do número mesmo com toda a pontuação certa. Gate por
                     # evidência do defeito (checksum reprovado), não geometria.
+                    #
+                    # Busca em `best_text_ocr_original` (a leitura real da
+                    # página, sem os prepends sintéticos acima) — achado
+                    # real, nota nº 00000006/RC INFORMÁTICA E ACESSÓRIOS
+                    # LTDA: buscar em `best_text` acumulado misturava
+                    # candidatos de recortes já prependados (ex.: o CNPJ do
+                    # tomador lido pelo recut acima) com os da página real,
+                    # e o índice de `candidatos_cnpj` (0=prestador,
+                    # 1=tomador, convenção de `_ocr_recut_cnpj_invalido_
+                    # salvador`) deixava de bater com a ordem REAL na
+                    # imagem — o recorte dedicado corrigia o CNPJ do
+                    # PRESTADOR (ocorrência 0 de verdade) mas o resultado
+                    # era usado pra substituir o candidato do TOMADOR,
+                    # colando o CNPJ do prestador nas duas entidades.
+                    # `idx` é recalculado pela posição REAL de cada
+                    # candidato em relação ao rótulo "TOMADOR" (não pela
+                    # ordem em que aparecem numa lista possivelmente
+                    # incompleta — o candidato do prestador pode nem bater
+                    # neste regex estrito, ex. quando o separador do CNPJ
+                    # dele sai como vírgula, e "sumir" da lista deslocaria
+                    # os índices dos candidatos seguintes).
                     _cnpj_fmt_re = re.compile(r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}')
-                    candidatos_cnpj = _cnpj_fmt_re.findall(best_text)
-                    if any(not self._validate_cnpj_cpf(c) for c in candidatos_cnpj):
-                        for idx, original in enumerate(candidatos_cnpj[:2]):
+                    m_tomador_label_pos = re.search(r'\bTOMADOR\b', best_text_ocr_original, re.IGNORECASE)
+                    candidatos_cnpj = []
+                    for m_c in _cnpj_fmt_re.finditer(best_text_ocr_original):
+                        idx_real = 1 if (m_tomador_label_pos and m_c.start() > m_tomador_label_pos.start()) else 0
+                        candidatos_cnpj.append((idx_real, m_c.group(0)))
+                    if any(not self._validate_cnpj_cpf(c) for _, c in candidatos_cnpj):
+                        for idx, original in candidatos_cnpj[:2]:
                             if self._validate_cnpj_cpf(original):
                                 continue
                             corrigido = self._ocr_recut_cnpj_invalido_salvador(page, idx, best_angle)
@@ -10427,6 +10563,19 @@ class SPPdfExtractor:
                     if prestador_cnpj:
                         best_text = f"CPF/CNPJ:\n{prestador_cnpj}\n\n{best_text}"
 
+                    # Célula da "Base de Cálculo" (grade de 5 valores) some por
+                    # completo da leitura de página inteira mesmo quando o
+                    # rótulo ao lado ainda é parcialmente legível (achado real,
+                    # nota nº 00000061/MCLA CONSTRUÇÕES — ver docstring de
+                    # `_ocr_recut_base_calculo_grade_salvador`). Roda sempre
+                    # (mesmo padrão de custo aceito acima para o CNPJ do
+                    # prestador); o marcador sintético só é CONSULTADO por
+                    # `_extrair_valores` quando a grade de 5 valores não casar
+                    # sozinha — nunca sobrescreve uma leitura já correta.
+                    base_calculo_recut = self._ocr_recut_base_calculo_grade_salvador(page)
+                    if base_calculo_recut:
+                        best_text = f"BASE_CALCULO_RECUPERADA: {base_calculo_recut}\n{best_text}"
+
                     # Marca d'água diagonal cobrindo a página inteira (achado
                     # real, nota nº 00039029, prestador A LIMPCANO ->
                     # tomador SOHO RESTAURANTE): o padrão de pontos do
@@ -10444,10 +10593,29 @@ class SPPdfExtractor:
                     # rótulo de prestador reconhecível ANTES da palavra
                     # "TOMADOR" (mesmo com tolerância a variações comuns de
                     # OCR — "PRESPAD RVIÇOS" não bate nem nisso).
-                    m_tomador_pos = re.search(r'\bTOMADOR\b', best_text, re.IGNORECASE)
+                    #
+                    # Avaliado contra `best_text_ocr_original` (a leitura de
+                    # página inteira ANTES de qualquer prepend Salvador-
+                    # específico), não contra `best_text` acumulado — achado
+                    # real, nota nº 00000006/RC INFORMÁTICA E ACESSÓRIOS
+                    # LTDA: o recut do CNPJ do prestador (`_ocr_recut_
+                    # prestador_cnpj_salvador`, roda sempre, acima) e o da
+                    # Base de Cálculo prependem snippets curtos ("CPF/CNPJ:
+                    # ...", "BASE_CALCULO_RECUPERADA: ...") que não citam
+                    # "PRESTADOR" — se o recut do TOMADOR (também acima)
+                    # também já prependeu algo antes deste ponto, o 1º
+                    # "TOMADOR" do `best_text` acumulado passa a ser o DELE
+                    # (não o da página real), com só esses snippets curtos
+                    # antes — o gate então concluía (falso positivo) que a
+                    # nota não tem rótulo de prestador reconhecível em
+                    # LUGAR NENHUM antes do tomador, mesmo com "PRESTADOR DE
+                    # SERVIÇOS" perfeitamente legível na leitura original —
+                    # disparando os 2 recortes de marca d'água sem
+                    # necessidade e corrompendo o bloco do tomador.
+                    m_tomador_pos = re.search(r'\bTOMADOR\b', best_text_ocr_original, re.IGNORECASE)
                     if m_tomador_pos and not re.search(
                             r'PREST\w*\s*(?:DO|DE)?\s*SERVI',
-                            best_text[:m_tomador_pos.start()], re.IGNORECASE):
+                            best_text_ocr_original[:m_tomador_pos.start()], re.IGNORECASE):
                         prestador_text = self._ocr_recut_prestador_marca_agua_salvador(page, best_angle)
                         if prestador_text:
                             best_text = f"{prestador_text}\n{best_text}"
@@ -11548,11 +11716,144 @@ class SPPdfExtractor:
             # entre o 1º e o 2º grupo — a janela mais alta usada aqui, versus
             # a janela mais estreita testada manualmente, muda a segmentação
             # do PSM 6 o suficiente para essa troca aparecer).
-            m = re.search(r'\d{2}[ \t.]\d{3}[ \t.]\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
+            # Tolera vírgula no lugar do ponto (mesma confusão de OCR do
+            # achado da nota 00000061/MCLA, ver `_extrair_entidade`).
+            m = re.search(r'\d{2}[ \t.,]\d{3}[ \t.,]\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', txt)
             if m and self._validate_cnpj_cpf(re.sub(r'\D', '', m.group(0))):
                 d = re.sub(r'\D', '', m.group(0))
                 return f"{d[0:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:14]}"
             return None
+        except Exception:
+            return None
+
+    def _ocr_recut_prestador_razao_salvador(self, page) -> Optional[str]:
+        """Recorta e reprocessa em zoom alto (8x) a linha "Nome/Razão Social"
+        do PRESTADOR da nota Salvador/BA, para o caso em que ela some POR
+        COMPLETO da leitura de página inteira (zoom 3, PSM padrão) — achado
+        real, nota nº 00000061/MCLA CONSTRUÇÕES LTDA -> BONI TRANSPORTES: o
+        cabeçalho "PRESTADOR DE SERVIÇOS" e o CPF/CNPJ do prestador saem
+        legíveis, mas a linha da razão social do prestador desaparece
+        inteira do OCR (nenhum resquício, nem corrompido) E o cabeçalho
+        "TOMADOR DE SERVIÇOS" também é perdido (vira "vVIÇOS", sem a palavra
+        "TOMADOR" sobrevivendo) — sem a 2ª ocorrência de "Nome/Razão Social"
+        nem o rótulo "TOMADOR", o bloco genérico do prestador não tem onde
+        parar e balõa até engolir o bloco inteiro do tomador, fazendo a
+        razão social do TOMADOR (BONI TRANSPORTES) vazar para as DUAS
+        entidades. Mesmo recorte (coluna esquerda, 0-45% da largura) de
+        `_ocr_recut_prestador_cnpj_salvador`, mas com altura maior (14-24%)
+        para alcançar a linha da razão, validado estável contra a nota real.
+        Devolve só a razão (sem rótulo) para ser EMENDADA na posição certa do
+        texto base pelo chamador — nunca prependada solta, que quebraria a
+        ordem de leitura assumida pelo delimitador de bloco genérico."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            w, h = img.size
+            crop = img.crop((0, int(h * 0.14), int(w * 0.45), int(h * 0.24)))
+            txt = pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+            m = re.search(
+                r'^([A-ZÀ-Ý][A-ZÀ-Ý0-9 .,&\-]{2,80}?(?:LTDA|EPP|ME|EIRELI|S/?A|SA)\.?)\s*$',
+                txt, re.MULTILINE | re.IGNORECASE
+            )
+            if not m:
+                return None
+            razao = re.sub(r'\s{2,}', ' ', m.group(1)).strip()
+            return razao if len(razao) >= 5 else None
+        except Exception:
+            return None
+
+    def _ocr_recut_base_calculo_grade_salvador(self, page) -> Optional[str]:
+        """Recorta e reprocessa em zoom alto (8x/PSM 6) a linha da grade
+        "Valor Total das Deduções / Base de Cálculo / Alíquota / Valor do
+        ISS / Crédito Nota Salvador" da nota Salvador/BA, para o caso em que
+        a célula da "Base de Cálculo" desaparece POR COMPLETO da leitura de
+        página inteira (zoom 3, PSM padrão) mesmo com o rótulo ao lado ainda
+        parcialmente legível — achado real, nota nº 00000061/MCLA
+        CONSTRUÇÕES: `_extrair_valores` cai no fallback `base = val_serv`
+        quando a grade de 5 valores não casa inteira, herdando o dígito da
+        linha "VALOR TOTAL DA NOTA", que nesta nota está comprovadamente
+        ERRADO ("R$6.875,81" impresso, mas a imagem confirma "R$6.878,81")
+        mesmo isolado em zoom 10x/PSM 7 dedicado (`_ocr_recut_valor_total_
+        marca_agua_salvador`) — o defeito é inerente àquela linha específica,
+        não recuperável por OCR nela mesma. A Base de Cálculo, por outro
+        lado, lê limpa numa releitura dedicada desta grade.
+
+        Localiza a linha dinamicamente: acha o bloco de OCR (zoom 3) da
+        linha "VALOR TOTAL DA NOTA" (mesma âncora de `_ocr_recut_valor_
+        total_marca_agua_salvador`) e busca, nos blocos seguintes, o
+        primeiro com 3+ tokens contendo "(R$" — não ancora no texto
+        "Deduções"/"Base de Cálculo" em si, pois o rótulo sai corrompido de
+        formas imprevisíveis nesta degradação ("Decuções", "Baso de
+        Cícuo"). Devolve só os 2 primeiros números encontrados na linha de
+        valores (Deduções, Base de Cálculo) concatenados num marcador
+        sintético para o chamador prepender ao texto base; `None` se não
+        achar 2 números (ordem ambígua com só 1) ou se a grade não for
+        localizada. NUNCA devolve o valor de Deduções para uso direto — só
+        a Base de Cálculo (ver `_extrair_valores`): a mesma releitura, nesta
+        nota, mostrou "0,00" real virando "2,00" na leitura da 1ª célula, um
+        risco que a 2ª célula (Base de Cálculo, dígitos maiores/mais
+        legíveis) não compartilhou nos testes."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            import collections
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+
+            valor_total_bloco = None
+            for i in range(len(data['text'])):
+                if (data['text'][i] or '').strip().upper() == 'VALOR':
+                    bloco, linha = data['block_num'][i], data['line_num'][i]
+                    palavras = [data['text'][j].strip().upper() for j in range(len(data['text']))
+                                if data['block_num'][j] == bloco and data['line_num'][j] == linha]
+                    if any(p.startswith('TOTAL') for p in palavras):
+                        valor_total_bloco = bloco
+                        break
+            if valor_total_bloco is None:
+                return None
+
+            blocos = collections.defaultdict(list)
+            for i in range(len(data['text'])):
+                t = (data['text'][i] or '').strip()
+                if t and data['block_num'][i] > valor_total_bloco:
+                    blocos[data['block_num'][i]].append(i)
+
+            bloco_rotulo = None
+            for b in sorted(blocos):
+                idxs = blocos[b]
+                if sum(1 for i in idxs if re.search(r'[\[\(]?R\$', data['text'][i])) >= 3:
+                    bloco_rotulo = b
+                    break
+            if bloco_rotulo is None:
+                return None
+
+            idxs_rotulo = blocos[bloco_rotulo]
+            x0 = min(data['left'][i] for i in idxs_rotulo) - 10
+            x1 = max(data['left'][i] + data['width'][i] for i in idxs_rotulo) + 10
+            y0 = min(data['top'][i] for i in idxs_rotulo) - 5
+            altura_rotulo = max(data['top'][i] + data['height'][i] for i in idxs_rotulo) - y0
+            y1 = y0 + int(altura_rotulo * 3.5)
+
+            zoom_final = 8.0
+            clip = pymupdf.Rect(x0 / zoom_locate, y0 / zoom_locate, x1 / zoom_locate, y1 / zoom_locate)
+            pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final), clip=clip)
+            img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
+            txt = pytesseract.image_to_string(img_f, lang='por', config='--psm 6')
+
+            numeros = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', txt)
+            if len(numeros) < 2:
+                return None
+            return numeros[1]
         except Exception:
             return None
 
