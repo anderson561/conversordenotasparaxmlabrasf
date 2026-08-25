@@ -13,6 +13,66 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Fix — Prestador/Tomador colidiam no mesmo CNPJ e Valor Total saía errado
+  quando o PSM automático do Tesseract derruba a razão social do prestador e
+  o cabeçalho "TOMADOR DE SERVIÇOS" (layout Salvador/BA)** (nota real nº
+  00000061, MCLA CONSTRUÇÕES LTDA -> BONI TRANSPORTES, LOGISTICA E COMERCIO
+  LTDA; achado real 2026-08-25): a leitura de página inteira (zoom 3, PSM
+  padrão) derrubava POR COMPLETO a linha "Nome/Razão Social: MCLA
+  CONSTRUÇÕES LTDA" do prestador e corrompia "TOMADOR DE SERVIÇOS" a ponto
+  da palavra "TOMADOR" não sobreviver nem corrompida ("vVIÇOS") — sem os
+  dois sinais, o bloco genérico do prestador não tinha onde parar e vazava a
+  razão/CNPJ do TOMADOR para as duas entidades; a guarda existente de CNPJ
+  de BONI TRANSPORTES (corrige o CNPJ crônico mal-impresso dessa
+  contraparte) então disparava para as duas, reforçando o erro. A linha
+  "VALOR TOTAL DA NOTA" também saía com 1 dígito errado ("R$6.875,81" em vez
+  de "R$6.878,81", confirmado por imagem em zoom 20x) — defeito irrecuperável
+  mesmo numa releitura ultra-zoom dedicada da própria linha
+  (`_ocr_recut_valor_total_marca_agua_salvador`).
+  Correções: (1) CNPJ agora tolera vírgula no lugar do ponto como separador
+  E espaço espúrio antes dele (`_extrair_entidade`, `_scavenge_all_cnpjs`) —
+  os dígitos do prestador já saíam certos, só a pontuação rejeitava o
+  candidato; (2) novo recorte dedicado `_ocr_recut_prestador_razao_salvador`
+  recupera a razão do prestador e é EMENDADO (não prependado solto) logo
+  antes do 1º "Endereço" do documento — o recut do tomador
+  (`_ocr_tomador_salvador`) passa a disparar também quando o cabeçalho
+  "TOMADOR" some por completo, não só quando aparece malformado; (3) novo
+  recorte `_ocr_recut_base_calculo_grade_salvador` localiza a grade de
+  valores dinamicamente (âncora "(R$" na linha de rótulos, não no texto
+  "Base de Cálculo"/"Deduções" em si, que sai corrompido de formas
+  imprevisíveis) e recupera só a Base de Cálculo; quando Deduções = 0 e ela
+  diverge do "VALOR TOTAL DA NOTA" da linha isolada, `_extrair_valores`
+  passa a confiar na grade (2 leituras redundantes) sobre a linha única.
+  Suíte 309→**313 verdes**; 4 testes novos em
+  `test_salvador_prestador_tomador_colisao_psm_padrao.py`.
+
+  **Ampliação na MESMA leva (nota real nº 00000006, RC INFORMÁTICA E
+  ACESSÓRIOS LTDA -> BONI TRANSPORTES; achado real 2026-08-25):** 2 bugs
+  adicionais da mesma família, achados ao verificar outra nota reportada
+  pelo usuário. (4) O próprio rótulo "Nome/Razão Social" saía garblado a
+  ponto de nenhum filtro reconhecer ("NomeiRazão Socia'" — a "/" vira "i" e
+  o "l" final de "Social" some) mas ainda "parecia" texto normal o
+  bastante pra passar como razão social de verdade, roubando a linha real
+  (a empresa) que vinha logo depois — `is_valid_razao` agora rejeita esse
+  padrão de rótulo garblado explicitamente. (5) Dois bugs de ORDEM nos
+  recortes dedicados do Salvador, ambos causados pelo mesmo problema
+  estrutural — um gatilho/índice calculado sobre o texto JÁ ACUMULADO com
+  prepends sintéticos anteriores, em vez do texto real da página: (5a) o
+  gatilho da marca d'água (`nenhum rótulo de PRESTADOR antes do 1º
+  "TOMADOR"`) via falso-positivo quando outro recorte já tinha prependado
+  um snippet curto (ex. "CPF/CNPJ: ...") que não cita "PRESTADOR", mesmo
+  com o rótulo real perfeitamente legível na página; (5b) o recorte que
+  corrige CNPJ com 1 dígito trocado (`_ocr_recut_cnpj_invalido_salvador`,
+  índice "0=prestador, 1=tomador") recebia um índice calculado sobre uma
+  lista de candidatos que misturava texto sintético já prependado com o da
+  página real, colando o CNPJ do PRESTADOR no bloco do TOMADOR. Ambos
+  corrigidos avaliando/indexando contra uma cópia do texto ANTES de
+  qualquer prepend Salvador-específico (`best_text_ocr_original`), nunca
+  contra o acumulado. Suíte 313→**314 verdes**; 1 teste novo no mesmo
+  arquivo.
+
 ## [1.4.0] - 2026-08-25
 
 ### Corrigido
