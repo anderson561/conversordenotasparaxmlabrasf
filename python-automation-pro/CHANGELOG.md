@@ -13,6 +13,8 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+## [1.4.0] - 2026-08-25
+
 ### Corrigido
 
 - **Fix — Competência com ano trocado pelo OCR generalizado para TODOS os
