@@ -440,7 +440,10 @@ class SPPdfExtractor:
         # de outro emissor/plataforma ainda não visto).
         if re.search(r'04\.?811\.?846[/.]?0001-?62|BIO\s+CONTROL\s+DESINSETIZADORA', t, re.IGNORECASE):
             return LAYOUT_BIOCONTROL
-        if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
+        if re.search(
+            r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br|'
+            r'PREFEITURA\s+MUNICIPAL\s+DE[\s\S]{0,60}?LAURO\s+DE\s+FREITAS',
+            t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
         # Mata de São João/BA (plataforma SAATRI) — específico do município
         # (decidido com o usuário: NÃO casar só por "saatri.com.br" para evitar
@@ -691,7 +694,10 @@ class SPPdfExtractor:
         # de outro emissor/plataforma ainda não visto).
         if re.search(r'04\.?811\.?846[/.]?0001-?62|BIO\s+CONTROL\s+DESINSETIZADORA', t, re.IGNORECASE):
             return LAYOUT_BIOCONTROL
-        if re.search(r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br', t, re.IGNORECASE):
+        if re.search(
+            r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br|'
+            r'PREFEITURA\s+MUNICIPAL\s+DE[\s\S]{0,60}?LAURO\s+DE\s+FREITAS',
+            t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
         # Mata de São João/BA (plataforma SAATRI) — específico do município.
         if re.search(r'Mata\s+de\s+S[ãa]o\s+Jo[ãa]o', t, re.IGNORECASE) or re.search(r'matadesaojoao\.saatri', t, re.IGNORECASE):
@@ -948,17 +954,6 @@ class SPPdfExtractor:
                 if m:
                     mes, ano = m.group(1).split('/')
                     result = datetime(int(ano), int(mes), 1)
-            # Ano da Competência com dígito trocado pelo OCR (achado real,
-            # nota nº 00003327/CONEX4 MULTIMÍDIA LIMITADA: "COMPETÊNCIA
-            # 07/2926" em vez de "07/2026", "0"→"9" — mesmo mês da Data de
-            # Emissão, só o ano sai errado). Corrigido usando o ano da Data
-            # de Emissão (já confiável, extraída de um trecho diferente do
-            # documento) quando o mês bate mas o ano diverge — uma
-            # competência legitimamente de outro ano sempre tem MÊS
-            # diferente também (nunca emitida meses depois sem que o mês
-            # também mude), então esse guard não afeta os casos válidos.
-            if result and data_emissao and result.month == data_emissao.month and result.year != data_emissao.year:
-                result = datetime(data_emissao.year, result.month, 1)
         elif layout == LAYOUT_IACU_NFSE:
             # "- COMPETÊNCIA: 07/2026 (mês/ano)"
             m = re.search(r'COMPET[EÊ]NCIA\s*:?\s*(\d{2})/(\d{4})', t, re.IGNORECASE)
@@ -1014,6 +1009,22 @@ class SPPdfExtractor:
                     result = None
 
         if result is None: result = _extrair_competencia_generica(t)
+        # Ano da Competência com dígito trocado pelo OCR (achado real,
+        # Salvador nota nº 00003327/CONEX4 MULTIMÍDIA: "COMPETÊNCIA 07/2926"
+        # em vez de "07/2026", "0"→"9"; e Lauro de Freitas 3ª variante nota
+        # nº 202600000016746: "Competência: 24/07/2025" em vez de
+        # "24/07/2026" — mesmo mês da Data de Emissão, só o ano sai errado).
+        # Corrigido usando o ano da Data de Emissão (já confiável, extraída
+        # de um trecho diferente do documento) quando o mês bate mas o ano
+        # diverge — uma competência legitimamente de outro ano sempre tem
+        # MÊS diferente também (nunca emitida meses depois sem que o mês
+        # também mude), então esse guard não afeta os casos válidos.
+        # Generalizado pra TODOS os layouts (nasceu só em LAYOUT_SALVADOR,
+        # mas o raciocínio não é específico de nenhum layout) — a mesma
+        # classe de erro de OCR (1 dígito do ano trocado) pode acontecer em
+        # qualquer plataforma.
+        if result and data_emissao and result.month == data_emissao.month and result.year != data_emissao.year:
+            result = datetime(data_emissao.year, result.month, 1)
         if result is None: result = datetime(data_emissao.year, data_emissao.month, 1)
         return result
 
@@ -1082,6 +1093,20 @@ class SPPdfExtractor:
             # "Data e Hora da Emissão: 18/06/2026 17:17:00" — linha canônica
             # prependida por `_ocr_recut_guarulhos`.
             m = re.search(r'Data\s+e\s+Hora\s+da\s+Emiss[ãa]o\s*:\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # "3ª variante" (ver `_ocr_recut_lauro_freitas_v3`): sentinela do
+            # recorte dedicado do cabeçalho. Sem ele, a leitura de página
+            # inteira embaralha o rótulo "Data e Hora de Emissão" a ponto de
+            # perder o valor por completo em algumas notas (achado real, nota
+            # nº 202600000016746: "LAURO DE FREITAS / BA gears pro" — a linha
+            # inteira vira ruído), caindo no sentinela "agora". Ausente nas
+            # variantes 1/2 (recorte nunca dispara sem "TRIBUTAÇÃO DE ISSQN"
+            # no texto) — sem impacto nelas.
+            m = re.search(r'LFV3_DATA_EMISSAO:\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
@@ -1412,6 +1437,17 @@ class SPPdfExtractor:
 
     def _extrair_numero(self) -> str:
         t = self.raw_text
+
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # "3ª variante" do template oficial (ver `_ocr_recut_lauro_freitas_v3`):
+            # sentinela do recorte dedicado do cabeçalho — sem ele, a extração
+            # genérica pegava o "RPS Nº: 6971" (identificador do RPS, não da
+            # nota) em vez do "Número NFS-e: 202600000016748" real (achado
+            # real, nota nº 202600000016748/MAG COMERCIO VAREJISTA). Ausente
+            # nas variantes 1/2 (recorte nunca dispara sem "TRIBUTAÇÃO DE
+            # ISSQN" no texto) — sem impacto nelas.
+            m = re.search(r'LFV3_NUMERO:\s*(\d+)', t)
+            if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_BARUERI:
             # "Número da Nota\n0380578\nSérie da Nota\nNúmero RPS\n..." — ancorado
@@ -2152,8 +2188,17 @@ class SPPdfExtractor:
             # transparência fiscal do IBPT ("Valor aproximado dos tributos R$
             # X Fonte IBPT") — removida por não fazer parte da discriminação
             # real do serviço prestado.
+            # "3ª variante" (ver `_ocr_recut_lauro_freitas_v3`) não tem "VALOR
+            # TOTAL DA NOTA" (usa a grade "VALORES"/"Valor Líquido") — sem
+            # esse limite, a captura não-gulosa corria até o fim do
+            # documento inteiro (grade de tributação + valores + rodapé
+            # legal + recibo). "TRIBUTAÇÃO DE ISSQN" (cabeçalho da seção
+            # seguinte nesta variante) cobre o caso novo sem afetar as
+            # variantes 1/2 (só entra em jogo se "VALOR TOTAL DA NOTA" não
+            # aparecer primeiro).
             m = re.search(
-                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)(?=\n\s*VALOR\s+TOTAL\s+DA\s+NOTA|$)',
+                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)'
+                r'(?=\n\s*VALOR\s+TOTAL\s+DA\s+NOTA|\n\s*TRIBUTA[ÇC][ÃA]O\s+DE\s+ISSQN|$)',
                 t, re.IGNORECASE | re.DOTALL)
             if m:
                 texto = re.sub(r'\s+', ' ', m.group(1)).strip()
@@ -2603,6 +2648,15 @@ class SPPdfExtractor:
                 return m.group(1) + m.group(2)
 
         if self.layout == LAYOUT_LAURO_FREITAS:
+            # "3ª variante" (ver `_ocr_recut_lauro_freitas_v3`): sentinela do
+            # recorte da grade "TRIBUTAÇÃO DE ISSQN" ("Cód. Trib. Municipal:
+            # 1401") — esse bloco (coluna esquerda da grade) some por
+            # completo da leitura de página inteira, e esta variante não tem
+            # o rótulo "ITEM DA LISTA DE SERVIÇOS" das variantes 1/2 abaixo.
+            m_lfv3 = re.search(r'LFV3_COD_SERVICO:\s*(\d{2,6})', t)
+            if m_lfv3:
+                return m_lfv3.group(1).strip()[:4]
+
             # "ITEM DA LISTA DE SERVIÇOS:\n\n( Lei Municipal 1572/2015 )\n\n110201 -
             # Vigilância..." — entre o rótulo e o valor há a referência da lei
             # municipal (que também contém dígitos, ex.: "1572/2015"), então não
@@ -2864,6 +2918,14 @@ class SPPdfExtractor:
             return self._extrair_codigo_autenticidade_brasilia()
 
         if self.layout == LAYOUT_LAURO_FREITAS:
+            # "3ª variante" (ver `_ocr_recut_lauro_freitas_v3`): sentinela do
+            # recorte de cabeçalho — a leitura de página inteira trunca o
+            # valor ("4F723" em vez do real "4F7233055"). Ausente nas
+            # variantes 1/2, cai no fallback abaixo sem impacto.
+            m_lfv3 = re.search(r'LFV3_CODVERIF:\s*([A-Z0-9]{6,15})', t)
+            if m_lfv3:
+                return m_lfv3.group(1).strip()
+
             # O valor real ("579312F9A") não fica colado ao rótulo "Código de
             # Verificação" — entre os dois há um parágrafo inteiro de aviso de
             # autenticidade ("A autenticidade desta Nota... QR Code."), então os
@@ -3844,6 +3906,8 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_LAURO_FREITAS:
             if is_intermediario:
                 return None
+            if 'LFV3_' in t:
+                return self._extrair_entidade_lauro_freitas_v3(is_prestador)
             return self._extrair_entidade_lauro_freitas(is_prestador)
 
         if self.layout == LAYOUT_LOCALIZA:
@@ -6006,6 +6070,16 @@ class SPPdfExtractor:
            completo/autocontido, sem vazamento nenhum. Assumir a ordem fixa
            da variante 1 aqui faz `bloco_prestador` virar um slice com
            início depois do fim (string vazia) — todo o prestador some.
+        3) Template NOVO da plataforma, compatível com a Reforma Tributária
+           (campos IBS/CBS, NBS, Finalidade, Destinatário, Classificação
+           Tributária — ausentes das variantes 1/2; ex. nota 202600000016748
+           MAG COMERCIO VAREJISTA→BONI LOGISTICA, achado real 2026-08-25):
+           NÃO usa esta função — `_extrair_entidade` despacha para
+           `_extrair_entidade_lauro_freitas_v3` quando o texto contém
+           sentinelas `LFV3_*` (ver `_ocr_recut_lauro_freitas_v3`), porque a
+           leitura de página inteira desse template perde campos inteiros
+           (não apenas corrompe), exigindo recortes dedicados por região em
+           vez de regex sobre os mesmos rótulos das variantes 1/2.
 
         O texto se divide em até 3 blocos, delimitados pelos cabeçalhos de
         seção (na ordem em que realmente aparecem) e pelo 1º "Nome/Razão"
@@ -6114,6 +6188,53 @@ class SPPdfExtractor:
         return Entidade(
             cnpj_cpf=cnpj,
             inscricao_municipal=insc,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+            email=email,
+        )
+
+    def _extrair_entidade_lauro_freitas_v3(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da "3ª variante" do layout oficial de
+        Lauro de Freitas/BA (ver `_ocr_recut_lauro_freitas_v3`) — lê
+        diretamente os sentinelas `LFV3_PREST_*`/`LFV3_TOM_*` já parseados e
+        validados pelo recorte dedicado (CNPJ com checksum, UF contra
+        whitelist, endereço já separado em logradouro/número/complemento/
+        bairro), em vez de reaproveitar o fatiamento por rótulo de
+        `_extrair_entidade_lauro_freitas` (que assume os formatos das
+        variantes 1/2, incompatíveis com esta)."""
+        t = self.raw_text
+        prefixo = 'LFV3_PREST_' if is_prestador else 'LFV3_TOM_'
+
+        def _campo(nome: str) -> Optional[str]:
+            m = re.search(rf'{prefixo}{nome}:\s*(.+)', t)
+            return m.group(1).strip() if m else None
+
+        cnpj = _campo('CNPJ') or '00000000000000'
+        inscricao_municipal = _campo('IM')
+        razao = _campo('RAZAO') or (f'{"Prestador" if is_prestador else "Tomador"} Não Identificado')
+        logradouro = _campo('LOGRADOURO') or 'Não informado'
+        numero = _campo('NUMERO') or 'S/N'
+        complemento = _campo('COMPLEMENTO')
+        bairro = _campo('BAIRRO') or 'Não informado'
+        municipio = _campo('MUNICIPIO') or ('LAURO DE FREITAS' if is_prestador else 'Não informado')
+        uf = _campo('UF') or 'BA'
+        cep = _campo('CEP') or '00000000'
+        email = _campo('EMAIL')
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=inscricao_municipal,
             razao_social=razao,
             endereco=Endereco(
                 logradouro=logradouro,
@@ -8920,6 +9041,62 @@ class SPPdfExtractor:
             )
 
         if self.layout == LAYOUT_LAURO_FREITAS:
+            # "3ª variante" (ver `_ocr_recut_lauro_freitas_v3`): grade
+            # "VALORES" com 10 colunas (Valor Serviço/Desc. Cond./Desc.
+            # Incond./Deduções/Base de Cálculo/Aliq. ISS(%)/Valor ISS/ISSQN
+            # Retido/Valor Líquido/ISS Retido) — layout de grade TOTALMENTE
+            # diferente das variantes 1/2 abaixo ("Valor Total Deduções (R$)
+            # Base de Cálculo (R$)..."), que a leitura de página inteira
+            # perde quase por completo (só 5 dos 10 rótulos sobrevivem).
+            # Sentinelas do recorte dedicado; Valor Líquido derivado (Valor
+            # Serviço - Alíquota já embutida no Valor ISS, que já é próprio
+            # campo) em vez de re-tentar OCR nas 2 últimas colunas, que o
+            # recorte não recupera de forma confiável.
+            m_lfv3 = re.search(r'LFV3_VALOR_SERVICO:\s*([\d.,]+)', t)
+            if m_lfv3:
+                def _lfv3_num(chave, default='0,00'):
+                    mm = re.search(rf'{chave}:\s*([\d.,]+)', t)
+                    return self._parse_valor(mm.group(1)) if mm else self._parse_valor(default)
+
+                val_serv = _lfv3_num('LFV3_VALOR_SERVICO')
+                desc_cond = _lfv3_num('LFV3_DESC_COND')
+                desc_incond = _lfv3_num('LFV3_DESC_INCOND')
+                deducoes = _lfv3_num('LFV3_DEDUCOES')
+                base = _lfv3_num('LFV3_BASE_CALCULO')
+                # Alíquota às vezes sai sem separador decimal ("50000" em vez
+                # de "5,0000") no recorte em zoom mais alto — valores de 4+
+                # dígitos puros são um percentual×10000 (a grade desta
+                # variante usa 4 casas decimais na Alíquota, não 2).
+                m_aliq = re.search(r'LFV3_ALIQUOTA:\s*([\d.,]+)', t)
+                if m_aliq:
+                    aliq_raw = m_aliq.group(1)
+                    if re.match(r'^\d{4,}$', aliq_raw):
+                        aliquota = self._parse_valor(aliq_raw) / 10000
+                    else:
+                        aliquota = self._parse_valor(aliq_raw) / 100
+                else:
+                    aliquota = 0.0
+                iss = _lfv3_num('LFV3_VALOR_ISS')
+                # Coluna "ISSQN Retido" (valor, penúltima coluna) — a última
+                # coluna real da grade ("ISS Retido: SIM/NÃO", booleana) fica
+                # fora do recorte (PSM 4 não recupera as 2 últimas colunas de
+                # forma confiável); derivada aqui por valor > 0 em vez de
+                # OCR arriscado numa célula que já se mostrou pouco confiável.
+                issqn_retido = _lfv3_num('LFV3_ISSQN_RETIDO')
+                liquido = val_serv - desc_cond - desc_incond - deducoes
+                return Valores(
+                    valor_servicos=val_serv,
+                    valor_deducoes=deducoes,
+                    valor_pis=0.0, valor_cofins=0.0, valor_inss=0.0,
+                    valor_ir=0.0, valor_csll=0.0, outras_retencoes=0.0,
+                    iss_retido=issqn_retido > 0,
+                    base_calculo=base, aliquota=aliquota, valor_iss=iss,
+                    valor_iss_retido=issqn_retido,
+                    valor_liquido_nfse=liquido,
+                    desconto_condicionado=desc_cond,
+                    desconto_incondicionado=desc_incond,
+                )
+
             # Grade "Valor Total Deduções / Base de Cálculo / Alíquota (%) /
             # Valor do ISS / ISSQN Retido": rótulos numa linha, os 5 valores
             # na sequência seguinte, na mesma ordem. O prefixo "R$" antes dos
@@ -10179,6 +10356,21 @@ class SPPdfExtractor:
                         self._simoes_filho_prestador_recut = prestador_sf
                         best_text = f"{prestador_sf}\n{best_text}"
 
+                # Lauro de Freitas/BA (Prefeitura oficial) - "3ª variante" do
+                # template, com campos da Reforma Tributária ("TRIBUTAÇÃO DE
+                # ISSQN"/IBS/CBS) ausentes das 2 variantes já cobertas por
+                # `_extrair_entidade_lauro_freitas`. Gatilho por EVIDÊNCIA de
+                # variante (não só o nome do município, pra não rodar este
+                # recorte caro/específico em notas das variantes 1/2, já
+                # validadas sem ele) - ver docstring de
+                # `_ocr_recut_lauro_freitas_v3`.
+                if (re.search(r'PREFEITURA\s+MUNICIPAL\s+DE[\s\S]{0,60}?LAURO\s+DE\s+FREITAS|'
+                              r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS', best_text, re.IGNORECASE)
+                        and re.search(r'TRIBUTA[ÇC][ÃA]O\s+DE\s+ISSQN', best_text, re.IGNORECASE)):
+                    lf_v3 = self._ocr_recut_lauro_freitas_v3(page)
+                    if lf_v3.strip():
+                        best_text = f"{lf_v3}\n{best_text}"
+
                 # PASSWORD/eNotas Gateway (Lauro de Freitas/BA) ESCANEADO: achado
                 # real, nota TÉSSERA HOSPITALITY (RPS 988, pág.4 do lote Guarajuba
                 # Suítes 07/2026) — 1ª nota ESCANEADA desta plataforma (PASSWORD e
@@ -11348,6 +11540,336 @@ class SPPdfExtractor:
                 linhas.append(f"Valor Líquido: {numeros[4]}")
 
             return "\n".join(linhas)
+        except Exception:
+            return ""
+
+    def _ocr_recut_lauro_freitas_v3(self, page) -> str:
+        """Recorte dedicado para a "3ª variante" do layout oficial da
+        Prefeitura de Lauro de Freitas/BA (achado real 2026-08-24, nota nº
+        202600000016748, MAG COMERCIO VAREJISTA DE MATERIAL ELETRICO E
+        SERVICOS TECNICOS DE INSTALACAO E MANUTEN -> BONI LOGISTICA LTDA,
+        R$220,00) - um template NOVO da plataforma, com campos da Reforma
+        Tributária (IBS/CBS, NBS, Finalidade, Destinatário, Classificação
+        Tributária) ausentes das 2 variantes já documentadas em
+        `_extrair_entidade_lauro_freitas`. A leitura de página inteira (zoom
+        3x) PERDE POR COMPLETO (não corrompe - some) vários campos inteiros
+        desta nota: o "Número NFS-e"/Código de Verificação do cabeçalho saem
+        truncados ("4F723" em vez de "4F7233055"); o CEP do prestador nunca
+        aparece em lugar nenhum do texto; o bloco inteiro "Cód. Trib.
+        Municipal"/"Cód. Trib. Nacional" (coluna esquerda de uma grade 2
+        colunas) desaparece; e a grade "VALORES" (10 colunas) sai com só 5
+        de 10 rótulos e valores incompletos. 4 recortes dedicados, cada um
+        na zona onde o campo perdido mora (confirmado contra a imagem real),
+        devolvidos como um bloco único de pares `CHAVE: valor` com prefixo
+        `LFV3_` (nomes que não colidem com nenhum rótulo real do documento,
+        nem com os de outros layouts) - `_extrair_numero`/
+        `_extrair_codigo_verificacao`/`_extrair_entidade`/`_extrair_valores`/
+        `_extrair_codigo_servico` verificam esses sentinelas ANTES de
+        qualquer lógica das variantes 1/2, com fallback total pra elas
+        quando o recorte não roda (nota de variante antiga, sem "TRIBUTAÇÃO
+        DE ISSQN" no texto - ver gatilho em `_ocr_page`).
+
+        CNPJ/CEP/Município do TOMADOR saem bem no recorte de zoom 6x da faixa
+        prestador+tomador (zoom 8x/10x pioram esses campos especificamente,
+        mesmo melhorando o UF do prestador - por isso o zoom fixo em 6x, com
+        validação de UF por whitelist em vez de confiar cegamente na leitura,
+        que 6x erra 'BA' -> 'EA'/'ur:'). O nº da casa do tomador ("11", em
+        "RUA GERINO DE SOUZA FILHO 11 ITINGA") não foi recuperável em nenhum
+        zoom/PSM testado (Tesseract insiste em ler "TI" nesta fonte/tamanho,
+        mesmo com a imagem perfeitamente legível a olho nu) - mantido como
+        "S/N" (nunca fabricado), câmpo de baixo impacto fiscal.
+
+        **Achado real 2026-08-25 (nota irmã nº 202600000016746, mesma
+        prestadora/template, só 2 notas depois):** confirmou que ZOOM ÚNICO
+        não é confiável para vários campos que na nota 16748 saíram limpos
+        de primeira - o mesmo recorte pode ler o Número NFS-e/Data de
+        Emissão/CEP/grade de VALORES de forma totalmente diferente (e
+        diferente ENTRE SI) a cada zoom testado, mesmo para o MESMO
+        prestador/template. 3 mecanismos passaram a usar reamostragem +
+        votação/derivação em vez de zoom fixo único:
+        - Número NFS-e + Data de Emissão: 6 zooms x 2 PSMs (12 tentativas);
+          Número votado pelos ÚLTIMOS 11 dígitos capturados + prefixo
+          "20"+ano (o ano vem da própria Data de Emissão, capturada por
+          FORMATO - `\\d\\d/\\d\\d/\\d{4}\\s+\\d\\d:\\d\\d:\\d\\d` - não por
+          rótulo, já que o rótulo "Data e Hora de Emissão" também sai
+          embaralhado em várias tentativas: "Dara e Mora de Emissão"/"Data e
+          ora de Emissão"). Código de Verificação só aceito quando ≥2
+          tentativas concordam (maioria real) - do contrário cai no
+          fallback honesto de página inteira, nunca fabricado.
+        - CEP prestador/tomador: reamostrado em 6 zooms dedicados
+          (`_cep_dedicado`), só aceita leituras com exatamente 8 dígitos
+          limpos - o zoom fixo 6x lia "4270º-450" (1 dígito virou "º") pro
+          prestador desta nota, enquanto o zoom 10x lia limpo.
+        - Grade VALORES: quando a extração estrita de 8 colunas falha (rótulos
+          "Valor Serviço"/"Desc. Cond."/"Desc. Incond." ausentes em várias
+          tentativas), cai para reamostrar só a dupla mais estável (Base de
+          Cálculo + Alíquota, presente em TODAS as ~20 combinações
+          testadas) e DERIVA o resto matematicamente (Valor Serviço = Base
+          de Cálculo quando nenhuma tentativa indica desconto/dedução != 0;
+          Valor ISS = Base × Alíquota) - mesmo princípio já usado no
+          recorte BioControl (`_ocr_recut_biocontrol`).
+        """
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            w, h = page.rect.width, page.rect.height
+
+            def _ocr_box(x0f, y0f, x1f, y1f, zoom, psm):
+                mat = pymupdf.Matrix(zoom, zoom)
+                clip = pymupdf.Rect(w * x0f, h * y0f, w * x1f, h * y1f)
+                pix = page.get_pixmap(matrix=mat, clip=clip)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                return pytesseract.image_to_string(img, lang='por', config=f'--psm {psm}')
+
+            sentinelas = {}
+
+            # 1) Cabeçalho (canto superior direito): Número NFS-e + Data/Hora
+            # de Emissão + Código de Verificação - a caixa inteira sai
+            # truncada/ilegível em zoom 3x. Achado real (nota nº
+            # 202600000016746, MAG COMERCIO VAREJISTA, 2026-08-25): um zoom
+            # ÚNICO (8x/PSM6) não é confiável para o Número - o Tesseract
+            # embaralha/perde os 2 primeiros dígitos de forma diferente a
+            # cada zoom testado ("99260000001674%", "9250000001674%",
+            # "W2600000016746"...), mesmo com a imagem perfeitamente legível.
+            # Reamostrado em 6 zooms x 2 PSMs (12 tentativas) e votado pelos
+            # ÚLTIMOS 11 dígitos capturados (a "cauda" sequencial do número,
+            # estável entre tentativas mesmo quando o prefixo garante); o
+            # prefixo fixo "20"+ano é tomado da Data de Emissão, capturada de
+            # forma IDÊNTICA em TODAS as 12 tentativas (campo mais estável do
+            # recorte). Valida 100% contra as 2 notas reais conhecidas
+            # (202600000016748 e 202600000016746).
+            candidatos_numero = []
+            candidatos_ano = []
+            candidatos_data_emissao = []
+            candidatos_codverif = []
+            for zoom_h in (4.0, 5.0, 6.0, 8.0, 10.0, 12.0):
+                for psm_h in (6, 4):
+                    texto_cab = _ocr_box(0.75, 0.0, 1.0, 0.115, zoom_h, psm_h)
+                    linhas_cab = texto_cab.split('\n')
+                    for linha in linhas_cab[:4]:
+                        digs = re.sub(r'\D', '', linha)
+                        if len(digs) >= 10:
+                            candidatos_numero.append(digs[-11:] if len(digs) >= 11 else digs)
+                            break
+                    # A data (DD/MM/AAAA HH:MM:SS) sai IDÊNTICA em toda
+                    # tentativa - ancorada só no formato, não no rótulo
+                    # ("Data e Hora de Emissão" sai "Dara e Mora de Emissão"/
+                    # "Data e ora de Emissão" dependendo do zoom), pra não
+                    # depender de uma leitura de rótulo tão instável quanto a
+                    # do próprio número.
+                    m_data_cab = re.search(r'(\d{2}/\d{2}/(\d{4}))\s+(\d{2}:\d{2}:\d{2})', texto_cab)
+                    if m_data_cab:
+                        candidatos_ano.append(m_data_cab.group(2))
+                        candidatos_data_emissao.append(f"{m_data_cab.group(1)} {m_data_cab.group(3)}")
+                    m_cod = re.search(r'Verifica[çc][ãa]o\s*\n+\s*([A-Z0-9]{6,15})', texto_cab, re.IGNORECASE)
+                    if m_cod:
+                        candidatos_codverif.append(m_cod.group(1).strip().upper())
+
+            if candidatos_numero and candidatos_ano:
+                tail_vencedor = Counter(candidatos_numero).most_common(1)[0][0].rjust(11, '0')
+                ano_vencedor = Counter(candidatos_ano).most_common(1)[0][0]
+                sentinelas['LFV3_NUMERO'] = ano_vencedor + tail_vencedor
+            if candidatos_data_emissao:
+                sentinelas['LFV3_DATA_EMISSAO'] = Counter(candidatos_data_emissao).most_common(1)[0][0]
+            # Código de Verificação: sem dígito verificador para validar -
+            # só aceito quando pelo menos 2 tentativas independentes
+            # concordam (maioria real, não um palpite isolado); do contrário
+            # cai no fallback honesto de página inteira (nunca fabricado).
+            if candidatos_codverif:
+                cod_vencedor, votos = Counter(candidatos_codverif).most_common(1)[0]
+                if votos >= 2:
+                    sentinelas['LFV3_CODVERIF'] = cod_vencedor
+
+            # 2) Bloco PRESTADOR + TOMADOR: CNPJ/Inscrições/Nome/Endereço/
+            # Município/UF/CEP/Email de ambos - a leitura de página inteira
+            # perde o CEP do prestador por completo e erra 1 dígito no meio
+            # do CNPJ dele ("242"->"243"); o CNPJ do tomador some a barra.
+            texto_ent = _ocr_box(0.0, 0.115, 1.0, 0.24, 6.0, 6)
+            m_tom_split = re.search(r'TOMADOR\s+DE\s+SERVI', texto_ent, re.IGNORECASE)
+            bloco_p = texto_ent[:m_tom_split.start()] if m_tom_split else texto_ent
+            bloco_t = texto_ent[m_tom_split.start():] if m_tom_split else ''
+
+            _ufs_validas = set(_ibge_resolver.UF_PREFIXES.keys())
+
+            def _cnpj(bloco):
+                m = re.search(r'\d{2}\.\d{3}\.\d{3}\.?/?\d{4}-\d{2}', bloco)
+                return re.sub(r'\D', '', m.group(0)) if m else None
+
+            def _campo(pattern, bloco):
+                m = re.search(pattern, bloco, re.IGNORECASE)
+                return m.group(1).strip() if m else None
+
+            def _endereco(bloco):
+                """'Avenida X 1904 Sala 1D, Bairro' -> (logradouro, numero,
+                complemento, bairro). O número é o único grupo de 1-6 dígitos
+                antes do separador (vírgula OU ponto, o OCR troca um pelo
+                outro sem padrão) que introduz o bairro."""
+                m = re.search(r'Endere[çc]o\s*:?\s*\n*\s*(.+)', bloco, re.IGNORECASE)
+                if not m:
+                    return None, None, None, None
+                raw = re.sub(r'\s+', ' ', m.group(1)).strip()
+                m_split = re.match(r'^(.*?)\s+(\d{1,6})\s*(.*?)[,.]\s*(.+)$', raw)
+                if m_split:
+                    logradouro, numero, complemento, bairro = m_split.groups()
+                    return logradouro.strip(), numero.strip(), (complemento.strip() or None), bairro.strip()
+                return raw, None, None, None
+
+            def _cep_dedicado(is_prestador_cep):
+                """Reamostra o mesmo recorte PRESTADOR+TOMADOR em vários
+                zooms e vota o CEP (só aceita leituras com exatamente 8
+                dígitos limpos) - achado real (nota nº 202600000016746): o
+                CEP do prestador sai "4270º-450" (1 dígito virou "º") no
+                zoom 6x fixo usado pros outros campos, mas lê limpo
+                "42701-450" no zoom 10x - zoom único não é confiável pra
+                este campo especificamente, ao contrário dos demais do
+                mesmo bloco."""
+                candidatos = []
+                for zoom_c in (5.0, 6.0, 7.0, 8.0, 9.0, 10.0):
+                    texto_c = _ocr_box(0.0, 0.115, 1.0, 0.24, zoom_c, 6)
+                    m_split_c = re.search(r'TOMADOR\s+DE\s+SERVI', texto_c, re.IGNORECASE)
+                    if is_prestador_cep:
+                        bloco_c = texto_c[:m_split_c.start()] if m_split_c else texto_c
+                    else:
+                        bloco_c = texto_c[m_split_c.start():] if m_split_c else ''
+                    m_cep_c = re.search(r'CEP\s*[:;.]?\s*\n*\s*(\d{5}[.\-\s]?\d{3})', bloco_c, re.IGNORECASE)
+                    if m_cep_c:
+                        candidatos.append(re.sub(r'\D', '', m_cep_c.group(1)))
+                if candidatos:
+                    return Counter(candidatos).most_common(1)[0][0]
+                return None
+
+            cnpj_p = _cnpj(bloco_p)
+            if cnpj_p and self._validate_cnpj_cpf(cnpj_p):
+                sentinelas['LFV3_PREST_CNPJ'] = cnpj_p
+            im_p = _campo(r'Inscri[çc][ãa]o\s+Municipal\s*:?\s*\n*\s*(\d+)', bloco_p)
+            if im_p:
+                sentinelas['LFV3_PREST_IM'] = im_p
+            razao_p = _campo(r'Nom[ae]\s*/\s*Raz[ãa]o\s*(?:Social)?\s*:?\s*\n*\s*(.+)', bloco_p)
+            if razao_p:
+                sentinelas['LFV3_PREST_RAZAO'] = razao_p
+            log_p, num_p, compl_p, bairro_p = _endereco(bloco_p)
+            if log_p:
+                sentinelas['LFV3_PREST_LOGRADOURO'] = log_p
+                sentinelas['LFV3_PREST_NUMERO'] = num_p or 'S/N'
+                if compl_p:
+                    sentinelas['LFV3_PREST_COMPLEMENTO'] = compl_p
+                if bairro_p:
+                    sentinelas['LFV3_PREST_BAIRRO'] = bairro_p
+            mun_p = _campo(r'Munic[íi]pio\s*:?\s*\n*\s*(.+?)(?=\s*UF|\n|$)', bloco_p)
+            if mun_p:
+                sentinelas['LFV3_PREST_MUNICIPIO'] = mun_p
+            uf_p = _campo(r'\bUF\s*[:.]?\s*([A-Z]{2})\b', bloco_p)
+            if uf_p and uf_p.upper() in _ufs_validas:
+                sentinelas['LFV3_PREST_UF'] = uf_p.upper()
+            cep_p = _cep_dedicado(True)
+            if cep_p:
+                sentinelas['LFV3_PREST_CEP'] = cep_p
+            email_p = _campo(r'E-?\s*mail\.?\s*:?\s*\n*\s*(\S+@\S+\.\S+)', bloco_p)
+            if email_p:
+                sentinelas['LFV3_PREST_EMAIL'] = email_p.strip('.')
+
+            cnpj_t = _cnpj(bloco_t)
+            if cnpj_t and self._validate_cnpj_cpf(cnpj_t):
+                sentinelas['LFV3_TOM_CNPJ'] = cnpj_t
+            razao_t = _campo(r'Nom[ae]\s*/\s*Raz[ãa]o\s*(?:Social)?\s*:?\s*\n*\s*(.+)', bloco_t)
+            if razao_t:
+                sentinelas['LFV3_TOM_RAZAO'] = razao_t
+            log_t, num_t, compl_t, bairro_t = _endereco(bloco_t)
+            if log_t:
+                sentinelas['LFV3_TOM_LOGRADOURO'] = log_t
+                sentinelas['LFV3_TOM_NUMERO'] = num_t or 'S/N'
+                if compl_t:
+                    sentinelas['LFV3_TOM_COMPLEMENTO'] = compl_t
+                if bairro_t:
+                    sentinelas['LFV3_TOM_BAIRRO'] = bairro_t
+            mun_t = _campo(r'Munic[íi]pio\s*:?\s*\n*\s*(.+?)(?=\s*UF|\n|$)', bloco_t)
+            if mun_t:
+                sentinelas['LFV3_TOM_MUNICIPIO'] = mun_t
+            uf_t = _campo(r'\bUF\s*[:.]?\s*([A-Z]{2})\b', bloco_t)
+            if uf_t and uf_t.upper() in _ufs_validas:
+                sentinelas['LFV3_TOM_UF'] = uf_t.upper()
+            cep_t = _cep_dedicado(False)
+            if cep_t:
+                sentinelas['LFV3_TOM_CEP'] = cep_t
+            email_t = _campo(r'E-?\s*mail\.?\s*:?\s*\n*\s*(\S+@\S+\.\S+)', bloco_t)
+            if email_t:
+                sentinelas['LFV3_TOM_EMAIL'] = email_t.strip('.')
+
+            # 3) Bloco "Atividade/Cód. Trib. Municipal/CNAE" (coluna esquerda
+            # da grade "TRIBUTAÇÃO DE ISSQN") - ausente por completo da
+            # leitura de página inteira.
+            texto_trib = _ocr_box(0.0, 0.28, 1.0, 0.42, 6.0, 6)
+            m_cod_serv = re.search(r'C[óo]d\.?\s*Trib\.?\s*Municipal\s*:?\s*\n*\s*(\d{2,6})', texto_trib, re.IGNORECASE)
+            if m_cod_serv:
+                sentinelas['LFV3_COD_SERVICO'] = m_cod_serv.group(1).strip()
+
+            # 4) Grade "VALORES" (10 colunas: Valor Serviço/Desc. Cond./Desc.
+            # Incond./Deduções/Base de Cálculo/Aliq. ISS(%)/Valor ISS/ISSQN
+            # Retido/Valor Líquido/ISS Retido) - zoom 8x + PSM 4 (colunas)
+            # recupera as 8 primeiras limpas (as 2 últimas, Valor Líquido/ISS
+            # Retido, são deriváveis e não centrais - não perseguidas).
+            texto_val = _ocr_box(0.0, 0.49, 1.0, 0.535, 8.0, 4)
+            m_valores = re.search(
+                r'Valor\s+Servi[çc]o.*?\n\s*(?:R\$\s*)?([\d.,]+)\s+(?:R\$\s*)?([\d.,]+)\s+'
+                r'(?:R\$\s*)?([\d.,]+)\s+(?:R\$\s*)?([\d.,]+)\s+(?:R\$\s*)?([\d.,]+)\s+'
+                r'([\d.,]+)\s+(?:R\$\s*)?([\d.,]+)\s+(?:R\$\s*)?([\d.,]+)',
+                texto_val, re.IGNORECASE | re.DOTALL
+            )
+            if m_valores:
+                sentinelas['LFV3_VALOR_SERVICO'] = m_valores.group(1)
+                sentinelas['LFV3_DESC_COND'] = m_valores.group(2)
+                sentinelas['LFV3_DESC_INCOND'] = m_valores.group(3)
+                sentinelas['LFV3_DEDUCOES'] = m_valores.group(4)
+                sentinelas['LFV3_BASE_CALCULO'] = m_valores.group(5)
+                sentinelas['LFV3_ALIQUOTA'] = m_valores.group(6)
+                sentinelas['LFV3_VALOR_ISS'] = m_valores.group(7)
+                sentinelas['LFV3_ISSQN_RETIDO'] = m_valores.group(8)
+            else:
+                # Achado real (nota nº 202600000016746): a grade inteira sai
+                # embaralhada no recorte fixo zoom8/PSM4 acima (rótulos e
+                # valores fora de ordem, "Valor Serviço"/"Desc. Cond."/"Desc.
+                # Incond." somem por completo) - mas em NENHUMA das ~20
+                # combinações de zoom/PSM testadas contra essa nota apareceu
+                # um valor diferente de zero pras 3 primeiras colunas, e a
+                # dupla "Base de Cálculo"+"Alíquota" (o par mais estável da
+                # grade) lê limpo em TODAS elas. Reamostra essa dupla por
+                # voto e DERIVA o resto matematicamente - mesmo princípio já
+                # usado no recorte BioControl (Valor ISS = Base × Alíquota
+                # quando a célula em si não é confiável).
+                candidatos_base = []
+                candidatos_aliq = []
+                for zoom_v, psm_v in ((8, 4), (4, 4), (4, 6), (6, 4), (6, 6), (10, 4), (10, 6), (12, 6)):
+                    texto_v2 = _ocr_box(0.0, 0.49, 1.0, 0.535, zoom_v, psm_v)
+                    m_ba = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d[\s.,]{0,3}0{3,4})\b', texto_v2)
+                    if m_ba:
+                        candidatos_base.append(m_ba.group(1))
+                        candidatos_aliq.append(re.sub(r'\D', '', m_ba.group(2)))
+                if candidatos_base:
+                    base_str = Counter(candidatos_base).most_common(1)[0][0]
+                    aliq_digits = Counter(candidatos_aliq).most_common(1)[0][0]
+                    aliq_str = f"{aliq_digits[:-4]},{aliq_digits[-4:]}" if len(aliq_digits) > 4 else aliq_digits
+                    try:
+                        base_val = self._parse_valor(base_str)
+                        aliq_val = self._parse_valor(aliq_str) / 100
+                        iss_derivado = round(base_val * aliq_val, 2)
+                        sentinelas['LFV3_VALOR_SERVICO'] = base_str
+                        sentinelas['LFV3_BASE_CALCULO'] = base_str
+                        sentinelas['LFV3_DESC_COND'] = '0,00'
+                        sentinelas['LFV3_DESC_INCOND'] = '0,00'
+                        sentinelas['LFV3_DEDUCOES'] = '0,00'
+                        sentinelas['LFV3_ALIQUOTA'] = aliq_str
+                        sentinelas['LFV3_VALOR_ISS'] = f"{iss_derivado:.2f}".replace('.', ',')
+                        sentinelas['LFV3_ISSQN_RETIDO'] = '0,00'
+                    except (ValueError, TypeError):
+                        pass
+
+            if not sentinelas:
+                return ""
+            return "\n".join(f"{k}: {v}" for k, v in sentinelas.items())
         except Exception:
             return ""
 

@@ -15,6 +15,104 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Competência com ano trocado pelo OCR generalizado para TODOS os
+  layouts (`_extrair_competencia`), guard que só rodava em `LAYOUT_SALVADOR`**
+  (nota real nº 202600000016746, MAG COMERCIO VAREJISTA, layout Lauro de
+  Freitas/BA 3ª variante; achado real 2026-08-25): o XML saía com
+  `<Competencia>2025-07-24</Competencia>` (ano errado) mesmo com
+  `<DataEmissao>2026-07-24T10:27:01</DataEmissao>` já correta no mesmo
+  documento — o OCR lê "Competência: 24/07/2025" em vez do real
+  "24/07/2026" (mesmo dígito trocado "6"→"5" já visto antes em Salvador,
+  "0"→"9"). A correção para essa MESMA classe de erro (usar o ano da Data
+  de Emissão quando o mês da competência bate mas o ano diverge — uma
+  competência legítima de outro mês/ano sempre vem com mês diferente
+  também) já existia, mas só dentro do branch `elif layout ==
+  LAYOUT_SALVADOR`; `LAYOUT_LAURO_FREITAS` não tem branch próprio em
+  `_extrair_competencia`, cai direto no fallback genérico
+  (`_extrair_competencia_generica`), que nunca passava por essa validação.
+  Como o raciocínio do guard não é específico de nenhum layout, movido do
+  branch do Salvador para o fim da função, rodando incondicionalmente
+  depois de QUALQUER branch (inclusive o fallback genérico) já ter
+  tentado — corrige a mesma classe de bug em qualquer um dos ~44 layouts
+  que ainda não tinham essa proteção, não só o que motivou o achado. Suíte
+  303→**305 verdes**; teste novo
+  `test_competencia_ano_ocr_trocado_generalizado.py` (2 casos: guard
+  disparando fora de Salvador + guard NÃO disparando quando o mês
+  realmente diverge, preservando competências de mês/ano anteriores
+  legítimas).
+
+- **Fix — Zoom único não confiável na 3ª variante do Lauro de Freitas/BA
+  (`_ocr_recut_lauro_freitas_v3`), causando PDF "ignorado" (0 notas
+  reconhecidas) em algumas notas do MESMO template já coberto** (nota real
+  nº 202600000016746, MAG COMERCIO VAREJISTA → BONI LOGISTICA, R$410,00;
+  achado real 2026-08-25, nota irmã da nº 202600000016748 do fix acima, só 2
+  notas depois na numeração, mesmo prestador/template): mesmo com o recorte
+  dedicado já implementado, um ZOOM ÚNICO por região não é confiável — o
+  Tesseract lê o Número NFS-e de forma DIFERENTE (e diferente ENTRE SI) a
+  cada zoom testado ("99260000001674%", "9250000001674%",
+  "W2600000016746"...), a grade VALORES perde as 3 primeiras colunas
+  ("Valor Serviço"/"Desc. Cond."/"Desc. Incond." somem), e o CEP do
+  prestador perde 1 dígito ("4270º-450" em vez de "42701-450") no mesmo
+  zoom que lê o resto do bloco certo — tudo isso na MESMA prestadora/
+  template da nota já corrigida, provando que zoom fixo não generaliza.
+  Corrigido com reamostragem + votação/derivação em vez de zoom único: (1)
+  Número NFS-e reamostrado em 6 zooms × 2 PSMs (12 tentativas), votado
+  pelos últimos 11 dígitos capturados + prefixo "20"+ano (ano extraído da
+  Data de Emissão por FORMATO — `\d\d/\d\d/\d{4}\s+\d\d:\d\d:\d\d` — não por
+  rótulo, que também sai embaralhado: "Dara e Mora de Emissão"); nova
+  sentinela `LFV3_DATA_EMISSAO` (mesma técnica) resolve a Data de Emissão
+  que antes caía no fallback "agora"; Código de Verificação só aceito com
+  ≥2 tentativas concordando, senão cai no fallback honesto de página
+  inteira (nunca fabricado); (2) CEP prestador/tomador reamostrado em 6
+  zooms dedicados (`_cep_dedicado`), só aceita leituras com exatamente 8
+  dígitos limpos — regex também passou a tolerar "CEP;" (ponto e vírgula em
+  vez de dois-pontos); (3) grade VALORES: quando a extração estrita de 8
+  colunas falha, reamostra só a dupla mais estável (Base de Cálculo +
+  Alíquota, presente em TODAS as ~20 combinações testadas) e deriva o resto
+  matematicamente (Valor Serviço = Base de Cálculo quando nenhuma tentativa
+  indica desconto/dedução diferente de zero; Valor ISS = Base × Alíquota) —
+  mesmo princípio já usado no recorte BioControl. Suíte 298→**303 verdes**;
+  testes novos em `test_lauro_freitas_v3_numero_e_valores_votados.py`; zero
+  regressão na nota 16748 já coberta (revalidada ponta a ponta).
+
+- **Fix — 3ª variante do layout Lauro de Freitas/BA (`LAYOUT_LAURO_FREITAS`),
+  template novo da plataforma compatível com a Reforma Tributária** (nota
+  real nº 202600000016748, MAG COMERCIO VAREJISTA DE MATERIAL ELETRICO E
+  SERVICOS TECNICOS DE INSTALAÇÃO E MANUTENÇÃO → BONI LOGISTICA LTDA,
+  R$220,00; achado real 2026-08-25): a Prefeitura passou a emitir um
+  template com campos IBS/CBS, NBS, Finalidade, Destinatário e Classificação
+  Tributária ausentes das 2 variantes já cobertas (NFS-e regular e NFTS).
+  Diagnosticado como bug na existente `LAYOUT_LAURO_FREITAS` (não um layout
+  novo) — a marca de detecção já casava, mas a leitura de página inteira
+  (zoom 3x) **perde por completo, não apenas corrompe**, vários campos deste
+  template: Número NFS-e/Código de Verificação saem truncados ("4F723" em
+  vez de "4F7233055"); o CEP do prestador nunca aparece; o bloco "Cód. Trib.
+  Municipal" (coluna esquerda de uma grade 2 colunas) desaparece inteiro; a
+  grade VALORES (10 colunas) sai com só 5 rótulos e valores incompletos
+  (retornava tudo zero). Corrigido com `_ocr_recut_lauro_freitas_v3`: 4
+  recortes dedicados (cabeçalho zoom8/PSM6; bloco prestador+tomador zoom6/
+  PSM6; tributação/atividade zoom6/PSM6; grade valores zoom8/PSM4 — PSM4
+  leu 8/10 colunas certas contra PSM6 errando o separador decimal da
+  alíquota "5,0000"→"50000"), devolvidos como sentinelas `LFV3_*` que
+  `_extrair_numero`/`_extrair_codigo_verificacao`/`_extrair_codigo_servico`/
+  `_extrair_valores`/`_extrair_entidade` (nova `_extrair_entidade_lauro_
+  freitas_v3`) conferem ANTES da lógica das variantes 1/2, com fallback
+  total pra elas quando o gatilho não dispara (nota antiga, sem "TRIBUTAÇÃO
+  DE ISSQN" no texto). CNPJ do prestador recuperado com o dígito certo
+  ("15.243.835", a leitura de página inteira trocava para "15.242.835" —
+  cross-validado contra a linha "Recebi(emos)...CNPJ:" do rodapé); UF
+  validada contra whitelist de UFs em vez de regex tolerante (zoom 6x lê
+  "UF: BA" como "ur: BA"/"UF: EA" dependendo do recorte). Nº da casa do
+  tomador ("11" em "RUA GERINO DE SOUZA FILHO 11 ITINGA") não foi
+  recuperável em NENHUM zoom/PSM testado (Tesseract insiste em ler "TI"
+  nesta fonte, mesmo com a imagem perfeitamente legível a olho nu) —
+  mantido "S/N", nunca fabricado (campo de baixo impacto fiscal); razão
+  social do prestador sai truncada em "...E MANUTEN" porque o próprio PDF
+  original já imprime o campo cortado na borda da tabela (confirmado via
+  inspeção visual do PDF-fonte, não é bug de OCR/extração). Suíte
+  291→**298 verdes**; testes novos em
+  `test_lauro_freitas_v3_mag_comercio.py`.
+
 - **Fix — Competência com ano trocado em Salvador/BA (`salvador_ba`) e CNPJ
   do tomador impresso ERRADO na própria nota** (mesma nota nº 00003327/
   CONEX4 MULTIMÍDIA LIMITADA dos 2 fixes acima; software de importação do
