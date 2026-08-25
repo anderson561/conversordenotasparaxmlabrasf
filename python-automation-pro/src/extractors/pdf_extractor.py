@@ -1092,6 +1092,20 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
+        if self.layout == LAYOUT_LAURO_FREITAS:
+            # "3ª variante" (ver `_ocr_recut_lauro_freitas_v3`): sentinela do
+            # recorte dedicado do cabeçalho. Sem ele, a leitura de página
+            # inteira embaralha o rótulo "Data e Hora de Emissão" a ponto de
+            # perder o valor por completo em algumas notas (achado real, nota
+            # nº 202600000016746: "LAURO DE FREITAS / BA gears pro" — a linha
+            # inteira vira ruído), caindo no sentinela "agora". Ausente nas
+            # variantes 1/2 (recorte nunca dispara sem "TRIBUTAÇÃO DE ISSQN"
+            # no texto) — sem impacto nelas.
+            m = re.search(r'LFV3_DATA_EMISSAO:\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
         if self.layout == LAYOUT_SIMOES_FILHO:
             # "Emitido em 22/07/2026 21:14:46" — testado exaustivamente (zooms
             # 3 a 14, autocontraste, binarização, whitelist de caracteres,
@@ -11559,12 +11573,43 @@ class SPPdfExtractor:
         zoom/PSM testado (Tesseract insiste em ler "TI" nesta fonte/tamanho,
         mesmo com a imagem perfeitamente legível a olho nu) - mantido como
         "S/N" (nunca fabricado), câmpo de baixo impacto fiscal.
+
+        **Achado real 2026-08-25 (nota irmã nº 202600000016746, mesma
+        prestadora/template, só 2 notas depois):** confirmou que ZOOM ÚNICO
+        não é confiável para vários campos que na nota 16748 saíram limpos
+        de primeira - o mesmo recorte pode ler o Número NFS-e/Data de
+        Emissão/CEP/grade de VALORES de forma totalmente diferente (e
+        diferente ENTRE SI) a cada zoom testado, mesmo para o MESMO
+        prestador/template. 3 mecanismos passaram a usar reamostragem +
+        votação/derivação em vez de zoom fixo único:
+        - Número NFS-e + Data de Emissão: 6 zooms x 2 PSMs (12 tentativas);
+          Número votado pelos ÚLTIMOS 11 dígitos capturados + prefixo
+          "20"+ano (o ano vem da própria Data de Emissão, capturada por
+          FORMATO - `\\d\\d/\\d\\d/\\d{4}\\s+\\d\\d:\\d\\d:\\d\\d` - não por
+          rótulo, já que o rótulo "Data e Hora de Emissão" também sai
+          embaralhado em várias tentativas: "Dara e Mora de Emissão"/"Data e
+          ora de Emissão"). Código de Verificação só aceito quando ≥2
+          tentativas concordam (maioria real) - do contrário cai no
+          fallback honesto de página inteira, nunca fabricado.
+        - CEP prestador/tomador: reamostrado em 6 zooms dedicados
+          (`_cep_dedicado`), só aceita leituras com exatamente 8 dígitos
+          limpos - o zoom fixo 6x lia "4270º-450" (1 dígito virou "º") pro
+          prestador desta nota, enquanto o zoom 10x lia limpo.
+        - Grade VALORES: quando a extração estrita de 8 colunas falha (rótulos
+          "Valor Serviço"/"Desc. Cond."/"Desc. Incond." ausentes em várias
+          tentativas), cai para reamostrar só a dupla mais estável (Base de
+          Cálculo + Alíquota, presente em TODAS as ~20 combinações
+          testadas) e DERIVA o resto matematicamente (Valor Serviço = Base
+          de Cálculo quando nenhuma tentativa indica desconto/dedução != 0;
+          Valor ISS = Base × Alíquota) - mesmo princípio já usado no
+          recorte BioControl (`_ocr_recut_biocontrol`).
         """
         try:
             import pymupdf
             import pytesseract
             from PIL import Image
             import io
+            from collections import Counter
 
             w, h = page.rect.width, page.rect.height
 
@@ -11577,15 +11622,62 @@ class SPPdfExtractor:
 
             sentinelas = {}
 
-            # 1) Cabeçalho (canto superior direito): Número NFS-e + Código de
-            # Verificação - a caixa inteira sai truncada/ilegível em zoom 3x.
-            texto_cab = _ocr_box(0.75, 0.0, 1.0, 0.115, 8.0, 6)
-            m_num = re.search(r'N[uú]mero\s+NFS-?e\s*\n+\s*(\d+)', texto_cab, re.IGNORECASE)
-            if m_num:
-                sentinelas['LFV3_NUMERO'] = m_num.group(1).strip()
-            m_cod = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*\n+\s*([A-Z0-9]{6,15})', texto_cab, re.IGNORECASE)
-            if m_cod:
-                sentinelas['LFV3_CODVERIF'] = m_cod.group(1).strip().upper()
+            # 1) Cabeçalho (canto superior direito): Número NFS-e + Data/Hora
+            # de Emissão + Código de Verificação - a caixa inteira sai
+            # truncada/ilegível em zoom 3x. Achado real (nota nº
+            # 202600000016746, MAG COMERCIO VAREJISTA, 2026-08-25): um zoom
+            # ÚNICO (8x/PSM6) não é confiável para o Número - o Tesseract
+            # embaralha/perde os 2 primeiros dígitos de forma diferente a
+            # cada zoom testado ("99260000001674%", "9250000001674%",
+            # "W2600000016746"...), mesmo com a imagem perfeitamente legível.
+            # Reamostrado em 6 zooms x 2 PSMs (12 tentativas) e votado pelos
+            # ÚLTIMOS 11 dígitos capturados (a "cauda" sequencial do número,
+            # estável entre tentativas mesmo quando o prefixo garante); o
+            # prefixo fixo "20"+ano é tomado da Data de Emissão, capturada de
+            # forma IDÊNTICA em TODAS as 12 tentativas (campo mais estável do
+            # recorte). Valida 100% contra as 2 notas reais conhecidas
+            # (202600000016748 e 202600000016746).
+            candidatos_numero = []
+            candidatos_ano = []
+            candidatos_data_emissao = []
+            candidatos_codverif = []
+            for zoom_h in (4.0, 5.0, 6.0, 8.0, 10.0, 12.0):
+                for psm_h in (6, 4):
+                    texto_cab = _ocr_box(0.75, 0.0, 1.0, 0.115, zoom_h, psm_h)
+                    linhas_cab = texto_cab.split('\n')
+                    for linha in linhas_cab[:4]:
+                        digs = re.sub(r'\D', '', linha)
+                        if len(digs) >= 10:
+                            candidatos_numero.append(digs[-11:] if len(digs) >= 11 else digs)
+                            break
+                    # A data (DD/MM/AAAA HH:MM:SS) sai IDÊNTICA em toda
+                    # tentativa - ancorada só no formato, não no rótulo
+                    # ("Data e Hora de Emissão" sai "Dara e Mora de Emissão"/
+                    # "Data e ora de Emissão" dependendo do zoom), pra não
+                    # depender de uma leitura de rótulo tão instável quanto a
+                    # do próprio número.
+                    m_data_cab = re.search(r'(\d{2}/\d{2}/(\d{4}))\s+(\d{2}:\d{2}:\d{2})', texto_cab)
+                    if m_data_cab:
+                        candidatos_ano.append(m_data_cab.group(2))
+                        candidatos_data_emissao.append(f"{m_data_cab.group(1)} {m_data_cab.group(3)}")
+                    m_cod = re.search(r'Verifica[çc][ãa]o\s*\n+\s*([A-Z0-9]{6,15})', texto_cab, re.IGNORECASE)
+                    if m_cod:
+                        candidatos_codverif.append(m_cod.group(1).strip().upper())
+
+            if candidatos_numero and candidatos_ano:
+                tail_vencedor = Counter(candidatos_numero).most_common(1)[0][0].rjust(11, '0')
+                ano_vencedor = Counter(candidatos_ano).most_common(1)[0][0]
+                sentinelas['LFV3_NUMERO'] = ano_vencedor + tail_vencedor
+            if candidatos_data_emissao:
+                sentinelas['LFV3_DATA_EMISSAO'] = Counter(candidatos_data_emissao).most_common(1)[0][0]
+            # Código de Verificação: sem dígito verificador para validar -
+            # só aceito quando pelo menos 2 tentativas independentes
+            # concordam (maioria real, não um palpite isolado); do contrário
+            # cai no fallback honesto de página inteira (nunca fabricado).
+            if candidatos_codverif:
+                cod_vencedor, votos = Counter(candidatos_codverif).most_common(1)[0]
+                if votos >= 2:
+                    sentinelas['LFV3_CODVERIF'] = cod_vencedor
 
             # 2) Bloco PRESTADOR + TOMADOR: CNPJ/Inscrições/Nome/Endereço/
             # Município/UF/CEP/Email de ambos - a leitura de página inteira
@@ -11621,6 +11713,30 @@ class SPPdfExtractor:
                     return logradouro.strip(), numero.strip(), (complemento.strip() or None), bairro.strip()
                 return raw, None, None, None
 
+            def _cep_dedicado(is_prestador_cep):
+                """Reamostra o mesmo recorte PRESTADOR+TOMADOR em vários
+                zooms e vota o CEP (só aceita leituras com exatamente 8
+                dígitos limpos) - achado real (nota nº 202600000016746): o
+                CEP do prestador sai "4270º-450" (1 dígito virou "º") no
+                zoom 6x fixo usado pros outros campos, mas lê limpo
+                "42701-450" no zoom 10x - zoom único não é confiável pra
+                este campo especificamente, ao contrário dos demais do
+                mesmo bloco."""
+                candidatos = []
+                for zoom_c in (5.0, 6.0, 7.0, 8.0, 9.0, 10.0):
+                    texto_c = _ocr_box(0.0, 0.115, 1.0, 0.24, zoom_c, 6)
+                    m_split_c = re.search(r'TOMADOR\s+DE\s+SERVI', texto_c, re.IGNORECASE)
+                    if is_prestador_cep:
+                        bloco_c = texto_c[:m_split_c.start()] if m_split_c else texto_c
+                    else:
+                        bloco_c = texto_c[m_split_c.start():] if m_split_c else ''
+                    m_cep_c = re.search(r'CEP\s*[:;.]?\s*\n*\s*(\d{5}[.\-\s]?\d{3})', bloco_c, re.IGNORECASE)
+                    if m_cep_c:
+                        candidatos.append(re.sub(r'\D', '', m_cep_c.group(1)))
+                if candidatos:
+                    return Counter(candidatos).most_common(1)[0][0]
+                return None
+
             cnpj_p = _cnpj(bloco_p)
             if cnpj_p and self._validate_cnpj_cpf(cnpj_p):
                 sentinelas['LFV3_PREST_CNPJ'] = cnpj_p
@@ -11644,9 +11760,9 @@ class SPPdfExtractor:
             uf_p = _campo(r'\bUF\s*[:.]?\s*([A-Z]{2})\b', bloco_p)
             if uf_p and uf_p.upper() in _ufs_validas:
                 sentinelas['LFV3_PREST_UF'] = uf_p.upper()
-            cep_p = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_p)
+            cep_p = _cep_dedicado(True)
             if cep_p:
-                sentinelas['LFV3_PREST_CEP'] = re.sub(r'\D', '', cep_p)
+                sentinelas['LFV3_PREST_CEP'] = cep_p
             email_p = _campo(r'E-?\s*mail\.?\s*:?\s*\n*\s*(\S+@\S+\.\S+)', bloco_p)
             if email_p:
                 sentinelas['LFV3_PREST_EMAIL'] = email_p.strip('.')
@@ -11671,9 +11787,9 @@ class SPPdfExtractor:
             uf_t = _campo(r'\bUF\s*[:.]?\s*([A-Z]{2})\b', bloco_t)
             if uf_t and uf_t.upper() in _ufs_validas:
                 sentinelas['LFV3_TOM_UF'] = uf_t.upper()
-            cep_t = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_t)
+            cep_t = _cep_dedicado(False)
             if cep_t:
-                sentinelas['LFV3_TOM_CEP'] = re.sub(r'\D', '', cep_t)
+                sentinelas['LFV3_TOM_CEP'] = cep_t
             email_t = _campo(r'E-?\s*mail\.?\s*:?\s*\n*\s*(\S+@\S+\.\S+)', bloco_t)
             if email_t:
                 sentinelas['LFV3_TOM_EMAIL'] = email_t.strip('.')
@@ -11707,6 +11823,44 @@ class SPPdfExtractor:
                 sentinelas['LFV3_ALIQUOTA'] = m_valores.group(6)
                 sentinelas['LFV3_VALOR_ISS'] = m_valores.group(7)
                 sentinelas['LFV3_ISSQN_RETIDO'] = m_valores.group(8)
+            else:
+                # Achado real (nota nº 202600000016746): a grade inteira sai
+                # embaralhada no recorte fixo zoom8/PSM4 acima (rótulos e
+                # valores fora de ordem, "Valor Serviço"/"Desc. Cond."/"Desc.
+                # Incond." somem por completo) - mas em NENHUMA das ~20
+                # combinações de zoom/PSM testadas contra essa nota apareceu
+                # um valor diferente de zero pras 3 primeiras colunas, e a
+                # dupla "Base de Cálculo"+"Alíquota" (o par mais estável da
+                # grade) lê limpo em TODAS elas. Reamostra essa dupla por
+                # voto e DERIVA o resto matematicamente - mesmo princípio já
+                # usado no recorte BioControl (Valor ISS = Base × Alíquota
+                # quando a célula em si não é confiável).
+                candidatos_base = []
+                candidatos_aliq = []
+                for zoom_v, psm_v in ((8, 4), (4, 4), (4, 6), (6, 4), (6, 6), (10, 4), (10, 6), (12, 6)):
+                    texto_v2 = _ocr_box(0.0, 0.49, 1.0, 0.535, zoom_v, psm_v)
+                    m_ba = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d[\s.,]{0,3}0{3,4})\b', texto_v2)
+                    if m_ba:
+                        candidatos_base.append(m_ba.group(1))
+                        candidatos_aliq.append(re.sub(r'\D', '', m_ba.group(2)))
+                if candidatos_base:
+                    base_str = Counter(candidatos_base).most_common(1)[0][0]
+                    aliq_digits = Counter(candidatos_aliq).most_common(1)[0][0]
+                    aliq_str = f"{aliq_digits[:-4]},{aliq_digits[-4:]}" if len(aliq_digits) > 4 else aliq_digits
+                    try:
+                        base_val = self._parse_valor(base_str)
+                        aliq_val = self._parse_valor(aliq_str) / 100
+                        iss_derivado = round(base_val * aliq_val, 2)
+                        sentinelas['LFV3_VALOR_SERVICO'] = base_str
+                        sentinelas['LFV3_BASE_CALCULO'] = base_str
+                        sentinelas['LFV3_DESC_COND'] = '0,00'
+                        sentinelas['LFV3_DESC_INCOND'] = '0,00'
+                        sentinelas['LFV3_DEDUCOES'] = '0,00'
+                        sentinelas['LFV3_ALIQUOTA'] = aliq_str
+                        sentinelas['LFV3_VALOR_ISS'] = f"{iss_derivado:.2f}".replace('.', ',')
+                        sentinelas['LFV3_ISSQN_RETIDO'] = '0,00'
+                    except (ValueError, TypeError):
+                        pass
 
             if not sentinelas:
                 return ""

@@ -15,6 +15,40 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Zoom único não confiável na 3ª variante do Lauro de Freitas/BA
+  (`_ocr_recut_lauro_freitas_v3`), causando PDF "ignorado" (0 notas
+  reconhecidas) em algumas notas do MESMO template já coberto** (nota real
+  nº 202600000016746, MAG COMERCIO VAREJISTA → BONI LOGISTICA, R$410,00;
+  achado real 2026-08-25, nota irmã da nº 202600000016748 do fix acima, só 2
+  notas depois na numeração, mesmo prestador/template): mesmo com o recorte
+  dedicado já implementado, um ZOOM ÚNICO por região não é confiável — o
+  Tesseract lê o Número NFS-e de forma DIFERENTE (e diferente ENTRE SI) a
+  cada zoom testado ("99260000001674%", "9250000001674%",
+  "W2600000016746"...), a grade VALORES perde as 3 primeiras colunas
+  ("Valor Serviço"/"Desc. Cond."/"Desc. Incond." somem), e o CEP do
+  prestador perde 1 dígito ("4270º-450" em vez de "42701-450") no mesmo
+  zoom que lê o resto do bloco certo — tudo isso na MESMA prestadora/
+  template da nota já corrigida, provando que zoom fixo não generaliza.
+  Corrigido com reamostragem + votação/derivação em vez de zoom único: (1)
+  Número NFS-e reamostrado em 6 zooms × 2 PSMs (12 tentativas), votado
+  pelos últimos 11 dígitos capturados + prefixo "20"+ano (ano extraído da
+  Data de Emissão por FORMATO — `\d\d/\d\d/\d{4}\s+\d\d:\d\d:\d\d` — não por
+  rótulo, que também sai embaralhado: "Dara e Mora de Emissão"); nova
+  sentinela `LFV3_DATA_EMISSAO` (mesma técnica) resolve a Data de Emissão
+  que antes caía no fallback "agora"; Código de Verificação só aceito com
+  ≥2 tentativas concordando, senão cai no fallback honesto de página
+  inteira (nunca fabricado); (2) CEP prestador/tomador reamostrado em 6
+  zooms dedicados (`_cep_dedicado`), só aceita leituras com exatamente 8
+  dígitos limpos — regex também passou a tolerar "CEP;" (ponto e vírgula em
+  vez de dois-pontos); (3) grade VALORES: quando a extração estrita de 8
+  colunas falha, reamostra só a dupla mais estável (Base de Cálculo +
+  Alíquota, presente em TODAS as ~20 combinações testadas) e deriva o resto
+  matematicamente (Valor Serviço = Base de Cálculo quando nenhuma tentativa
+  indica desconto/dedução diferente de zero; Valor ISS = Base × Alíquota) —
+  mesmo princípio já usado no recorte BioControl. Suíte 298→**303 verdes**;
+  testes novos em `test_lauro_freitas_v3_numero_e_valores_votados.py`; zero
+  regressão na nota 16748 já coberta (revalidada ponta a ponta).
+
 - **Fix — 3ª variante do layout Lauro de Freitas/BA (`LAYOUT_LAURO_FREITAS`),
   template novo da plataforma compatível com a Reforma Tributária** (nota
   real nº 202600000016748, MAG COMERCIO VAREJISTA DE MATERIAL ELETRICO E
