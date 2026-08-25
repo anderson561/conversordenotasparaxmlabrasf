@@ -4,7 +4,7 @@ com a tag git (`vX.Y.Z`) e o Release publicado no GitHub a cada entrega —
 ver "Processo de Release" em DOCUMENTACAO_CONVERSAO.md.
 """
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 GITHUB_OWNER = "anderson561"
 GITHUB_REPO = "conversordenotasparaxmlabrasf"
