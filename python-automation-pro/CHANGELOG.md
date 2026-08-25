@@ -793,6 +793,78 @@ sessão, de todos os layouts/fixes entregues está em
   Código de Autenticidade do Brasília. Suíte 268→**269 verdes**; teste
   novo em `test_brasilia_layout.py`.
 
+- **Salvador/BA (`salvador_ba`) e Lauro de Freitas/BA (`lauro_de_freitas_ba`,
+  variante NFTS): 2 bugs numa nota real de 2 páginas** (nº 2419, LUNITECK
+  SOLUÇÕES E DESENVOLVIMENTO EM TECNOLOGIA LTDA ME → BONI TRANSPORTES,
+  LOGÍSTICA E COMÉRCIO LTDA; pág.1 = NFS-e emitida pela Prefeitura de
+  Salvador/prestador, pág.2 = NFTS emitida pela Prefeitura de Lauro de
+  Freitas/tomador), reportado pelo usuário. (1) Salvador: `CodigoVerificacao`
+  saindo como a palavra **"PREFEITURA"** (do título "PREFEITURA MUNICIPAL DO
+  SALVADOR") numa digitalização degradada onde o valor real nunca sai
+  legível em NENHUM ponto do texto, nem mesmo com os 4 recuts dedicados já
+  existentes para esse layout — o rótulo "Verificação:" saía legível, mas o
+  `\s*` até o candidato atravessava várias linhas de ruído e capturava o
+  título do documento; mesmo bug de "ALVADOR"/"PRESTADOR"/"TOMADOR" (já
+  rejeitados), agora também rejeitando "PREFEITURA"/"MUNICIPAL"/
+  "SECRETARIA"/"FAZENDA" — cai honestamente no sentinela `XXXX-XXXX` quando
+  nada mais sobra. Os demais campos desta página (Número, Razão Social,
+  CNPJ) permanecem não recuperáveis nesta digitalização específica: os
+  próprios rótulos de seção saem irreconhecíveis no OCR, e a nota da pág.2
+  (mesma transação, mesmo CNPJ/valor) já cobre os dados corretos. (2) Lauro
+  de Freitas/NFTS: grade de valores (Base de Cálculo/Alíquota/Valor do ISS)
+  saindo ZERADA numa variante onde a grade sai PARTIDA em 3 pedaços não-
+  contíguos, em vez dos 5 rótulos+5 valores contíguos já cobertos — as 2
+  regras antigas nunca casavam, perdendo dados presentes e legíveis no
+  texto; e `Município`/`UF` do tomador vazando "UF; BA" inteiro para dentro
+  do campo Município quando o OCR lê "UF;" (ponto-e-vírgula) em vez de
+  "UF:" — corrigido tolerando `[:;]` nos 4 pontos onde o rótulo "UF" é
+  usado. Suíte 269→**271 verdes**; testes novos
+  `test_salvador_codigo_verificacao_nao_confunde_titulo.py` e
+  `test_lauro_de_freitas_nfts_grade_partida.py`.
+
+- **Mesmo par Salvador/Lauro de Freitas — 3 bugs adicionais achados numa 2ª
+  nota da mesma dupla** (nº 2418, mesmo par LUNITECK → BONI TRANSPORTES),
+  reportado pelo usuário como "continua extraindo com erro". (1) Salvador: a
+  lista de exclusão do `CodigoVerificacao` por igualdade EXATA (`ALVADOR`/
+  `PRESTADOR`/`TOMADOR`/`PREFEITURA`/... ) não pega variantes do OCR que
+  corrompem só uma BORDA da palavra (aqui, "PRESTADOR" saiu "ERESTADOR") —
+  trocada por uma comparação de sufixo/prefixo de 6+ caracteres contra os
+  mesmos rótulos, e o candidato rejeitado agora encerra direto no sentinela
+  `XXXX-XXXX` em vez de cair no fallback genérico ainda mais permissivo
+  (que produzia um valor pior, "ERESTADORDESERVI", ao atravessar a palavra
+  seguinte). (2) Lauro de Freitas/NFTS: CNPJ do prestador saindo
+  `00000000000000` — o separador do CNPJ veio com VÍRGULA no lugar do 1º
+  PONTO ("07,295.620/0001-44"), e o regex exigia ponto literal nos 2
+  separadores; agora tolera `[.,]` nos dois. (3) Discriminação engolindo
+  rótulos vazados do bloco do PRESTADOR ("Inscrição Estadual"/"Email:")
+  que, nesta digitalização, saem fisicamente DESLOCADOS para DEPOIS do
+  cabeçalho "DISCRIMINAÇÃO DOS SERVIÇOS" — a captura agora também para
+  nesses 2 rótulos, além do já existente "VALOR TOTAL DA NOTA". Suíte
+  271→**273 verdes**; testes novos
+  `test_salvador_codigo_verificacao_rotulo_garblado.py` e
+  `test_lauro_de_freitas_cnpj_virgula_e_discriminacao_vazada.py`.
+
+- **Mesma nota 2418 — `Numero` e `RazaoSocial` do tomador (Salvador) pedidos
+  explicitamente pelo usuário após os fixes acima ainda não cobrirem esses 2
+  campos.** `_extrair_numero`: rótulo "Número da Nota" saindo "Número da
+  Nóta" (acento espúrio no "o") não era reconhecido — regex ampliado pra
+  `N[oó]ta`. `RazaoSocial` do tomador saindo `"BE SERVIÇOS"` (resto do
+  próprio cabeçalho de seção "TOMADOR **DE** SERVIÇOS" garblado só na parte
+  final, "DE"→"BE" — o rótulo reconhecido consumia só a palavra "Tomador",
+  deixando o resto sobrar como se fosse a 1ª linha de conteúdo real): função
+  compartilhada `is_valid_razao` (usada por ~30 layouts) ganhou 2 rejeições
+  novas — linha inteira "`<sigla curta> SERVIÇOS`" (nenhuma razão social
+  real é só isso) e linha com "/" sem NENHUMA sequência de 2+ maiúsculas
+  seguidas (Title Case puro — o padrão do rótulo "Nome/Razão Social" quando
+  ele também garbla, ex. "Norma/Razab Sonia", contra o ALL-CAPS universal
+  das razões sociais reais deste corpus; restrito à combinação com "/" pra
+  não afetar razões legítimas em Title Case sem "/", como "Sao Pedro
+  Construtora Ltda"). CNPJ do tomador nesta página permanece não
+  recuperável (dígitos genuinamente ilegíveis no OCR, não um problema de
+  formatação/pontuação) — a nota irmã da pág.2 (Lauro de Freitas) já tem o
+  CNPJ correto. Suíte 273→**274 verdes**; teste novo
+  `test_salvador_numero_e_tomador_rotulo_garblado.py`.
+
 ## [1.3.0] - 2026-08-10
 
 ### Adicionado

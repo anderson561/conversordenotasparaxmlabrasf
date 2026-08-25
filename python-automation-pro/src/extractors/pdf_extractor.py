@@ -1716,8 +1716,12 @@ class SPPdfExtractor:
             # coluna (ex.: "Número da Nota:\n\nPREFEITURA MUNICIPAL DO SALVADOR
             # 00004852") ou com um caractere solto colado ("R 00004852"). Por
             # isso buscamos o primeiro número plausível numa janela após o rótulo,
-            # em vez de exigir adjacência imediata.
-            m_lab = re.search(r'N[uú]mero\s+da\s+Nota', t, re.IGNORECASE)
+            # em vez de exigir adjacência imediata. "Nota" às vezes sai "Nóta"
+            # no OCR (achado real 2026-08-21, nota 2418/LUNITECK) — o acento
+            # espúrio no "o" quebrava o casamento exato e o rótulo inteiro não
+            # era reconhecido, caindo no sentinela "00000000" mesmo com o
+            # número real ("00002418") legível logo depois no texto.
+            m_lab = re.search(r'N[uú]mero\s+da\s+N[oó]ta', t, re.IGNORECASE)
             if m_lab:
                 janela = t[m_lab.end(): m_lab.end() + 80]
                 for m_num in re.finditer(r'\b(\d{4,10})\b', janela):
@@ -2188,6 +2192,17 @@ class SPPdfExtractor:
             # transparência fiscal do IBPT ("Valor aproximado dos tributos R$
             # X Fonte IBPT") — removida por não fazer parte da discriminação
             # real do serviço prestado.
+            #
+            # Achado real 2026-08-21 (nota 2418/LUNITECK): nesta digitalização
+            # os campos finais do bloco do PRESTADOR ("Inscrição Estadual"/
+            # "Email:", que deveriam vir ANTES de "DISCRIMINAÇÃO DOS
+            # SERVIÇOS") saem fisicamente DESLOCADOS para DEPOIS do cabeçalho
+            # de discriminação no texto OCR — sem parar antes deles, a
+            # captura engolia "SERVS.INFORMATICA MANT.ST.TEL. Inscrição
+            # Estadual O Erail:" inteiro como se fosse a descrição do
+            # serviço. Param também nesses 2 rótulos vazados, além do já
+            # existente "VALOR TOTAL DA NOTA".
+            #
             # "3ª variante" (ver `_ocr_recut_lauro_freitas_v3`) não tem "VALOR
             # TOTAL DA NOTA" (usa a grade "VALORES"/"Valor Líquido") — sem
             # esse limite, a captura não-gulosa corria até o fim do
@@ -2198,7 +2213,8 @@ class SPPdfExtractor:
             # aparecer primeiro).
             m = re.search(
                 r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS\s*\n+(.*?)'
-                r'(?=\n\s*VALOR\s+TOTAL\s+DA\s+NOTA|\n\s*TRIBUTA[ÇC][ÃA]O\s+DE\s+ISSQN|$)',
+                r'(?=\n\s*VALOR\s+TOTAL\s+DA\s+NOTA|\n\s*TRIBUTA[ÇC][ÃA]O\s+DE\s+ISSQN|'
+                r'\n\s*Inscri[çc][ãa]o\s+Estadual|\n\s*E-?\s*[Mm]ail|\n\s*Erail|$)',
                 t, re.IGNORECASE | re.DOTALL)
             if m:
                 texto = re.sub(r'\s+', ' ', m.group(1)).strip()
@@ -2971,11 +2987,66 @@ class SPPdfExtractor:
             # próprio código. Rejeitamos esse valor explicitamente, pelo mesmo
             # motivo que "ALVADOR" já é rejeitado acima: é um rótulo do
             # documento, não um código.
+            #
+            # Achado real 2026-08-21 (nota 2419/LUNITECK, scan muito degradado):
+            # o mesmo problema se repete com o TÍTULO do documento em vez do
+            # rótulo da seção seguinte — "PREFEITURA" (de "PREFEITURA MUNICIPAL
+            # DO SALVADOR") ficava a várias linhas de distância de
+            # "Verificação:" (o valor real nunca sai legível em NENHUM ponto do
+            # texto), e o `\s*` entre rótulo e valor (tolerante a quebras de
+            # linha para casar notas onde o valor real vem 1-2 linhas abaixo)
+            # atravessava esse vão e capturava a 1ª palavra maiúscula depois,
+            # que é o título, não o código. Ampliamos a lista de palavras do
+            # PRÓPRIO documento (cabeçalho/título), rejeitadas pelo mesmo
+            # motivo de "ALVADOR"/"PRESTADOR"/"TOMADOR": quando nenhuma delas
+            # sobra, cai no fallback genérico abaixo e, na ausência de
+            # qualquer candidato legível, no sentinela 'XXXX-XXXX' — honesto
+            # com a falta de dado, em vez de fabricar um código com o nome da
+            # prefeitura.
+            #
+            # Achado real 2026-08-21 (nota 2418/LUNITECK, mesmo tipo de scan
+            # degradado): a lista de exclusão por igualdade EXATA vira um
+            # jogo de whack-a-mole — desta vez o OCR leu "PRESTADOR" como
+            # "ERESTADOR" (1º caractere trocado), que não bate nenhuma das
+            # palavras da lista mas ainda É o mesmo rótulo do documento, não
+            # um código. Em vez de continuar colecionando variantes exatas,
+            # o candidato também é rejeitado quando COMPARTILHA um sufixo OU
+            # prefixo de 6+ caracteres com qualquer rótulo conhecido — OCR
+            # tende a preservar o MEIO/FIM de uma palavra e corromper só a
+            # borda (aqui, "ERESTADOR"/"PRESTADOR" batem em "...RESTADOR"),
+            # e um código de verificação real (token essencialmente
+            # aleatório) tem probabilidade desprezível de coincidir por 6+
+            # caracteres com uma palavra do português do próprio documento.
+            def _parece_rotulo_documento_salvador(candidato: str) -> bool:
+                rotulos = (
+                    'ALVADOR', 'PRESTADOR', 'TOMADOR',
+                    'PREFEITURA', 'MUNICIPAL', 'SECRETARIA', 'FAZENDA',
+                )
+                for rotulo in rotulos:
+                    if candidato == rotulo:
+                        return True
+                    if len(candidato) >= 6 and len(rotulo) >= 6 and (
+                        candidato[-6:] == rotulo[-6:] or candidato[:6] == rotulo[:6]
+                    ):
+                        return True
+                return False
+
             m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', t, re.IGNORECASE)
             if m:
                 candidato = re.sub(r'[^A-Z0-9]', '', m.group(1).upper())
-                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato) and candidato not in ('ALVADOR', 'PRESTADOR', 'TOMADOR'):
-                    return candidato
+                if len(candidato) >= 6 and re.search(r'[A-Z]', candidato):
+                    if not _parece_rotulo_documento_salvador(candidato):
+                        return candidato
+                    # Achado real 2026-08-21 (mesma nota 2418): quando o
+                    # candidato ADJACENTE ao rótulo já é reconhecido como
+                    # rótulo do documento (não um código), os padrões
+                    # GENÉRICOS mais abaixo (compartilhados por ~30 layouts,
+                    # que toleram espaço/tab dentro do candidato) são AINDA
+                    # mais permissivos e capturam um trecho pior, mais longo
+                    # ("ERESTADOR DE SERVIÇOS" → "ERESTADORDESERVI" depois de
+                    # remover os espaços) — encerra aqui com o sentinela
+                    # honesto em vez de deixar cair nesse fallback mais fraco.
+                    return 'XXXX-XXXX'
 
         if self.layout == LAYOUT_CUIABA:
             # ISSNet Cuiabá: o código de autenticidade (ex.: "3B3DC3576") aparece
@@ -4388,6 +4459,27 @@ class SPPdfExtractor:
             # misturado às letras; nomes curtos só-letras (ex.: "CETREL") são razões sociais válidas.
             if re.match(r'^(?=[A-Z0-9-]{6,15}$)(?=.*\d)[A-Z0-9-]+$', line_clean, re.I): return False
             if '@' in line_clean.lower() or '.com' in line_clean.lower(): return False
+            # Achado real 2026-08-21 (nota 2418/LUNITECK, Salvador escaneado
+            # degradado): quando o cabeçalho "TOMADOR DE SERVIÇOS" garbla só a
+            # PARTE final ("TOMADOR BE SERVIÇOS.", "DE"→"BE"), o rótulo
+            # reconhecido ("Tomador") consome só a 1ª palavra e o resto do
+            # cabeçalho ("BE SERVIÇOS") sobra como se fosse a 1ª linha de
+            # conteúdo — nenhuma razão social real é só "<sigla curta>
+            # SERVIÇOS" sozinho.
+            if re.match(r'^[A-ZÀ-Ý]{1,3}\s+SERVI[ÇC][OÓ]S?\.?$', line_clean, re.I): return False
+            # Mesma nota: o rótulo "Nome/Razão Social" também sai garblado
+            # ("Norma/Razab Sonia") além do reconhecível pelo `_label_pats`
+            # acima — sobrevive como candidato e rouba a linha real (a
+            # empresa) que vem logo depois. Toda razão social real deste
+            # corpus é ALL-CAPS (tem alguma sequência de 2+ maiúsculas
+            # seguidas); um rótulo "Palavra/Palavra Palavra" em Title Case
+            # puro (só a inicial maiúscula, nunca 2 maiúsculas em seguida)
+            # é o padrão inconfundível de um rótulo de template, não de um
+            # nome de empresa — restrito à combinação "/" + Title-Case puro
+            # pra não afetar razões legítimas sem "/" que também usam Title
+            # Case (ex. "Sao Pedro Construtora Ltda", "Grupo FeF").
+            if '/' in line_clean and not re.search(r'[A-ZÀ-Ý]{2,}', line_clean):
+                return False
             return True
 
         if is_valid_razao(razao):
@@ -6120,7 +6212,12 @@ class SPPdfExtractor:
             return m.group(1).strip() if m else None
 
         def _cnpj_cpf(bloco: str) -> str:
-            m = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', bloco)
+            # Separador `.` às vezes sai como `,` no OCR (achado real
+            # 2026-08-21, nota 2418/LUNITECK: "07,295.620/0001-44" — só o 1º
+            # ponto virou vírgula) — sem tolerar isso, o regex não casa NADA
+            # e o CNPJ do prestador cai inteiro no sentinela
+            # "00000000000000", mesmo com o valor real legível no texto.
+            m = re.search(r'(\d{2}[.,]\d{3}[.,]\d{3}/\d{4}-\d{2}|\d{3}[.,]\d{3}[.,]\d{3}-\d{2})', bloco)
             return re.sub(r'\D', '', m.group(1)) if m else '00000000000000'
 
         # Rótulo e valor às vezes vêm na MESMA linha ("Nome/Razão SAO PEDRO...",
@@ -6148,15 +6245,18 @@ class SPPdfExtractor:
             # formatos sem regredir o caso "cada rótulo na própria linha".
             bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_prestador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_prestador)
-            # Lookahead tolera "UF." (ponto no lugar dos dois-pontos, achado
-            # real nota nº 20265323/VITORIOS EMPILHADEIRAS) além de "UF:" —
-            # sem isso, "LAURO DE FREITAS UF. BA" (mesma linha) vazava o
-            # "UF. BA" inteiro para dentro do valor do Município.
-            municipio = (_campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:.]|\n|$)', bloco_prestador)
-                         or _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:.]|\n|$)', bloco_vazado)
+            # "UF" às vezes vem com ";" no lugar do ":" (ruído de OCR, achado
+            # real 2026-08-21, nota 2026326/NFTS LUNITECK -> BONI TRANSPORTES:
+            # "Município: LAURO DE FREITAS UF; BA") ou com "." no lugar do ":"
+            # (achado real nota nº 20265323/VITORIOS EMPILHADEIRAS: "UF. BA")
+            # — com o lookahead antigo (só ":") o município engolia "UF; BA"/
+            # "UF. BA" inteiro, e a captura da UF (mesmo rótulo) não casava
+            # nada. `[:;.]` cobre os 3 separadores nos dois regexes.
+            municipio = (_campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:;.]|\n|$)', bloco_prestador)
+                         or _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:;.]|\n|$)', bloco_vazado)
                          or 'LAURO DE FREITAS')
-            uf = (_campo(r'\bUF\s*[:.]\s*([A-Z]{2})', bloco_prestador)
-                  or _campo(r'\bUF\s*[:.]\s*([A-Z]{2})', bloco_vazado)
+            uf = (_campo(r'\bUF\s*[:;.]\s*([A-Z]{2})', bloco_prestador)
+                  or _campo(r'\bUF\s*[:;.]\s*([A-Z]{2})', bloco_vazado)
                   or 'BA')
             email_pat = r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})'
             email = _campo(email_pat, bloco_prestador) or _campo(email_pat, bloco_vazado)
@@ -6167,8 +6267,8 @@ class SPPdfExtractor:
             endereco_raw = _campo(r'Endere[çc]o\s*:?\s*\n*\s*(.+)', bloco_tomador) or 'Não informado'
             bairro = _campo(r'Bairro\s*:?\s*\n*\s*(.+?)(?=\s*Munic[íi]pio\s*:|\n|$)', bloco_tomador) or 'Não informado'
             cep_raw = _campo(r'CEP\s*:?\s*\n*\s*([\d-]+)', bloco_tomador)
-            municipio = _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:.]|\n|$)', bloco_tomador) or 'Não informado'
-            uf = _campo(r'\bUF\s*[:.]\s*([A-Z]{2})', bloco_tomador) or 'BA'
+            municipio = _campo(r'Munic[íi]pio\s*:\s*(.+?)(?=\s*UF\s*[:;.]|\n|$)', bloco_tomador) or 'Não informado'
+            uf = _campo(r'\bUF\s*[:;.]\s*([A-Z]{2})', bloco_tomador) or 'BA'
             email = _campo(r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', bloco_tomador)
 
         cep = re.sub(r'\D', '', cep_raw) if cep_raw else '00000000'
@@ -9143,46 +9243,74 @@ class SPPdfExtractor:
                     iss = self._parse_valor(nums_meio[1]) if len(nums_meio) >= 2 else 0.0
                     iss_retido = m_row_mei.group(4).strip().lower() == 'sim'
                 else:
-                    # 3ª variante: a leitura de página inteira derruba TUDO
-                    # depois dos 2 primeiros valores (Alíquota/Valor do
-                    # ISS/ISSQN Retido somem por completo, mesmo em zoom
-                    # mais alto — achado real, nota nº 20265323/VITORIOS
-                    # EMPILHADEIRAS pág.2, testado nos zooms 3/5/6 sem
-                    # diferença). Só os 2 primeiros números (Dedução/Base,
-                    # sempre presentes) são recuperados aqui; Alíquota/ISS
-                    # ficam no sentinela 0,00 nesta página específica — a
-                    # nota irmã (pág.1, layout Simões Filho) tem os valores
-                    # completos e corretos para a mesma transação.
-                    m_row_parcial = re.search(
-                        r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\).*?'
-                        r'([\d\.,]+)\s+([\d\.,]+)',
-                        t, re.IGNORECASE | re.DOTALL
+                    # Variante com a grade PARTIDA em 3 pedaços não-contíguos
+                    # (achado real 2026-08-21, nota 2026326/NFTS LUNITECK ->
+                    # BONI TRANSPORTES): esta digitalização quebra a linha de
+                    # rótulos em "Valor Total Deduções (R$) Base de Cálculo
+                    # (R$) Alíquota (%)" (só 3 dos 5 rótulos), com os 3
+                    # valores correspondentes logo abaixo — mas "Valor do ISS
+                    # (R$)" e "ISSQN Retido (R$)" saem em linhas PRÓPRIAS,
+                    # separadas por outro conteúdo no meio ("VALOR LÍQUIDO DA
+                    # NOTA FISCAL", "INFORMAÇÕES COMPLEMENTARES", a linha de
+                    # Competência). As 2 regras acima exigem os 5 rótulos
+                    # contíguos e nunca casam aqui, caindo no fallback zerado
+                    # de baixo — perdendo Base de Cálculo/Alíquota/ISS mesmo
+                    # eles estando presentes e legíveis no texto. Casamos os
+                    # 3 pedaços separadamente.
+                    m_ded_base_aliq = re.search(
+                        r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\)\s*'
+                        r'Al[íi]quota\s*\(%\)\s*\n\s*(?:R\$\s*)?([\d\.,]+)\s+(?:R\$\s*)?([\d\.,]+)\s+([\d\.,]+)',
+                        t, re.IGNORECASE
                     )
-                    if m_row_parcial:
-                        deducoes = self._parse_valor(m_row_parcial.group(1))
-                        base = self._parse_valor(m_row_parcial.group(2))
+                    m_iss_split = re.search(r'Valor\s+do\s+ISS\s*\(R\$\)\s*\n\s*([\d\.,]+)', t, re.IGNORECASE)
+                    if m_ded_base_aliq and m_iss_split:
+                        deducoes = self._parse_valor(m_ded_base_aliq.group(1))
+                        base = self._parse_valor(m_ded_base_aliq.group(2))
+                        aliquota = self._parse_valor(m_ded_base_aliq.group(3)) / 100
+                        iss = self._parse_valor(m_iss_split.group(1))
+                        m_retido_split = re.search(r'ISSQN\s+Retido\s*\(R\$\)\s*\n\s*(Sim|N[ãa]o)', t, re.IGNORECASE)
+                        iss_retido = bool(m_retido_split) and m_retido_split.group(1).strip().lower() == 'sim'
                     else:
-                        # Nem o cabeçalho "Valor Total Deduções (R$) Base de
-                        # Cálculo (R$)" sobrevive nesta leitura (some por
-                        # completo, achado real: mesma nota, outra chamada de
-                        # OCR não-determinística) — último recurso: os 2
-                        # últimos números em formato monetário (X.XXX,XX)
-                        # ANTES de "VALOR LÍQUIDO DA NOTA FISCAL" são,
-                        # comprovadamente nesta plataforma, Dedução e Base
-                        # de Cálculo nessa ordem (a descrição do serviço e o
-                        # código de item LC 116 não usam vírgula decimal,
-                        # então não há ambiguidade na janela).
-                        m_janela = re.search(
-                            r'ITEM\s+DA\s+LISTA\s+DE\s+SERVI[ÇC]OS.*?VALOR\s+L[ÍI]QUIDO\s+DA\s+NOTA\s+FISCAL',
-                            t, re.IGNORECASE | re.DOTALL)
-                        nums_janela = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', m_janela.group(0)) if m_janela else []
-                        if len(nums_janela) >= 2:
-                            deducoes = self._parse_valor(nums_janela[-2])
-                            base = self._parse_valor(nums_janela[-1])
+                        # 3ª variante: a leitura de página inteira derruba TUDO
+                        # depois dos 2 primeiros valores (Alíquota/Valor do
+                        # ISS/ISSQN Retido somem por completo, mesmo em zoom
+                        # mais alto — achado real, nota nº 20265323/VITORIOS
+                        # EMPILHADEIRAS pág.2, testado nos zooms 3/5/6 sem
+                        # diferença). Só os 2 primeiros números (Dedução/Base,
+                        # sempre presentes) são recuperados aqui; Alíquota/ISS
+                        # ficam no sentinela 0,00 nesta página específica — a
+                        # nota irmã (pág.1, layout Simões Filho) tem os valores
+                        # completos e corretos para a mesma transação.
+                        m_row_parcial = re.search(
+                            r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\).*?'
+                            r'([\d\.,]+)\s+([\d\.,]+)',
+                            t, re.IGNORECASE | re.DOTALL
+                        )
+                        if m_row_parcial:
+                            deducoes = self._parse_valor(m_row_parcial.group(1))
+                            base = self._parse_valor(m_row_parcial.group(2))
                         else:
-                            deducoes = base = 0.0
-                    aliquota = iss = 0.0
-                    iss_retido = False
+                            # Nem o cabeçalho "Valor Total Deduções (R$) Base de
+                            # Cálculo (R$)" sobrevive nesta leitura (some por
+                            # completo, achado real: mesma nota, outra chamada de
+                            # OCR não-determinística) — último recurso: os 2
+                            # últimos números em formato monetário (X.XXX,XX)
+                            # ANTES de "VALOR LÍQUIDO DA NOTA FISCAL" são,
+                            # comprovadamente nesta plataforma, Dedução e Base
+                            # de Cálculo nessa ordem (a descrição do serviço e o
+                            # código de item LC 116 não usam vírgula decimal,
+                            # então não há ambiguidade na janela).
+                            m_janela = re.search(
+                                r'ITEM\s+DA\s+LISTA\s+DE\s+SERVI[ÇC]OS.*?VALOR\s+L[ÍI]QUIDO\s+DA\s+NOTA\s+FISCAL',
+                                t, re.IGNORECASE | re.DOTALL)
+                            nums_janela = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', m_janela.group(0)) if m_janela else []
+                            if len(nums_janela) >= 2:
+                                deducoes = self._parse_valor(nums_janela[-2])
+                                base = self._parse_valor(nums_janela[-1])
+                            else:
+                                deducoes = base = 0.0
+                        aliquota = iss = 0.0
+                        iss_retido = False
 
             m_val_total = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s+FISCAL\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
             val_serv = self._parse_valor(m_val_total.group(1)) if m_val_total else base
