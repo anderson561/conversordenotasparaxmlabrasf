@@ -15,6 +15,44 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — 3ª variante do layout Lauro de Freitas/BA (`LAYOUT_LAURO_FREITAS`),
+  template novo da plataforma compatível com a Reforma Tributária** (nota
+  real nº 202600000016748, MAG COMERCIO VAREJISTA DE MATERIAL ELETRICO E
+  SERVICOS TECNICOS DE INSTALAÇÃO E MANUTENÇÃO → BONI LOGISTICA LTDA,
+  R$220,00; achado real 2026-08-25): a Prefeitura passou a emitir um
+  template com campos IBS/CBS, NBS, Finalidade, Destinatário e Classificação
+  Tributária ausentes das 2 variantes já cobertas (NFS-e regular e NFTS).
+  Diagnosticado como bug na existente `LAYOUT_LAURO_FREITAS` (não um layout
+  novo) — a marca de detecção já casava, mas a leitura de página inteira
+  (zoom 3x) **perde por completo, não apenas corrompe**, vários campos deste
+  template: Número NFS-e/Código de Verificação saem truncados ("4F723" em
+  vez de "4F7233055"); o CEP do prestador nunca aparece; o bloco "Cód. Trib.
+  Municipal" (coluna esquerda de uma grade 2 colunas) desaparece inteiro; a
+  grade VALORES (10 colunas) sai com só 5 rótulos e valores incompletos
+  (retornava tudo zero). Corrigido com `_ocr_recut_lauro_freitas_v3`: 4
+  recortes dedicados (cabeçalho zoom8/PSM6; bloco prestador+tomador zoom6/
+  PSM6; tributação/atividade zoom6/PSM6; grade valores zoom8/PSM4 — PSM4
+  leu 8/10 colunas certas contra PSM6 errando o separador decimal da
+  alíquota "5,0000"→"50000"), devolvidos como sentinelas `LFV3_*` que
+  `_extrair_numero`/`_extrair_codigo_verificacao`/`_extrair_codigo_servico`/
+  `_extrair_valores`/`_extrair_entidade` (nova `_extrair_entidade_lauro_
+  freitas_v3`) conferem ANTES da lógica das variantes 1/2, com fallback
+  total pra elas quando o gatilho não dispara (nota antiga, sem "TRIBUTAÇÃO
+  DE ISSQN" no texto). CNPJ do prestador recuperado com o dígito certo
+  ("15.243.835", a leitura de página inteira trocava para "15.242.835" —
+  cross-validado contra a linha "Recebi(emos)...CNPJ:" do rodapé); UF
+  validada contra whitelist de UFs em vez de regex tolerante (zoom 6x lê
+  "UF: BA" como "ur: BA"/"UF: EA" dependendo do recorte). Nº da casa do
+  tomador ("11" em "RUA GERINO DE SOUZA FILHO 11 ITINGA") não foi
+  recuperável em NENHUM zoom/PSM testado (Tesseract insiste em ler "TI"
+  nesta fonte, mesmo com a imagem perfeitamente legível a olho nu) —
+  mantido "S/N", nunca fabricado (campo de baixo impacto fiscal); razão
+  social do prestador sai truncada em "...E MANUTEN" porque o próprio PDF
+  original já imprime o campo cortado na borda da tabela (confirmado via
+  inspeção visual do PDF-fonte, não é bug de OCR/extração). Suíte
+  291→**298 verdes**; testes novos em
+  `test_lauro_freitas_v3_mag_comercio.py`.
+
 - **Fix — Competência com ano trocado em Salvador/BA (`salvador_ba`) e CNPJ
   do tomador impresso ERRADO na própria nota** (mesma nota nº 00003327/
   CONEX4 MULTIMÍDIA LIMITADA dos 2 fixes acima; software de importação do
