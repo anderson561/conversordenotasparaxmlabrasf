@@ -13,7 +13,305 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Corrigido
+
+- **Fix — Competência com ano trocado pelo OCR generalizado para TODOS os
+  layouts (`_extrair_competencia`), guard que só rodava em `LAYOUT_SALVADOR`**
+  (nota real nº 202600000016746, MAG COMERCIO VAREJISTA, layout Lauro de
+  Freitas/BA 3ª variante; achado real 2026-08-25): o XML saía com
+  `<Competencia>2025-07-24</Competencia>` (ano errado) mesmo com
+  `<DataEmissao>2026-07-24T10:27:01</DataEmissao>` já correta no mesmo
+  documento — o OCR lê "Competência: 24/07/2025" em vez do real
+  "24/07/2026" (mesmo dígito trocado "6"→"5" já visto antes em Salvador,
+  "0"→"9"). A correção para essa MESMA classe de erro (usar o ano da Data
+  de Emissão quando o mês da competência bate mas o ano diverge — uma
+  competência legítima de outro mês/ano sempre vem com mês diferente
+  também) já existia, mas só dentro do branch `elif layout ==
+  LAYOUT_SALVADOR`; `LAYOUT_LAURO_FREITAS` não tem branch próprio em
+  `_extrair_competencia`, cai direto no fallback genérico
+  (`_extrair_competencia_generica`), que nunca passava por essa validação.
+  Como o raciocínio do guard não é específico de nenhum layout, movido do
+  branch do Salvador para o fim da função, rodando incondicionalmente
+  depois de QUALQUER branch (inclusive o fallback genérico) já ter
+  tentado — corrige a mesma classe de bug em qualquer um dos ~44 layouts
+  que ainda não tinham essa proteção, não só o que motivou o achado. Suíte
+  303→**305 verdes**; teste novo
+  `test_competencia_ano_ocr_trocado_generalizado.py` (2 casos: guard
+  disparando fora de Salvador + guard NÃO disparando quando o mês
+  realmente diverge, preservando competências de mês/ano anteriores
+  legítimas).
+
+- **Fix — Zoom único não confiável na 3ª variante do Lauro de Freitas/BA
+  (`_ocr_recut_lauro_freitas_v3`), causando PDF "ignorado" (0 notas
+  reconhecidas) em algumas notas do MESMO template já coberto** (nota real
+  nº 202600000016746, MAG COMERCIO VAREJISTA → BONI LOGISTICA, R$410,00;
+  achado real 2026-08-25, nota irmã da nº 202600000016748 do fix acima, só 2
+  notas depois na numeração, mesmo prestador/template): mesmo com o recorte
+  dedicado já implementado, um ZOOM ÚNICO por região não é confiável — o
+  Tesseract lê o Número NFS-e de forma DIFERENTE (e diferente ENTRE SI) a
+  cada zoom testado ("99260000001674%", "9250000001674%",
+  "W2600000016746"...), a grade VALORES perde as 3 primeiras colunas
+  ("Valor Serviço"/"Desc. Cond."/"Desc. Incond." somem), e o CEP do
+  prestador perde 1 dígito ("4270º-450" em vez de "42701-450") no mesmo
+  zoom que lê o resto do bloco certo — tudo isso na MESMA prestadora/
+  template da nota já corrigida, provando que zoom fixo não generaliza.
+  Corrigido com reamostragem + votação/derivação em vez de zoom único: (1)
+  Número NFS-e reamostrado em 6 zooms × 2 PSMs (12 tentativas), votado
+  pelos últimos 11 dígitos capturados + prefixo "20"+ano (ano extraído da
+  Data de Emissão por FORMATO — `\d\d/\d\d/\d{4}\s+\d\d:\d\d:\d\d` — não por
+  rótulo, que também sai embaralhado: "Dara e Mora de Emissão"); nova
+  sentinela `LFV3_DATA_EMISSAO` (mesma técnica) resolve a Data de Emissão
+  que antes caía no fallback "agora"; Código de Verificação só aceito com
+  ≥2 tentativas concordando, senão cai no fallback honesto de página
+  inteira (nunca fabricado); (2) CEP prestador/tomador reamostrado em 6
+  zooms dedicados (`_cep_dedicado`), só aceita leituras com exatamente 8
+  dígitos limpos — regex também passou a tolerar "CEP;" (ponto e vírgula em
+  vez de dois-pontos); (3) grade VALORES: quando a extração estrita de 8
+  colunas falha, reamostra só a dupla mais estável (Base de Cálculo +
+  Alíquota, presente em TODAS as ~20 combinações testadas) e deriva o resto
+  matematicamente (Valor Serviço = Base de Cálculo quando nenhuma tentativa
+  indica desconto/dedução diferente de zero; Valor ISS = Base × Alíquota) —
+  mesmo princípio já usado no recorte BioControl. Suíte 298→**303 verdes**;
+  testes novos em `test_lauro_freitas_v3_numero_e_valores_votados.py`; zero
+  regressão na nota 16748 já coberta (revalidada ponta a ponta).
+
+- **Fix — 3ª variante do layout Lauro de Freitas/BA (`LAYOUT_LAURO_FREITAS`),
+  template novo da plataforma compatível com a Reforma Tributária** (nota
+  real nº 202600000016748, MAG COMERCIO VAREJISTA DE MATERIAL ELETRICO E
+  SERVICOS TECNICOS DE INSTALAÇÃO E MANUTENÇÃO → BONI LOGISTICA LTDA,
+  R$220,00; achado real 2026-08-25): a Prefeitura passou a emitir um
+  template com campos IBS/CBS, NBS, Finalidade, Destinatário e Classificação
+  Tributária ausentes das 2 variantes já cobertas (NFS-e regular e NFTS).
+  Diagnosticado como bug na existente `LAYOUT_LAURO_FREITAS` (não um layout
+  novo) — a marca de detecção já casava, mas a leitura de página inteira
+  (zoom 3x) **perde por completo, não apenas corrompe**, vários campos deste
+  template: Número NFS-e/Código de Verificação saem truncados ("4F723" em
+  vez de "4F7233055"); o CEP do prestador nunca aparece; o bloco "Cód. Trib.
+  Municipal" (coluna esquerda de uma grade 2 colunas) desaparece inteiro; a
+  grade VALORES (10 colunas) sai com só 5 rótulos e valores incompletos
+  (retornava tudo zero). Corrigido com `_ocr_recut_lauro_freitas_v3`: 4
+  recortes dedicados (cabeçalho zoom8/PSM6; bloco prestador+tomador zoom6/
+  PSM6; tributação/atividade zoom6/PSM6; grade valores zoom8/PSM4 — PSM4
+  leu 8/10 colunas certas contra PSM6 errando o separador decimal da
+  alíquota "5,0000"→"50000"), devolvidos como sentinelas `LFV3_*` que
+  `_extrair_numero`/`_extrair_codigo_verificacao`/`_extrair_codigo_servico`/
+  `_extrair_valores`/`_extrair_entidade` (nova `_extrair_entidade_lauro_
+  freitas_v3`) conferem ANTES da lógica das variantes 1/2, com fallback
+  total pra elas quando o gatilho não dispara (nota antiga, sem "TRIBUTAÇÃO
+  DE ISSQN" no texto). CNPJ do prestador recuperado com o dígito certo
+  ("15.243.835", a leitura de página inteira trocava para "15.242.835" —
+  cross-validado contra a linha "Recebi(emos)...CNPJ:" do rodapé); UF
+  validada contra whitelist de UFs em vez de regex tolerante (zoom 6x lê
+  "UF: BA" como "ur: BA"/"UF: EA" dependendo do recorte). Nº da casa do
+  tomador ("11" em "RUA GERINO DE SOUZA FILHO 11 ITINGA") não foi
+  recuperável em NENHUM zoom/PSM testado (Tesseract insiste em ler "TI"
+  nesta fonte, mesmo com a imagem perfeitamente legível a olho nu) —
+  mantido "S/N", nunca fabricado (campo de baixo impacto fiscal); razão
+  social do prestador sai truncada em "...E MANUTEN" porque o próprio PDF
+  original já imprime o campo cortado na borda da tabela (confirmado via
+  inspeção visual do PDF-fonte, não é bug de OCR/extração). Suíte
+  291→**298 verdes**; testes novos em
+  `test_lauro_freitas_v3_mag_comercio.py`.
+
+- **Fix — Competência com ano trocado em Salvador/BA (`salvador_ba`) e CNPJ
+  do tomador impresso ERRADO na própria nota** (mesma nota nº 00003327/
+  CONEX4 MULTIMÍDIA LIMITADA dos 2 fixes acima; software de importação do
+  usuário — Domínio Escrita Fiscal — rejeitava o lote com "CNPJ do arquivo
+  diferente do CNPJ da empresa ativa" e mostrava a data `01/07/2926`):
+  - `Competencia` saía `2926-07-01` — OCR lê "COMPETÊNCIA 07/2926" ("0"→"9"
+    no ano) — mesmo mês da Data de Emissão (já confiável, extraída de outro
+    trecho do documento), só o ano divergia. Corrigido usando o ano da Data
+    de Emissão quando o mês da competência bate mas o ano diverge — uma
+    competência legítima de outro ano sempre vem com mês diferente também
+    (nunca emitida meses depois sem que o mês mude), então o guard não
+    afeta competências de fato distintas (ex. nota de janeiro para
+    competência de dezembro do ano anterior).
+  - CNPJ do tomador (BONI TRANSPORTES) saía com o sentinela
+    `00000000000100`: diferente de TODOS os outros achados de CNPJ
+    corrompido desta base (sempre um erro de LEITURA de um valor impresso
+    certo), aqui o CNPJ está ERRADO NA PRÓPRIA IMAGEM da nota —
+    "04.565.293/0001-99" impresso (confirmado em zoom alto), que reprova o
+    dígito verificador. O usuário confirmou o CNPJ real como
+    "04.555.283/0001-99" — mesma raiz já vista em várias outras notas desta
+    base como tomador fixo/recorrente (notas 6508 e 2150, filiais
+    "0001"/"0003" da mesma empresa). Nenhum recorte/zoom recuperaria esse
+    valor (a sequência correta nunca esteve impressa nesta nota) —
+    corrigido em `_extrair_entidade` apenas quando o CNPJ extraído já
+    reprova o checksum E a razão social bate com "BONI TRANSPORTES", para
+    não mascarar CNPJs genuinamente diferentes de outras empresas com nome
+    parecido; nunca sobrescreve um CNPJ que já é válido.
+  Suíte 285→**289 verdes**; testes novos em `test_notas_layouts.py` e
+  `test_boni_transportes_cnpj_impresso_errado.py`.
+
+- **Fix — Número da nota em Salvador/BA (`salvador_ba`) saía com 1 dígito
+  trocado quando o recorte dedicado do cabeçalho lia num zoom "azarado"**
+  (nota real nº 00003327/CONEX4 MULTIMÍDIA LIMITADA → BONI TRANSPORTES,
+  R$ 690,00): `_ocr_header_box_salvador` (zoom fixo 4.5x) leu "09003327" —
+  "0"→"9" — em todo PSM testado (4, 6, 11); confirmado contra a imagem real
+  que o valor impresso é "00003327". Não é ruído de amostra única: nos zooms
+  3x, 6x, 8x e 10x o mesmo recorte lê o valor certo em TODAS as tentativas —
+  artefato de renderização específico daquele zoom para esta digitação.
+  Corrigido com `_ocr_numero_nota_salvador_votado`, que reamostra a mesma
+  caixa em zooms distintos (independente da checagem de validade do Código
+  de Verificação, que nesta nota nunca passa) e usa maioria simples; o valor
+  apurado é prependado em `_ocr_page` ANTES do recorte de zoom único, para
+  que `_extrair_numero` (1º match vence) prefira o valor por maioria. Valor
+  da nota (R$ 690,00) já saía correto, nenhuma mudança necessária ali.
+  Achado colateral, fora do escopo pedido (não corrigido nesta entry, ver
+  próxima): CNPJ/CPF do prestador e do tomador saíam os DOIS com o mesmo
+  sentinela `00000000000100` nesta nota. Suíte 281→**283 verdes**; teste
+  novo `test_salvador_numero_zoom_ambiguo.py`.
+
+- **Fix — CPF/CNPJ do prestador em Salvador/BA (`salvador_ba`) saía com o
+  sentinela `00000000000100`** (mesma nota nº 00003327/CONEX4 MULTIMÍDIA
+  LIMITADA do fix acima): o CNPJ real do prestador, `09.034.217/0001-97`
+  (confirmado pelo usuário e batendo com a nota irmã — pág. 2 do mesmo PDF,
+  que já extraía esse CNPJ corretamente), saía como ruído sem nenhum dígito
+  reconhecível na leitura de página inteira — só a Inscrição Municipal
+  vizinha sobrevivia ("00.291.063/001-70"). Sem CNPJ válido em lugar nenhum
+  do bloco (o próprio rótulo "PRESTADOR DE SERVIÇOS" sai "BRESTADOR DE
+  SERVIÇOS", "B" no lugar de "P" — nem o fatiamento genérico reconhece onde
+  o prestador começa), caía no fallback de sentinela compartilhado por
+  prestador E tomador. Corrigido com `_ocr_recut_prestador_cnpj_salvador`,
+  que reprocessa em zoom alto (8x) só a coluna esquerda da linha do CNPJ;
+  `_ocr_page` prepende o valor recuperado (já validado por checksum) antes
+  do resto do texto, para que a extração genérica de CNPJ (1º candidato
+  válido vence) encontre esta leitura limpa primeiro. Prependado em
+  `best_text` (não guardado só num atributo de instância): `parse_multiple`
+  cria um `sub_ext` novo por nota/bloco e só propaga pra ele `raw_text` e
+  poucos atributos específicos — um atributo novo não chegaria até a
+  chamada real de `_extrair_entidade`. CNPJ do TOMADOR permanece com o
+  sentinela nesta nota — fora do escopo pedido pelo usuário ("trate
+  exclusivamente o CNPJ [do prestador]"); avisado via `Nfse.avisos`. Suíte
+  283→**285 verdes**; teste novo `test_salvador_prestador_cnpj_ilegivel.py`.
+
+- **Fix — CNPJ do prestador em Simões Filho/BA (`simoes_filho_ba`) saía com 1
+  dígito errado** (nota real nº 122/VITORIOS EMPILHADEIRAS, mesma nota do
+  entry abaixo): o registro anterior deste CHANGELOG documentava
+  `50.945.432/0001-11` como "limitação do motor de OCR" após teste
+  exaustivo (zooms 3-12, 4 PSMs, whitelist de caracteres) — aceito como
+  best-effort por acreditar-se irrecuperável. O usuário confirmou o CNPJ
+  real como `50.949.432/0001-11` ("945" deveria ser "949"). Corrigido sem
+  depender de melhorar a leitura da MESMA região degradada: o mesmo CNPJ do
+  prestador é citado de novo, fora do bloco PRESTADOR, na seção de forma de
+  pagamento da discriminação ("Condições de pagamento ... Pix CNPJ:
+  50.949.432/0001-11") — essa segunda ocorrência sempre saiu correta em
+  toda leitura de OCR testada nesta sessão. `_extrair_entidade_simoes_filho`
+  agora valida o dígito verificador do CNPJ lido no bloco PRESTADOR e, se
+  falhar, usa essa citação alternativa (também validada) como fallback.
+  Suíte 281 verdes; `test_prestador_e_tomador_nao_compartilham_cnpj`
+  atualizado para o valor correto.
+
 ### Adicionado
+
+- Novo layout **Barueri/SP** (`barueri_sp`, barueri.sp.gov.br/nfe). Nota real
+  nº 0380578, ALELO INSTITUIÇAO DE PAGAMENTO S.A. → CLINICA PNEUMOLOGICA PROF
+  ALMERIO MACHADO (Salvador/BA), R$ 2,74 de tarifa (fatura de "agenciamento,
+  corretagem ou intermediação" cobrada pela Alelo sobre um benefício-
+  alimentação de R$ 430,00 repassado ao tomador). PDF digital (pdfminer, sem
+  OCR). Peculiaridades de ordem de leitura por campo (nenhuma delas segue o
+  padrão único de outro layout já suportado): a caixa de cabeçalho é uma
+  grade 2 colunas × 3 linhas lida por COLUNA, então "Data Emissão" e "Hora
+  Emissão" nunca ficam adjacentes um ao outro; "Código Autenticidade" aparece
+  2× no documento — a 1ª ocorrência tem "Hora Emissão" colado logo abaixo (não
+  o valor real), corrigido iterando todas as ocorrências e aceitando a 1ª cujo
+  valor seguinte já pareça um código de verdade (tem dígito); o bloco do
+  PRESTADOR (razão social + 2 linhas de endereço) vem em ORDEM FIXA antes de
+  qualquer rótulo de campo, mapeado por posição; "CEP"/"Bairro" do TOMADOR
+  saem como 2 rótulos consecutivos com um único valor combinado logo abaixo
+  ("40150-130 Graça", sem separador); a grade do item (Descrição do
+  Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total) e a grade de
+  retenções federais (IRRF/PIS-PASEP/COFINS/CSLL) seguem o padrão "N rótulos
+  dumped, depois os N valores na mesma ordem" já visto em Monte Santo/Ginfes/
+  Santos. Decisão de modelagem do usuário: "VALOR LIQUIDO DA NOTA" impresso no
+  rodapé (R$ 432,74) inclui o repasse a terceiros (R$ 430,00, crédito de
+  benefício-alimentação que a Alelo só está repassando, não é receita de
+  serviço) somado à tarifa — usar esse valor como `ValorServicos`/
+  `ValorLiquidoNfse` sobrestimaria em ~150× o valor tributável real.
+  `ValorServicos`/`BaseCalculo` = "TOTAL DE TARIFA" (R$ 2,74, bate com o
+  "Valor Total" da grade do item); `ValorIss` mantido em 0,00 (nenhum valor de
+  ISS impresso separadamente — "TOTAL DE IMPOSTOS" bate exatamente com o IRRF
+  sozinho, não fabricado); o repasse é descartado do XML (não é
+  `ValorDeducoes` nem faz parte do serviço tributável) e sinalizado em
+  `Nfse.avisos` para o usuário conferir manualmente se precisa de tratamento
+  contábil à parte. Código de serviço extraído como impresso (4 primeiros
+  dígitos de "100202220" → "1002"), sem reclassificação manual. Testes novos
+  em `tests/test_barueri_sp_layout.py`.
+
+- Novo layout **Simões Filho/BA** (`simoes_filho_ba`, constante já existia mas
+  sem extração dedicada nem prioridade de detecção correta). Nota real nº 122
+  (VITORIOS EMPILHADEIRAS COMERCIO E SERVIÇOS LTDA → BONI TRANSPORTES,
+  LOGISTICA E COMERCIO LTDA, R$ 440,00), pág. 1 de um PDF de 2 páginas cuja
+  pág. 2 é a nota irmã Lauro de Freitas/NFTS. Mesma plataforma/template de
+  Barreiras/BA ("Data Fato Gerador | Exigibilidade de ISS | Regime Tributário
+  | Número RPS | Serie RPS | Nº da Nota Fiscal") — a marca genérica de
+  Barreiras casava PRIMEIRO na cadeia de detecção e a nota inteira caía no
+  layout errado; corrigido detectando pelo nome da PREFEITURA ("PREFEITURA
+  MUNICIPAL DE SIMÕES FILHO") ANTES do marcador genérico compartilhado, em
+  `_detect_layout` e `_detect_layout_page`. Blocos "PRESTADOR"/"TOMADOR" com
+  rótulo→valor na mesma linha, seguidos de uma linha SOLTA "<Município> - <UF>
+  - CEP: <cep>" sem rótulo próprio (não reconhecida pelo parser genérico,
+  caía em "Não informado"/fallback de Salvador) — nova
+  `_extrair_entidade_simoes_filho` dedicada. Achados corrigidos: `Numero`
+  saía "246" (vazado de "orçamento nº 246" na discriminação do serviço, não o
+  "Nº da Nota Fiscal" real "202600000000122" — âncora tolerante a colunas
+  fundidas pelo OCR); CNPJ do prestador saía IGUAL ao do tomador
+  (cross-contaminação de entidade); grade de valores "VALOR SERVIÇO (R$)
+  DEDUÇÕES (R$) DESCONTO INCONDICIONAL (R$) BASE CÁLCULO (R$) ALÍQUOTA (%) ISS
+  (R$)" não tinha extração própria (Alíquota/ISS saíam zerados) — Alíquota sem
+  separador decimal no OCR ("285" em vez de "2,85") tratada como
+  percentual×100; `Discriminacao` vazava até o fim do documento inteiro
+  (grade de valores + demonstrativo de tributos + rodapé legal), sem limite
+  dedicado até "OBSERVAÇÃO". Recorte OCR dedicado em zoom 6x do bloco do
+  PRESTADOR (`_ocr_recut_prestador_simoes_filho`) recupera CEP e Inscrição
+  Municipal quando a leitura de página inteira erra (best-effort, como outros
+  recortes desta base — pode cair de volta ao valor do corpo em notas/rodadas
+  de OCR menos favoráveis). ~~CNPJ do prestador permanece com um possível
+  dígito trocado~~ — **corrigido, ver entry "Fix — CNPJ do prestador" no topo
+  deste arquivo** (o dígito era mesmo recuperável, via a citação do CNPJ na
+  seção de pagamento). Pelo mesmo motivo,
+  `CodigoVerificacao` (valor real alfanumérico "bd17528e3", conferido
+  caractere a caractere contra a imagem) fica no sentinela `XXXX-XXXX` — toda
+  tentativa de OCR devolve uma leitura numérica diferente e garantidamente
+  errada, nunca o valor real; sentinela honesto é preferível. **Corrigido também
+  o código IBGE de Simões Filho/BA no `IBGEResolver.KNOWN_CITIES`: estava
+  `2929206` (errado, nunca conferido contra fonte oficial) — a própria
+  Prefeitura imprime na nota o código oficial `2930709` (confirmado contra
+  cidades.ibge.gov.br); afeta também o prestador fixo do `LAYOUT_PJB_LOCACAO`
+  (mesma cidade), corrigido junto.**
+  - **Fix — Data de Emissão caindo no fallback "agora" (pedido explícito do
+    usuário após o primeiro round: "Data de emissão incorreta")**: a linha
+    "Emitido em 22/07/2026 21:14:46" nunca sai legível do OCR nesta
+    plataforma — testado exaustivamente (zooms 3 a 14, autocontraste,
+    binarização, whitelist de caracteres, recorte isolado da faixa, mesma
+    região castigada pelo QR Code/marca d'água do Código de Verificação):
+    cada tentativa devolve dígitos/separadores diferentes, nunca o valor
+    real. Sem tratamento dedicado, `DataEmissao` caía em "agora" (a
+    `Competencia` saía do MÊS ERRADO — agosto em vez de julho). Corrigido com
+    um fallback que usa a data de atendimento citada na própria discriminação
+    do serviço ("...atendimento realizado no dia 15/07/2026") — texto livre,
+    fora da faixa degradada, que sobrevive ÍNTEGRO em toda leitura testada.
+    Não é o timestamp exato de emissão (hora fica 00:00:00), mas acerta
+    dia/mês/ano reais, confirmados de forma independente pela nota irmã
+    (Lauro de Freitas/NFTS, mesma transação): "Competência: 07/2026" — as
+    duas fontes concordam em julho/2026, nunca em agosto.
+  - `Numero` (vazava "246" do orçamento) e o CNPJ do prestador (saía IGUAL ao
+    do tomador) já estavam corrigidos desde o commit anterior desta mesma
+    branch — reconfirmados contra a nota real após o usuário reportar os 3
+    problemas juntos ("Número incorreto; data de emissão incorreta; tomador
+    do serviço incorreto"): o XML que o usuário viu ainda era da versão
+    ANTES do merge desta branch.
+  Suíte 269→**281 verdes**; teste novo
+  `test_data_emissao_usa_data_de_atendimento_em_vez_de_hoje` em
+  `test_simoes_filho_layout.py` (9 testes) e
+  `test_lauro_de_freitas_nfts_simoes_filho_prestador.py` (3 testes, cobrindo 3
+  achados novos na pág. 2/Lauro de Freitas NFTS da mesma nota: rótulo
+  "Nome/Razão" do prestador saindo "Noma/Razão" não reconhecido — prestador
+  caía em "Não Identificado"; "UF." com ponto em vez de dois-pontos vazava
+  "UF. BA" inteiro para dentro do Município do tomador; grade de valores
+  degradada por completo na leitura de página inteira, salvo um 3º fallback
+  que recupera Dedução/Base pela janela entre "ITEM DA LISTA DE SERVIÇOS" e
+  "VALOR LÍQUIDO DA NOTA FISCAL").
 
 - Novo layout **Goiânia/GO** (`goiania_go`) — plataforma ISSNet Online
   (issnetonline.com.br/goiania). Nota real nº 4 (ID Producao Musical Ltda →

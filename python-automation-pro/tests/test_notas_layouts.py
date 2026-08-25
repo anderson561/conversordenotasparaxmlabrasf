@@ -27,6 +27,28 @@ def test_extrair_competencia_salvador():
     comp = ext._extrair_competencia(datetime(2026, 2, 3))
     assert comp == datetime(2026, 2, 1)
 
+def test_extrair_competencia_salvador_ano_trocado_corrigido_pela_data_emissao():
+    # Achado real, nota nº 00003327/CONEX4 MULTIMÍDIA LIMITADA: OCR lê
+    # "COMPETÊNCIA 07/2926" ("0"->"9" no ano) mesmo com a Data de Emissão
+    # (extraída de outro trecho do documento) corretamente em 2026 — mesmo
+    # mês, ano diferente é sinal forte de dígito trocado, não de uma
+    # competência legítima de outro ano (essa sempre viria com mês diferente
+    # também).
+    texto = "PREFEITURA DO SALVADOR\nCOMPETÊNCIA 07/2926 (mês/ano)"
+    ext = _make_extractor(texto)
+    ext.layout = LAYOUT_SALVADOR
+    comp = ext._extrair_competencia(datetime(2026, 7, 22, 9, 43, 32))
+    assert comp == datetime(2026, 7, 1)
+
+def test_extrair_competencia_salvador_ano_diferente_com_mes_diferente_nao_e_alterado():
+    # Guard não deve mexer numa competência legítima de mês/ano anteriores
+    # (nota emitida em janeiro para competência de dezembro do ano anterior).
+    texto = "PREFEITURA DO SALVADOR\nCOMPETÊNCIA 12/2025 (mês/ano)"
+    ext = _make_extractor(texto)
+    ext.layout = LAYOUT_SALVADOR
+    comp = ext._extrair_competencia(datetime(2026, 1, 5))
+    assert comp == datetime(2025, 12, 1)
+
 def test_extrair_competencia_rio():
     texto = "PREFEITURA DA CIDADE DO RIO DE JANEIRO\nMês de Competência: 05/2025"
     ext = _make_extractor(texto)
