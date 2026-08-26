@@ -13,6 +13,8 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+## [1.4.1] - 2026-08-26
+
 ### Corrigido
 
 - **Fix — Bloco inteiro do PRESTADOR e grade de valores derrubados pelo PSM
