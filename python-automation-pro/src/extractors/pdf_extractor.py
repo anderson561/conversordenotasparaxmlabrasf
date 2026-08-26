@@ -16,6 +16,8 @@ from pdfminer.high_level import extract_text, extract_pages
 # pyrefly: ignore[missing-import]
 from pdfminer.layout import LTChar
 import re
+import difflib
+import unicodedata
 from typing import Optional, List, Union
 from ..models.nfse_models import Nfse, Entidade, Endereco, Valores
 from ..models.nfe_produto_models import NfeProduto, EntidadeNfe, ItemProduto, Transportador, ValoresNfe
@@ -2542,6 +2544,25 @@ class SPPdfExtractor:
             # incorreto para um serviço de comunicação).
             return "0000"
 
+        if self.layout == LAYOUT_SALVADOR:
+            # Achado real 2026-08-25 (nota nº 2419/LUNITECK, pág.1
+            # catastroficamente degradada — mesmo scan onde Número/CNPJ/
+            # Código de Verificação já saem honestamente com sentinela,
+            # sem regressão nenhuma nesses campos): o rótulo padrão "Item
+            # da Lista de Serviços" e o valor logo abaixo somem por
+            # completo do OCR nesta página, mas a linha "Código de
+            # Tributação do Município: 1402-004 - Assistência técnica"
+            # (rótulo diferente, mais abaixo no documento) sobrevive
+            # legível o bastante ("Gódigo de: Tributação o Município:
+            # 1402-004 - Assistência lêcnica") — confirmado batendo com o
+            # item real da pág.2/NFTS da mesma transação (14.02). Sem este
+            # fallback, cai no default genérico "03115" (código
+            # inexistente/plausível-porém-errado).
+            m = re.search(r'Tribut\w{0,4}\W{0,4}\w{0,3}\W{0,4}Munic[íi1]pi[oó]\s*[:\-]?\s*(\d{2})(\d{2})',
+                           t, re.IGNORECASE)
+            if m:
+                return m.group(1) + m.group(2)
+
         if self.layout == LAYOUT_SAO_JOSE_SC:
             # "1.05 - Licenciamento ou cessão de direito de uso de programas
             # de computação." — item LC116 no formato "N.NN" (major.minor, sem
@@ -4446,9 +4467,19 @@ class SPPdfExtractor:
         # um "E"/"A" legítimo de razão social em caixa alta.
         razao = re.sub(r'^[a-zà-ÿ]\s+(?=[A-ZÀ-Ý])', '', razao).strip()
 
+        # Achado real 2026-08-25 (nota nº 2419/LUNITECK, Salvador/BA pág.1
+        # catastroficamente degradada): "Inscri[cç]" e "Endere[cç]" nunca
+        # CASAVAM contra o texto real ("Inscrição"/"Endereço" completos) -
+        # o `\b` de fechamento do grupo exige um limite de palavra logo
+        # após "c"/"ç", mas a palavra continua ("ão"/"ao"/"o", todos
+        # caracteres de palavra em Unicode) - a proteção ficava morta desde
+        # sempre para esses 2 termos, deixando o próprio rótulo garblado
+        # "CPF/CNPJ Inscrição Municipal" passar como se fosse razão social
+        # (achado no bloco do PRESTADOR desta nota: "CPECNDE Inscrição
+        # Mithicipal"). Corrigido casando a palavra completa.
         _NOISE_RAZAO = re.compile(
             r'\b(DA NFS-e|Prestador do Servi|Nota Fiscal|Documento Auxiliar|'
-            r'DANFSe|Prefeitura|Secretaria|Inscri[cç]|CNPJ|CPF|Endere[cç])\b',
+            r'DANFSe|Prefeitura|Secretaria|Inscri[cç][ãa]o|CNPJ|CPF|Endere[cç]o)\b',
             re.IGNORECASE
         )
         
@@ -4472,8 +4503,26 @@ class SPPdfExtractor:
             line_clean = re.sub(r'^\d{2}\.\d{3}\.\d{3}\s*', '', line_clean).strip()
             line_clean = re.sub(r'^\d{8,}\s*', '', line_clean).strip()
             line_clean = re.sub(r'[\s/!|:.-]+$', '', line_clean).strip()
-            
-            if len(line_clean) < 3: return False
+            # Achado real 2026-08-25 (regressão pega pela suíte ao adicionar
+            # o guard de ":" logo abaixo — nota Cuiabá/DR3 TERCEIRIZAÇÃO): um
+            # candidato válido pode vir com data/hora colada na MESMA linha
+            # ("DR3 TERCEIRIZACAO LTDA 06/04/2026 19:49:51" — o "19:49:51"
+            # tem 2 ":"). A limpeza final de baixo (`\s*\d{2}/\d{2}/\d{4}.*$`)
+            # já remove esse sufixo do valor ACEITO, mas só roda DEPOIS da
+            # validação — sem replicar aqui, o guard de ":" rejeitava o
+            # candidato certo antes de chegar lá. Aplicado cedo, na mesma
+            # forma da limpeza final, pra manter os dois em sincronia.
+            line_clean = re.sub(r'\s*\d{2}/\d{2}/\d{4}.*$', '', line_clean).strip()
+
+            # Achado real 2026-08-25 (nota nº 2419/LUNITECK): numa página
+            # catastroficamente degradada, fragmentos de ruído puro de 3
+            # letras (ex.: "GRE", de uma região ilegível perto do CNAE) já
+            # passavam por não bater nenhum filtro de rótulo/ruído — a razão
+            # social mais curta já confirmada neste corpus tem 6 letras
+            # ("CETREL"); nenhuma nota real observada tem razão social de 3
+            # letras. Subir o piso pra 4 já filtra esse tipo de fragmento sem
+            # risco a nomes curtos legítimos.
+            if len(line_clean) < 4: return False
             if _LABELS_NOISE.match(line_clean): return False
             if _NOISE_RAZAO.search(line_clean): return False
             if re.match(r'^\d{2}/\d{2}/\d{4}', line_clean) or re.match(r'^\d{2}:\d{2}', line_clean): return False
@@ -4487,10 +4536,51 @@ class SPPdfExtractor:
             # razão social de verdade, roubando a linha real (a empresa) que
             # vem logo depois no bloco.
             if re.match(r'^Nome[iI\s/]{0,2}Raz[ãa]o\s+Socia', line_clean, re.I): return False
+            # Achado real 2026-08-25 (nota nº 2419/LUNITECK, mesma família dos
+            # 2 achados acima, mas uma 3ª variante de garble ainda diferente:
+            # "NoineiRarão Sogial"): o rótulo "Nome/Razão Social" tem infinitas
+            # formas de corromper numa página catastroficamente degradada —
+            # em vez de enumerar mais uma regex literal por variante nova (3ª
+            # em 4 dias), comparação fuzzy contra o rótulo canônico. Testado
+            # contra as 3 variantes já vistas (razão 0,73-0,93) e contra 5
+            # razões sociais reais deste corpus (0,18-0,36) — limiar 0,55 dá
+            # margem folgada dos dois lados.
+            _cand_norm = re.sub(
+                r'[^A-Za-z]', '',
+                unicodedata.normalize('NFKD', line_clean).encode('ascii', 'ignore').decode('ascii')
+            ).upper()
+            if difflib.SequenceMatcher(None, _cand_norm[:18], 'NOMERAZAOSOCIAL').ratio() > 0.55:
+                return False
+            # Achado real 2026-08-25 (mesma nota nº 2419): quando o cabeçalho
+            # "TOMADOR DE SERVIÇOS" não sobra reconhecível em NENHUMA forma
+            # (nem para `_ocr_recut_prestador_razao_salvador` recuperar a
+            # razão do prestador por recorte dedicado — testado e retornou
+            # None nesta nota, mesma classe do "zoom único não generaliza"
+            # já catalogado), o bloco genérico do PRESTADOR vaza para dentro
+            # do bloco do TOMADOR e acaba capturando a própria razão da BONI
+            # TRANSPORTES (aqui já garblada, "pia -PRANSPORTES, LOGISTICA
+            # E-COMERCIO LTDA" — sem o "BONI" no início, então a checagem
+            # literal 'BONI TRANSPORTES' de outros pontos deste arquivo não
+            # pega). BONI TRANSPORTES é sempre o TOMADOR nesta base (nunca o
+            # prestador) — gated ao PRESTADOR do Salvador para não afetar o
+            # caso legítimo (ela IS a tomadora real na maioria das notas).
+            if (self.layout == LAYOUT_SALVADOR and tipo == 'Prestador'
+                    and re.search(r'LOG[IÍ]STICA\W{0,3}E\W{0,3}COM[EÉ]RCIO', line_clean, re.I)):
+                return False
             # Só rejeita como "código" (ex.: verificação/autenticidade) se houver dígito
             # misturado às letras; nomes curtos só-letras (ex.: "CETREL") são razões sociais válidas.
             if re.match(r'^(?=[A-Z0-9-]{6,15}$)(?=.*\d)[A-Z0-9-]+$', line_clean, re.I): return False
             if '@' in line_clean.lower() or '.com' in line_clean.lower(): return False
+            # Achado real 2026-08-25 (nota nº 2419/LUNITECK, mesmo PDF/pág.1
+            # catastroficamente degradada): quando o rótulo real de uma
+            # entidade não sobra reconhecível em lugar nenhum, o fallback
+            # genérico pode cair numa linha de ruído puro de OUTRO cabeçalho
+            # ("TOMARIA BE: E SEAVGOS" — o próprio "TOMADOR DE SERVIÇOS"
+            # irreconhecível; "- Data je Horade Emissão: E"). Nenhuma razão
+            # social real deste corpus tem ":" no meio do nome (só aparece
+            # como separador de rótulo/valor) — mais barato e seguro que
+            # tentar reconhecer cada variante de garble específica.
+            if ':' in line_clean: return False
             # Achado real 2026-08-21 (nota 2418/LUNITECK, Salvador escaneado
             # degradado): quando o cabeçalho "TOMADOR DE SERVIÇOS" garbla só a
             # PARTE final ("TOMADOR BE SERVIÇOS.", "DE"→"BE"), o rótulo
@@ -4499,6 +4589,14 @@ class SPPdfExtractor:
             # conteúdo — nenhuma razão social real é só "<sigla curta>
             # SERVIÇOS" sozinho.
             if re.match(r'^[A-ZÀ-Ý]{1,3}\s+SERVI[ÇC][OÓ]S?\.?$', line_clean, re.I): return False
+            # Achado real 2026-08-25 (mesma nota nº 2419, bloco do TOMADOR):
+            # numa página catastroficamente degradada o fallback genérico
+            # ("1ª linha que não é rótulo reconhecido") pode cair numa linha
+            # de ruído puro vinda de células/bordas de tabela vizinhas do
+            # cabeçalho ("RSS: - [| Númeroda Nata"), sem casar nenhum rótulo
+            # conhecido — colchete/pipe nunca aparecem numa razão social
+            # real deste corpus (só em artefato de OCR de borda de tabela).
+            if re.search(r'[\[\]|]', line_clean): return False
             # Mesma nota: o rótulo "Nome/Razão Social" também sai garblado
             # ("Norma/Razab Sonia") além do reconhecível pelo `_label_pats`
             # acima — sobrevive como candidato e rouba a linha real (a
@@ -4551,6 +4649,26 @@ class SPPdfExtractor:
 
         # SEGUNDO FALLBACK: Se ainda não achou (layout sem labels como Cuiabá)
         # Pega a primeira linha que não seja label de seção e não seja lixo
+        #
+        # Achado real 2026-08-25 (nota nº 2419/LUNITECK, pág.1
+        # catastroficamente degradada — mesmo scan já visto em 2026-08-21):
+        # tentei exigir aqui um sinal POSITIVO de "parece nome de empresa"
+        # (2+ palavras com inicial maiúscula) além dos filtros negativos de
+        # `is_valid_razao`, na esperança de rejeitar fragmentos de ruído
+        # puro ("pg CN", a própria linha de CNAE) que sobrevivem às 15
+        # primeiras linhas. Revertido: nesta nota o `bloco` do PRESTADOR não
+        # tem NENHUM delimitador de fim reconhecível nesta página tão
+        # degradada e, quando a busca precisa ir fundo o bastante pra achar
+        # algo "parecido com nome", ela atravessa a quebra de página e
+        # captura o texto da PÁG.2 (mesma transação, mesmo prestador
+        # LUNITECK — coincidência de conteúdo, não de bug corrigido) — o
+        # que faz `parse_multiple` deduplicar as duas páginas como se fossem
+        # a MESMA nota, **perdendo a nota da pág.1 inteira** do resultado
+        # (count caiu de 2 para 1). Perder uma nota do lote é uma regressão
+        # muito pior que uma razão social errada numa só; mantido o
+        # comportamento original (sem exigir sinal positivo) — mesma
+        # decisão já tomada em 2026-08-21 de não perseguir mais fixes de
+        # regex nesta página específica catastroficamente degradada.
         if not razao:
             bloco_sem_header = re.sub(rf'^(?:{pattern_labels})[:\s\n]*', '', bloco, flags=re.I | re.DOTALL)
             linhas = [ln.strip() for ln in bloco_sem_header.split('\n') if ln.strip()]
@@ -9186,10 +9304,43 @@ class SPPdfExtractor:
             # marca_agua_salvador`) — defeito inerente à linha, não
             # recuperável ali; a grade de "Base de Cálculo", lida à parte,
             # bate com a imagem.
-            if deducoes == 0.0 and base and base != val_serv:
-                val_serv = base
-                if liquido_herdou_val_serv:
-                    liquido = val_serv
+            #
+            # Achado real 2026-08-25 (nota nº 2418, MESMO prestador/template
+            # LUNITECK, PDF irmão da 00000061 de 3 dias antes): a MESMA
+            # heurística acima, aplicada sem tolerância, TROCOU um valor
+            # CORRETO por um ERRADO — "VALOR TOTAL DA NOTA = R$397,14" estava
+            # certo e bem legível nesta nota (confirmado batendo com a
+            # pág.2/NFTS), mas `_ocr_recut_base_calculo_grade_salvador` leu
+            # "8,00" da mesma grade densamente corrompida que, na nota
+            # 00000061, tinha lido corretamente — zoom único validado numa
+            # nota não generaliza pra uma nota irmã (mesma lição já
+            # catalogada pra recorte de zoom em geral). Sem um 3º sinal
+            # independente pra decidir qual leitura confiar, o sinal barato
+            # que separa os 2 casos observados é a MAGNITUDE da divergência:
+            # no caso real (00000061) o defeito trocou 1 dígito (R$6.875,81
+            # vs R$6.878,81, ~0,04% de diferença); no caso da recut errada
+            # (2418) a diferença é de ~98% (R$8,00 vs R$397,14) — grande
+            # demais pra ser um dígito trocado, muito mais provável ser uma
+            # célula/coluna errada da grade. Só confia na grade quando a
+            # divergência é PEQUENA (≤10%, generosa o bastante pra cobrir
+            # mais de 1 dígito trocado sem abrir espaço pra confundir com
+            # uma leitura de célula errada); divergência grande mantém o
+            # valor do cabeçalho, que ao menos é uma leitura de linha única
+            # completa, não um fragmento de grade.
+            if deducoes == 0.0 and base is not None and base != val_serv:
+                maior = max(base, val_serv) or 1.0
+                divergencia_relativa = abs(base - val_serv) / maior
+                if divergencia_relativa <= 0.10:
+                    val_serv = base
+                    if liquido_herdou_val_serv:
+                        liquido = val_serv
+                else:
+                    # Divergência grande demais pra confiar na grade (ver
+                    # nota acima) — mesma identidade contábil (Base =
+                    # Serviços - Deduções, Deduções=0 aqui) usada na direção
+                    # OPOSTA: descarta o valor da grade recuperada e deriva
+                    # a Base do valor do cabeçalho, já confiável.
+                    base = val_serv
 
             return Valores(
                 valor_servicos=val_serv,

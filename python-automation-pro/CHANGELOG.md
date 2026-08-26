@@ -15,6 +15,63 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Razão social fabricada com ruído em vez de sentinela honesto, e
+  Código de Serviço perdido, na mesma nota já catalogada como
+  catastroficamente degradada (layout Salvador/BA, nota real nº 2419,
+  LUNITECK SOLUÇÕES E DESENVOLVIMENTO EM TECNOLOGIA LTDA ME -> BONI
+  TRANSPORTES, pág.1 — a pág.2/NFTS já era e continua correta)**: pedido de
+  auditoria do usuário na mesma nota já diagnosticada em 2026-08-21 como
+  catastroficamente degradada (Número/CNPJ/Código de Verificação já saem
+  com sentinela honesto, reconfirmado sem regressão). Achados novos: (1) o
+  guard `_NOISE_RAZAO` que deveria rejeitar o próprio rótulo garblado
+  "CPF/CNPJ Inscrição Municipal" como razão social tinha um bug de `\b` que
+  nunca casava contra a palavra completa "Inscrição"/"Endereço" — proteção
+  morta desde sempre, corrigida de forma genérica (beneficia os ~30 layouts
+  que usam este extrator de entidade compartilhado); (2) razão social da
+  BONI TRANSPORTES (tomadora) vazando para o bloco do PRESTADOR quando o
+  cabeçalho "TOMADOR DE SERVIÇOS" não sobra reconhecível em nenhuma forma —
+  corrigido com um guard específico (BONI nunca é prestadora nesta base);
+  (3) fragmentos de ruído puro (colchete/pipe de borda de tabela, dois-pontos
+  de rótulo colado, fragmentos de 3 letras) passando como razão social —
+  3 guards genéricos novos; (4) uma 3ª variante de garble do rótulo
+  "Nome/Razão Social" ainda diferente das 2 já cobertas — trocada a
+  enumeração de regex literais por comparação fuzzy (`difflib`) contra o
+  rótulo canônico; (5) `servico_codigo` caindo no fallback genérico "03115"
+  mesmo com a linha "Código de Tributação do Município: 1402-004 -
+  Assistência técnica" legível nesta página — novo fallback para
+  `LAYOUT_SALVADOR`, confirmado batendo com o item real da pág.2 (14.02).
+  **Tentativa revertida durante o desenvolvimento:** um requisito adicional
+  de "parece nome de empresa" no fallback mais às cegas causou a busca por
+  razão social atravessar a quebra de página e capturar texto da PÁG.2,
+  fazendo `parse_multiple` deduplicar as 2 páginas como se fossem a MESMA
+  nota (perdendo a nota da pág.1 inteira do resultado) — revertido antes de
+  entrar na suíte; razão social do prestador nesta nota específica segue sem
+  recuperação garantida (mesma decisão de 2026-08-21 de não perseguir mais
+  fixes de regex nesta página específica). Suíte 314→**319 verdes**; 5
+  testes novos em `test_salvador_lauro_freitas_2419_razao_e_codigo_servico.py`.
+
+  **Ampliação na MESMA leva (nota real nº 2418, PDF irmão da 2419, mesmo
+  prestador LUNITECK — achado real 2026-08-25):** o usuário reportou que a
+  LUNITECK "não está extraindo corretamente" nesta 2ª nota e pediu para
+  verificar se havia ferramenta no projeto pra contornar. Achado mais grave:
+  a heurística "confiar na grade de Base de Cálculo recuperada quando
+  diverge da linha isolada VALOR TOTAL DA NOTA" (introduzida pra corrigir a
+  nota 00000061/MCLA, cujo cabeçalho saía consistentemente errado por
+  R$0,03) **trocou um valor CORRETO por um ERRADO nesta nota** — "VALOR
+  TOTAL DA NOTA = R$397,14" estava certo e legível, mas a mesma grade
+  densamente corrompida fez o recut ler "8,00" — zoom único validado numa
+  nota não generaliza pra uma nota irmã. Corrigido exigindo que a
+  divergência entre a grade e o cabeçalho seja PEQUENA (≤10%, plausível
+  como 1 dígito trocado, cobre o caso real do MCLA) antes de confiar na
+  grade; divergência grande (aqui, ~98%) mantém o valor do cabeçalho e
+  deriva a Base dele. **Decisão do usuário (via `AskUserQuestion`):** não
+  implementar o padrão "prestador fixo" (identidade hardcoded, já usado
+  para BIOCONTROL/PJB Construção/F&F Locação) pra LUNITECK apesar do CNPJ
+  raiz já confirmado em 2 notas reais — razão social/CNPJ do prestador
+  nesta nota seguem sem recuperação garantida, mesma decisão já tomada.
+  Suíte 319→**321 verdes**; 2 testes novos em
+  `test_salvador_2418_valor_grade_recut_divergencia.py`.
+
 - **Fix — Prestador/Tomador colidiam no mesmo CNPJ e Valor Total saía errado
   quando o PSM automático do Tesseract derruba a razão social do prestador e
   o cabeçalho "TOMADOR DE SERVIÇOS" (layout Salvador/BA)** (nota real nº
