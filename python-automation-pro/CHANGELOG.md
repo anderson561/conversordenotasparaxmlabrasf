@@ -15,6 +15,41 @@ sessão, de todos os layouts/fixes entregues está em
 
 ### Corrigido
 
+- **Fix — Bloco inteiro do PRESTADOR e grade de valores derrubados pelo PSM
+  padrão do OCR, sem nenhuma marca d'água (layout Salvador/BA, nota real nº
+  00024910, BDP LOGÍSTICA INTEGRADA DE RESÍDUOS LTDA -> BONI TRANSPORTES,
+  PDF de 1 página)**: a leitura de página inteira em zoom 3x com PSM
+  automático pulava direto de "Código de verificação:" pra "Endereço:" —
+  rótulo "PRESTADOR DE SERVIÇOS", CPF/CNPJ e Nome/Razão Social nem chegavam
+  a aparecer (ausentes, não garblados), e a grade de valores (Base de
+  Cálculo/Alíquota/ISS/Líquido) saía por completo perdida. O MESMO zoom com
+  PSM 6 (bloco único de texto) recupera a maior parte desse bloco — `_ocr_page`
+  agora tenta as duas leituras quando o layout Salvador é detectado e usa a
+  que pontuar melhor em `_score_ocr_text`, preservando o comportamento já
+  validado nas notas onde o PSM padrão já é suficiente. 3 bugs adicionais
+  achados na mesma nota, generalizáveis: (1) razão social do PRESTADOR sem
+  rótulo "Nome/Razão Social" reconhecível pegava a própria linha do CNPJ
+  como candidata — corrigido pulando qualquer linha que comece com um CNPJ
+  formatado no fallback linha-a-linha; (2) razão social do TOMADOR sem
+  rótulo "CPF/CNPJ" reconhecível engolia o CNPJ formatado e o endereço
+  inteiro na mesma captura (sem stop-pattern pro NÚMERO do CNPJ, só pro
+  rótulo) — corrigido adicionando o padrão de CNPJ formatado como
+  stop-pattern; (3) "VALOR TOTAL DA NOTA" saiu com "DA"/"NOTA" colados e o
+  valor sem separador decimal (não confiável pra reformatar) — usa a linha
+  "Valor Liquido R$ X" (formatação intacta) como último recurso em vez de
+  deixar `valor_servicos` como 0,00. Também generalizada a votação por
+  maioria do Número da Nota (`_ocr_numero_nota_salvador_votado`): 2 amostras
+  novas (zoom 7x/9x, PSM 4) e o critério de aceite relaxado de maioria
+  estrita pra pelo menos metade das amostras, corrigindo um caso em que as 4
+  amostras originais não convergiam numa maioria clara. CNPJ do prestador e
+  do tomador, Código de Verificação e logradouro/CEP de ambas as entidades
+  continuam ilegíveis mesmo após o PSM 6 — mantidos como sentinela/"Não
+  informado" (nunca fabricados), mesma família de degradação já registrada
+  numa issue GitHub aberta para o padrão recorrente Salvador/Luniteck-BONI.
+  NÃO foi criado um layout `salvador_bdp` — é o mesmo template oficial
+  "PREFEITURA MUNICIPAL DO SALVADOR" já coberto por `LAYOUT_SALVADOR`, só
+  mal-escaneado. Suíte 321→**325 verdes** (4 testes novos).
+
 - **Fix — Razão social fabricada com ruído em vez de sentinela honesto, e
   Código de Serviço perdido, na mesma nota já catalogada como
   catastroficamente degradada (layout Salvador/BA, nota real nº 2419,
