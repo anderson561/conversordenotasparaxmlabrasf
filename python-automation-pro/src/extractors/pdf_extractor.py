@@ -4436,7 +4436,17 @@ class SPPdfExtractor:
             relax("Inscrição Municipal") + "|" + relax("IM :") + "|" + relax("Inscrição Estadual") + "|" +
             relax("Telefone") + "|" + relax("E-mail") + "|" + relax("Nome Fantasia") + "|" +
             relax("Fornecedor") + "|" + relax("Tomador") + "|" + relax("Cliente") + "|" +
-            relax("Simples Nacional") + "|" + relax("Regime de Apura") + "|" + relax("Optante")
+            relax("Simples Nacional") + "|" + relax("Regime de Apura") + "|" + relax("Optante") + "|" +
+            # Achado real 2026-08-26 (nota nº 00024910/BDP LOGÍSTICA INTEGRADA
+            # DE RESÍDUOS, layout Salvador/BA): quando o rótulo "CPF/CNPJ" do
+            # TOMADOR nem chega a aparecer no OCR (rótulo sumido, não só
+            # garblado), a captura de razão social não tinha onde parar e
+            # engolia o CNPJ formatado E o endereço inteiro que vinham logo
+            # depois na mesma linha colapsada (`bloco_clean` junta as quebras
+            # de linha originais com espaço). Um nome de empresa real nunca
+            # contém um CNPJ formatado embutido — para nesse padrão mesmo sem
+            # nenhum rótulo reconhecível antes dele.
+            r'\d{2}\.\d{3}\.\d{3}\s*/\s*\d{4}\s*-\s*\d{2}'
         )
 
         # Captura até encontrar um stop_pattern ou o fim do bloco
@@ -4672,7 +4682,24 @@ class SPPdfExtractor:
         if not razao:
             bloco_sem_header = re.sub(rf'^(?:{pattern_labels})[:\s\n]*', '', bloco, flags=re.I | re.DOTALL)
             linhas = [ln.strip() for ln in bloco_sem_header.split('\n') if ln.strip()]
+            # Achado real 2026-08-26 (nota nº 00024910/BDP LOGÍSTICA INTEGRADA
+            # DE RESÍDUOS): quando o rótulo "Nome/Razão Social" do PRESTADOR
+            # sequer aparece (não garblado — ausente), a linha que sobra
+            # logo antes da razão social real é a do PRÓPRIO CNPJ ("19.951.
+            # 455/0001-84 BLARE TODRUT ES gr" — dígitos do CNPJ + ruído de
+            # OCR colado, provável resto da Inscrição Municipal). Essa linha
+            # passava em `is_valid_razao` (não tem os rótulos-ruído
+            # conhecidos) e a limpeza final removia só o PREFIXO do CNPJ,
+            # deixando o ruído como se fosse a razão social — a linha
+            # seguinte, com o nome real da empresa, nunca era alcançada.
+            # Pular qualquer linha que COMECE com um CNPJ formatado (uma
+            # razão social real nunca começa assim) resolve sem precisar de
+            # nenhum "sinal positivo" de nome de empresa (evita repetir a
+            # regressão de atravessar página já catalogada acima).
+            _CNPJ_NO_INICIO = re.compile(r'^\d{2}\.\d{3}\.\d{3}\s*/\s*\d{4}\s*-\s*\d{2}\b')
             for linha in linhas[:15]: # Tenta as 15 primeiras linhas
+                if _CNPJ_NO_INICIO.match(linha):
+                    continue
                 if is_valid_razao(linha):
                     razao = linha
                     break
@@ -4692,6 +4719,11 @@ class SPPdfExtractor:
             razao = re.sub(r'^\d{2}\.\d{3}\.\d{3}\s*', '', razao).strip()
             razao = re.sub(r'^\d{8,}\s*', '', razao).strip()
             razao = re.sub(r'[\s/!|:.-]+$', '', razao).strip()
+            # Ruído de borda de coluna colado no fim ("LTDA. ) ,", achado
+            # real 2026-08-26, nota nº 00024910/BDP LOGÍSTICA INTEGRADA DE
+            # RESÍDUOS -> BONI TRANSPORTES) — vírgula/parênteses soltos que
+            # a classe de caracteres acima não cobria.
+            razao = re.sub(r'[\s,()]+$', '', razao).strip()
             if self.layout == LAYOUT_NACIONAL:
                 # DANFSe: o OCR gruda no nome (a) o prefixo do CNPJ com VÍRGULA
                 # em vez de ponto ("49.244,210 THIAGO GUEDES...") — a limpeza
@@ -9342,6 +9374,30 @@ class SPPdfExtractor:
                     # a Base do valor do cabeçalho, já confiável.
                     base = val_serv
 
+            # "VALOR TOTAL DA NOTA" pode sair com o "DA"/"NOTA" colados
+            # ("VALOR TOTAL DANOTA=R$ 134000") E o próprio valor sem
+            # separador decimal ("134000" em vez de "1.340,00") — achado
+            # real 2026-08-26, nota nº 00024910/BDP LOGÍSTICA INTEGRADA DE
+            # RESÍDUOS: mesmo com zoom/PSM que recupera o resto do bloco do
+            # prestador, essa linha específica sai densa demais pro OCR
+            # separar milhar/decimal. Não vale tentar "adivinhar" onde entra
+            # a vírgula nesse dígitos correntes (arriscado, pode inflar
+            # 100x). Em vez disso, quando `val_serv` continua 0,00 (a linha
+            # falhou), usa a linha "Valor Liquido R$ X" (formatação de
+            # moeda intacta nesta nota, ainda que a grade INSS/PIS/.../
+            # Líquido com rótulos completos não tenha casado) como último
+            # recurso — mesma classe de fallback "não fabricar, mas não
+            # deixar um valor real e legível virar zero" já usada em outros
+            # layouts (ex. LAYOUT_BARUERI, "Valor Líquido da Nota").
+            if val_serv == 0.0:
+                m_liquido_linha = re.search(r'Valor\s+L[íi]quido\s+R\$\s*([\d\.,]+)', t, re.IGNORECASE)
+                if m_liquido_linha:
+                    val_serv = self._parse_valor(m_liquido_linha.group(1))
+                    if liquido_herdou_val_serv:
+                        liquido = val_serv
+                    if base == 0.0:
+                        base = val_serv
+
             return Valores(
                 valor_servicos=val_serv,
                 valor_deducoes=deducoes,
@@ -10542,6 +10598,33 @@ class SPPdfExtractor:
                 # encontrem esta versão limpa antes de qualquer ocorrência
                 # ambígua no restante do documento.
                 if re.search(r'PREFEITURA\s+MUNICIPAL\s+DO\s+SALVADOR|Nota\s+Salvador', best_text, re.IGNORECASE):
+                    # PSM padrão (automático) pode derrubar POR COMPLETO o
+                    # bloco do PRESTADOR (rótulo "PRESTADOR DE SERVIÇOS",
+                    # CPF/CNPJ, Razão Social, CEP) e a grade inteira de
+                    # valores, mesmo SEM marca d'água/rabisco (achado real
+                    # 2026-08-26, nota nº 00024910/BDP LOGÍSTICA INTEGRADA DE
+                    # RESÍDUOS -> BONI TRANSPORTES): a leitura em zoom 3x/PSM
+                    # padrão pula direto de "Código de verificação:" para
+                    # "Endereço:" — a linha do rótulo, o CNPJ e a razão
+                    # social do prestador nem aparecem, corrompidos ou não.
+                    # O MESMO zoom com PSM 6 (bloco único de texto) recupera
+                    # CNPJ, razão social e CEP do prestador, além da grade de
+                    # valores (Base de Cálculo/Alíquota/ISS/Líquido) por
+                    # completo. Como PSM 6 não é bom nem ruim de forma
+                    # universal (já visto em outros achados deste layout),
+                    # a troca só ocorre quando `_score_ocr_text` (termos
+                    # fiscais + números em formato de moeda) realmente
+                    # pontuar melhor que a leitura padrão já usada como
+                    # `best_text` — preserva o comportamento validado nas
+                    # notas onde o PSM padrão já é suficiente.
+                    try:
+                        img_psm6 = img.rotate(-best_angle, expand=True) if best_angle else img
+                        texto_psm6 = pytesseract.image_to_string(img_psm6, lang='por', config='--psm 6')
+                        if self._score_ocr_text(texto_psm6) > self._score_ocr_text(best_text):
+                            best_text = texto_psm6
+                    except Exception:
+                        pass
+
                     # Cópia do texto ANTES de qualquer recorte Salvador-específico
                     # prepender algo — usada só pelo gatilho da marca d'água mais
                     # abaixo (ver comentário lá), que precisa avaliar o texto REAL
@@ -11203,8 +11286,19 @@ class SPPdfExtractor:
                 crop = img.crop((int(w * 0.60), 0, w, int(h * 0.16)))
                 return pytesseract.image_to_string(crop, lang='por', config=f'--psm {psm}')
 
+            # Achado real 2026-08-26 (nota nº 00024910/BDP LOGÍSTICA INTEGRADA
+            # DE RESÍDUOS): nem sempre existe uma maioria ESTRITA entre as 4
+            # amostras originais — aqui (3.0,6)/(4.5,6)/(6.0,6) convergem em
+            # 2 leituras erradas DIFERENTES e só (8.0,4) acerta, uma
+            # "maioria" de 1/4 que nem chega a ser plural. PSM 4 (colunas)
+            # nesta faixa de zoom (7x-9x) se mostrou consistentemente mais
+            # confiável que PSM 6 pra esta caixa nesta nota — testado à
+            # parte contra a imagem real, (7.0,4) e (9.0,4) também acertam
+            # "00024910" onde (3.0,6)/(4.5,6)/(6.0,6) erram. Adicionadas como
+            # amostras GENUINAMENTE novas (zoom+PSM ainda não tentados),
+            # não repetições do mesmo ponto.
             candidatos = []
-            for zoom, psm in ((3.0, 6), (4.5, 6), (6.0, 6), (8.0, 4)):
+            for zoom, psm in ((3.0, 6), (4.5, 6), (6.0, 6), (7.0, 4), (8.0, 4), (9.0, 4)):
                 texto = _tentativa(zoom, psm)
                 m = re.search(r'N[uú]mero\s+da\s+Nota\D{0,20}(\d{4,10})', texto, re.IGNORECASE)
                 if m:
@@ -11214,7 +11308,12 @@ class SPPdfExtractor:
                 return ""
             contagem = Counter(candidatos)
             valor, votos = contagem.most_common(1)[0]
-            if votos > len(candidatos) / 2:
+            # Relaxado de maioria ESTRITA (`>`) pra pelo menos METADE
+            # (`>=`) — com 6 amostras (3 famílias de zoom/PSM diferentes),
+            # uma pluralidade de 3/6 já é um sinal mais forte que recair no
+            # 1º candidato (historicamente o zoom mais baixo/menos confiável
+            # da lista) só porque nenhuma leitura bateu OUTRAS metade junta.
+            if votos >= len(candidatos) / 2:
                 return valor
             return candidatos[0]
         except Exception:
