@@ -104,6 +104,7 @@ LAYOUT_GUARULHOS = 'guarulhos_sp'  # Prefeitura Municipal de Guarulhos/SP (plata
 LAYOUT_CAMACARI_SISLOC = 'camacari_sisloc'  # Camaçari/BA via plataforma SISLOC (sisloc.com) + "NFS-e Easy" da Benefix (webenefix.com.br) - PDF DIGITAL (não escaneado), mas o gerador do PDF desenha rótulos e valores como blocos de texto separados; o `pdfminer.extract_text()` padrão despeja TODOS os valores concatenados num blob único no fim do documento, sem relação de proximidade com o rótulo. Corrigido reconstruindo o texto por COORDENADA de caractere (`_reconstruir_texto_por_coordenadas`: agrupa `LTChar` por linha/Y, ordena por X dentro da linha) em vez de usar a ordem de leitura padrão do pdfminer - técnica nova, para PDF digital com ordem de leitura quebrada (distinta de OCR/coluna-intercalada). Detectado pela marca da PLATAFORMA (SISLOC/Benefix), não pelo município, para não colidir com os Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2) nem futuras notas de outras plataformas no mesmo município. Município de prestação vem com código IBGE explícito na própria nota ("Cód. de Município IBGE: ..."). Item de tributação "9901" não é código LC116 válido (mesma convenção de Barreiras/PJB) - mapeado para "0000"
 LAYOUT_MONTE_SANTO = 'monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, em texto livre "OBJETO DO CONTRATO"/"OBRA: ..., <CIDADE>/<UF>") - `municipio_incidencia_override` implementado (revisão 2026-08-10): a linha "OBRA:" sempre termina no formato ", <CIDADE>/<UF>", âncora confiável o suficiente; incidência do ISSQN vai para o município da obra quando presente, senão permanece no do prestador (Monte Santo)
 LAYOUT_NFCOM_SALVADOR = 'nfcom_salvador'  # Empresa Baiana de Jornalismo S.A. (EBJ, CNPJ 14.583.041/0001-62, Salvador/BA) - NFCom (Nota Fiscal de Serviço de Comunicação Eletrônica), PDF DIGITAL, template nacional hospedado no portal SVRS (dfe-portal.svrs.rs.gov.br/NfCom), estruturalmente distinto de uma NFS-e ABRASF: tributado por ICMS (não ISS), chave de acesso de 44 dígitos própria do padrão NFCom/NF-e mod. 62. Detectado pelo CNPJ do emitente (específico, não pela marca genérica do documento - decisão do usuário, para não capturar futuras NFCom de outros emitentes/UFs sem revisão). Precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (a chave de acesso desta nota também casaria esse rótulo, e o parser DANFSe não serve pra ela - achado real, nota EBJ nº 624, nov/2025: caía no LAYOUT_NACIONAL e saía com o valor zerado, ItemListaServico incompatível e o tomador com a razão social vazada do rótulo "Nº TELEFONE"). Prestador é FIXO (mesmo emitente sempre, endereço da própria EBJ hardcoded - mesmo racional de LAYOUT_PJB_LOCACAO/LAYOUT_FF_LOCACAO); tomador extraído dinamicamente do bloco "NOME DO DESTINATÁRIO"/"END."/"CPF/CNPJ" (rótulos e valores em ordem PARCIALMENTE invertida: o valor do endereço vem ANTES do valor da razão social, apesar do rótulo "NOME DO DESTINATÁRIO" vir primeiro). ValorServicos/ValorLiquidoNfse = "TOTAL A PAGAR (R$)"; BaseCalculo/Aliquota/ValorIss mantidos em 0,00 propositalmente (decisão do usuário: nota tributada por ICMS, não por ISS - sinalizado em `Nfse.avisos`, não fabricado). ItemListaServico/CodigoTributacaoMunicipio = "0000" (não é item real da LC116, mesma convenção de não-incidência já usada em Barreiras/CAMACARI_SISLOC)
+LAYOUT_NFCOM_RLGR = 'nfcom_rlgr'  # Rlgr Telefonia LTDA (CNPJ 57.675.896/0001-26, Barueri/SP) - NFCom (Nota Fiscal Fatura de Serviços de Comunicação Eletrônica), PDF DIGITAL, MESMO template nacional do portal SVRS já usado por LAYOUT_NFCOM_SALVADOR ("NOTA FISCAL FATURA DE SERVIÇOS DE COMUNICAÇÃO ELETRÔNICA", chave de acesso de 44 dígitos modelo 62), mas de um emitente DIFERENTE — gated pelo CNPJ deste emitente especificamente (mesma decisão do usuário aplicada à EBJ: não capturar automaticamente futuras NFCom de outros emitentes/UFs sem revisão dedicada). Achado real, nota nº 7271 (SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA ADPE, R$71,37 de Serviço de Terminação de Tráfego de Voz/STTV): sem esta detecção a nota caía no fallback genérico e saía com o CNPJ do tomador IGUAL ao do prestador, a razão social do tomador vazada do rótulo "REFERÊNCIA (ANO/MÊS)", valores todos zerados e o Código de Verificação em branco. Prestador é FIXO (mesmo emitente sempre, endereço do próprio letterhead hardcoded - mesmo racional de LAYOUT_NFCOM_SALVADOR/PJB_LOCACAO/FF_LOCACAO), município Barueri/SP (já em IBGEResolver.KNOWN_CITIES). Tomador extraído dinamicamente do bloco "NOME:"/"CPF/CNPJ:"/"ENDEREÇO:" - ao contrário do NFCOM_SALVADOR, aqui rótulo e valor NÃO vêm invertidos (ordem direta rótulo→valor) e o ENDEREÇO traz o CEP embutido inline ("Barris , 40070190 - Salvador, BA"), então o CEP do tomador é extraído de verdade (não fica no default "00000000" como no NFCOM_SALVADOR, que não imprime esse campo). ValorServicos/ValorLiquidoNfse = "TOTAL A PAGAR"; BaseCalculo/Aliquota/ValorIss mantidos em 0,00 propositalmente (tributado por ICMS, não ISS - mesmo aviso do NFCOM_SALVADOR). ItemListaServico/CodigoTributacaoMunicipio = "0000" (mesma convenção de não-incidência do NFCOM_SALVADOR).
 LAYOUT_SAO_JOSE_SC = 'sao_jose_sc'  # Prefeitura Municipal de São José/SC ("PREFEITURA MUNICIAL DE SÃO JOSÉ" - erro de digitação real do próprio gerador do PDF, "MUNICIAL" em vez de "MUNICIPAL", preservado como está impresso), NFS-e tributada, PDF DIGITAL (sem OCR). Achado real: nota nº 348301, INTELBRAS S/A - IND DE TEL ELET BRA (CNPJ 82.901.000/0001-27, matriz em São José/SC) -> SINDICATO DOS DELEGADOS DE POLICIA (Salvador/BA). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com um padrão de reordenação PRÓPRIO (distinto do "labels dumped, depois values dumped" de Monte Santo/Guarulhos): razão social + nome fantasia vêm ANTES do bloco de rótulos (Nome Fantasia/Nome-Razão Social/CPF-CNPJ/Endereço/Complemento/Município/E-mail); os 5 valores restantes vêm DEPOIS do bloco de rótulos, mas com "Município" REALOCADO para o início da sequência (ordem real: Município, CPF/CNPJ, Endereço[+Complemento na mesma sub-linha], E-mail) - sem tratamento dedicado, o parser genérico atribuiria o Município ao CPF/CNPJ e vice-versa. CEP/UF do PRESTADOR saem DESLOCADOS para depois do cabeçalho "TOMADOR DE SERVIÇOS" (artefato de leitura em 2 colunas do pdfminer, mesma classe geral já vista em outros layouts digitais). Serviço de licenciamento de software (item LC116 "1.05" -> "0105"); discriminação = nome do plano/produto faturado ("LIC SOFT CLOUD-STANDARD 36X"), não o texto legal do item. Sem Optante Simples Nacional (prestador é empresa de grande porte)
 LAYOUT_BIOCONTROL = 'biocontrol_dedetizadora'  # BIO CONTROL DESINSETIZADORA LTDA (CNPJ 04.811.846/0001-62, Lauro de Freitas/BA) - template próprio "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO" (distinto tanto de LAYOUT_LAURO_FREITAS, a Prefeitura oficial, quanto de LAYOUT_PASSWORD_ENOTAS, a plataforma eNotas Gateway - 3º sistema diferente no MESMO município). PDF escaneado (OCR); blocos "Dados do Prestador"/"Dados do Tomador" em grade limpa de 2 linhas por campo (rótulo, depois valor) - ao contrário do padrão "prestador fixo" de outras faturas de locação (PJB/F&F/LMR/NFCom Salvador), aqui a extração é DINÂMICA para as duas entidades, pois o texto já sai limpo o bastante em zoom 3x padrão. Duas grades densas (linha "Tributação de Serviços" com o Código LC 116, e a linha dupla "Tributos Federais"/"Impostos sobre serviços ISSQN") saem CORROMPIDAS na leitura de página inteira (Código LC 116 "7.13" vira "743"; PIS/COFINS/IR saem com os valores trocados) - recuperadas por um recorte dedicado em zoom 8x de cada linha (`_ocr_recut_biocontrol`), validado contra a imagem real da nota nº 36345 (BONI TRANSPORTES -> tomador, R$5.200,00, dedetização/controle de pragas). Serviço mapeado para o item LC116 "7.13" (Dedetização/desinsetização/controle de pragas urbanas), confirmado tanto pela discriminação ("TERMONEBULIZAÇÃO... CONTROLE DE BARATAS, MOSCAS, FORMIGAS... E ROEDORES") quanto pelo recorte dedicado do Código LC 116. ISS não retido pelo tomador (pago pelo prestador via guia própria) mas o valor ainda sai informado na nota (5% = R$260,00) - extraído do recorte, não fabricado nem zerado.
 LAYOUT_DANFE_PRODUTO = 'danfe_produto'  # NF-e Modelo 55 (DANFE Estadual) - documento de PRODUTO/mercadoria tributado por ICMS/IPI, estruturalmente DIFERENTE de qualquer NFS-e (não tem "discriminação"/"código de serviço" único - tem tabela de N itens com NCM/CFOP, grade de ICMS e bloco "TRANSPORTADOR/VOLUMES TRANSPORTADOS"). Retorna um objeto `NfeProduto` em vez de `Nfse` (ver `parse()`/`_parse_danfe_produto`). Detecção ESTRUTURAL (não gated a nenhum emitente específico - decisão do usuário, pois notas de compra de mercadoria vêm de fornecedores variados, ao contrário do padrão "prestador fixo" de faturas de locação recorrentes): exige a combinação "DANFE" + "Documento Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA" - assinatura mandada pelo padrão nacional SEFAZ/CONFAZ para TODO Modelo 55, ausente de qualquer NFS-e. Checada bem no TOPO de `_detect_layout`/`_detect_layout_page`, antes até do check da DANFSe Nacional: o rótulo genérico "FATURA/DUPLICATA" (presente em qualquer DANFE) colidia com a marca da Localiza (`LAYOUT_LOCALIZA`), e "CHAVE DE ACESSO" colidiria com o fallback amplo da DANFSe Nacional - achado real ao revisar a nota nº 52.136 (GRAN COFFEE COM. LOC. E SERVICOS -> SINDICATO DOS DELEGADOS DE POLICIA, venda de café, R$595,00): sem esta detecção no topo, a nota caía inteira em `LAYOUT_LOCALIZA` e saía com tomador não identificado, valor zerado e o prestador hardcoded errado ("LOCALIZA RENT A CAR S/A" - nome de OUTRO emitente fixo). Emitente extraído do bloco livre (letterhead) impresso entre o canhoto/recibo e o box "DANFE" (CNPJ/IE vêm de rótulos isolados na grade, não do letterhead); destinatário da grade "DESTINATÁRIO/REMETENTE" (rótulos padronizados nacionalmente); tabela de itens modelada como lista (`ItemProduto`) - nesta nota só há 1 item, mas o parser da linha da tabela generaliza para N linhas repetidas. Grade "CÁLCULO DE IMPOSTO" tem um quirk de ordem: o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de rótulos) tem seu VALOR deslocado para o FIM do 2º bloco de valores (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) - mesma família geral de "labels dumped, depois values dumped" já vista em várias NFS-e, faceta nova aqui. Chave de acesso é a REAL do documento (extraída do código de barras/texto, não gerada por checksum como no `NfeTransformer` workaround) - ver `src/transformers/nfe_produto_transformer.py`.
@@ -128,6 +129,8 @@ _LABELS_TOMADOR = [
     'TOMADOR DE SERVIÇOS', 'Tomador de Serviço', 'Dados do Tomador de Serviço',
     'Tomador de Serviços',     # Portal Nacional (plural)
     'Cliente',                 # Portal Nacional / DANFSe usa 'Cliente'
+    'Dados do Destinatário',   # NFCom (portal SVRS) usa 'Destinatário', não 'Tomador'
+    'DADOS DO DESTINATÁRIO',
 ]
 _LABELS_INTERMEDIARIO = [
     'Dados do Intermediário de Serviços', 'Intermediário do Serviço',
@@ -526,6 +529,19 @@ class SPPdfExtractor:
         # outros emitentes/UFs sem revisão dedicada.
         if re.search(r'14\.?583\.?041[/.]?0001-?62', t) and re.search(r'NOTA\s+FISCAL\s+FATURA\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', t, re.IGNORECASE):
             return LAYOUT_NFCOM_SALVADOR
+        # NFCom da Rlgr Telefonia LTDA - mesmo template nacional (mesma marca
+        # acima), emitente DIFERENTE, gate ESPECÍFICO do CNPJ pela mesma
+        # decisão do usuário (ver LAYOUT_NFCOM_RLGR). Marca do título tolera
+        # "NOTA FISCAL" ausente/deslocado antes de "FATURA DE SERVIÇOS..."
+        # (achado real, nota nº 29377 escaneada: o recorte de OCR em PSM 4
+        # usado para separar as 2 colunas do cabeçalho - ver `_ocr_page` -
+        # quebra a própria palavra "FISCAL" ao meio, "NOTA FI" numa banda e
+        # "SCAL FATURA DE SERVIÇOS..." bem mais adiante, com todo o resto do
+        # cabeçalho no meio) - a cauda "FATURA DE SERVIÇOS DE COMUNICAÇÃO
+        # ELETRÔNICA" sozinha, junto do CNPJ específico do emitente, já é
+        # marca inequívoca o bastante.
+        if re.search(r'57\.?675\.?896[/.]?0001-?26', t) and re.search(r'(?:NOTA\s+FISCAL\s+FATURA|FATURA)\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', t, re.IGNORECASE):
+            return LAYOUT_NFCOM_RLGR
         # São José/SC: "PREFEITURA MUNICIAL DE SÃO JOSÉ" - "MUNICIAL" é erro de
         # digitação real do gerador do PDF desta prefeitura (não "MUNICIPAL"),
         # tolerado explicitamente. Negative lookahead em "DOS"/"DO" logo após
@@ -777,6 +793,19 @@ class SPPdfExtractor:
         # outros emitentes/UFs sem revisão dedicada.
         if re.search(r'14\.?583\.?041[/.]?0001-?62', t) and re.search(r'NOTA\s+FISCAL\s+FATURA\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', t, re.IGNORECASE):
             return LAYOUT_NFCOM_SALVADOR
+        # NFCom da Rlgr Telefonia LTDA - mesmo template nacional (mesma marca
+        # acima), emitente DIFERENTE, gate ESPECÍFICO do CNPJ pela mesma
+        # decisão do usuário (ver LAYOUT_NFCOM_RLGR). Marca do título tolera
+        # "NOTA FISCAL" ausente/deslocado antes de "FATURA DE SERVIÇOS..."
+        # (achado real, nota nº 29377 escaneada: o recorte de OCR em PSM 4
+        # usado para separar as 2 colunas do cabeçalho - ver `_ocr_page` -
+        # quebra a própria palavra "FISCAL" ao meio, "NOTA FI" numa banda e
+        # "SCAL FATURA DE SERVIÇOS..." bem mais adiante, com todo o resto do
+        # cabeçalho no meio) - a cauda "FATURA DE SERVIÇOS DE COMUNICAÇÃO
+        # ELETRÔNICA" sozinha, junto do CNPJ específico do emitente, já é
+        # marca inequívoca o bastante.
+        if re.search(r'57\.?675\.?896[/.]?0001-?26', t) and re.search(r'(?:NOTA\s+FISCAL\s+FATURA|FATURA)\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', t, re.IGNORECASE):
+            return LAYOUT_NFCOM_RLGR
         # São José/SC: "PREFEITURA MUNICIAL DE SÃO JOSÉ" - "MUNICIAL" é erro de
         # digitação real do gerador do PDF desta prefeitura (não "MUNICIPAL"),
         # tolerado explicitamente. Negative lookahead em "DOS"/"DO" logo após
@@ -1294,6 +1323,22 @@ class SPPdfExtractor:
             m = re.search(r'DATA\s+DE\s+EMISS[AÃ]O\s*:\s*\n+\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_NFCOM_RLGR:
+            # "DATA DE EMISSÃO: 05/01/2026 11:10:01" (rótulo, data e hora
+            # completa na MESMA linha, ao contrário do NFCOM_SALVADOR acima,
+            # onde rótulo e valor vêm em linhas separadas e sem hora).
+            # Decisão do usuário: ancorar ESTRITAMENTE no rótulo "DATA DE
+            # EMISSÃO", nunca no "PERÍODO: 01/12/2025 a 31/12/2025" (intervalo
+            # de faturamento, impresso poucas linhas acima na mesma nota) -
+            # datas de fato diferentes na nota real nº 7271 (período começa
+            # em 01/12, emissão em 05/01 do mês seguinte), então usar a data
+            # errada não passaria despercebido, mas o rótulo nunca é
+            # considerado como fonte de Data de Emissão.
+            m = re.search(r'DATA\s+DE\s+EMISS[AÃ]O\s*:\s*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
         if self.layout == LAYOUT_SAO_JOSE_SC:
@@ -2544,6 +2589,11 @@ class SPPdfExtractor:
             # incorreto para um serviço de comunicação).
             return "0000"
 
+        if self.layout == LAYOUT_NFCOM_RLGR:
+            # Mesma convenção de não-incidência do NFCOM_SALVADOR - NFCom é
+            # tributada por ICMS, sem item real da LC 116 aplicável.
+            return "0000"
+
         if self.layout == LAYOUT_SALVADOR:
             # Achado real 2026-08-25 (nota nº 2419/LUNITECK, pág.1
             # catastroficamente degradada — mesmo scan onde Número/CNPJ/
@@ -2894,6 +2944,17 @@ class SPPdfExtractor:
                     return chave
             return 'NFCOM'
 
+        if self.layout == LAYOUT_NFCOM_RLGR:
+            # Mesmo padrão nacional de chave de acesso do NFCOM_SALVADOR
+            # acima, mas impressa sem espaços entre os grupos de 4 dígitos
+            # nesta nota ("CHAVE DE ACESSO:\n\n3526015767589600012662...").
+            m = re.search(r'CHAVE\s+DE\s+ACESSO\s*[:\s]*([\d\s]{44,60})', t, re.IGNORECASE)
+            if m:
+                chave = re.sub(r'\D', '', m.group(1))
+                if len(chave) == 44:
+                    return chave
+            return 'NFCOM'
+
         if self.layout == LAYOUT_SAO_JOSE_SC:
             # "Código de Verificação\n\n83271301261209292908" — mesmo valor do
             # campo "Identificador" no topo da nota. Distinto do "Código de
@@ -3226,6 +3287,14 @@ class SPPdfExtractor:
                 return self._extrair_prestador_nfcom_salvador()
             else:
                 return self._extrair_tomador_nfcom_salvador(t)
+
+        if self.layout == LAYOUT_NFCOM_RLGR:
+            if is_intermediario:
+                return None
+            if is_prestador:
+                return self._extrair_prestador_nfcom_rlgr()
+            else:
+                return self._extrair_tomador_nfcom_rlgr(t)
 
         if self.layout == LAYOUT_SAO_JOSE_SC:
             if is_intermediario:
@@ -5395,6 +5464,92 @@ class SPPdfExtractor:
         # do destinatário (achado real, nota nº 624) - mantido no default
         # ("00000000") em vez de arriscar casar dígitos de outro campo
         # próximo (chave de acesso, número da nota, CNPJ) como se fossem CEP.
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+        return Entidade(
+            cnpj_cpf=cnpj_tom,
+            razao_social=nome_tom,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+        )
+
+    def _extrair_prestador_nfcom_rlgr(self) -> Entidade:
+        """Prestador FIXO (emissor único gated por CNPJ): Rlgr Telefonia
+        LTDA, Barueri/SP. Endereço vem do próprio letterhead do template
+        NFCom, estável entre notas — mesmo racional de "prestador fixo" já
+        usado em LAYOUT_NFCOM_SALVADOR/PJB_LOCACAO/FF_LOCACAO."""
+        return Entidade(
+            cnpj_cpf="57675896000126",
+            razao_social="RLGR TELEFONIA LTDA",
+            endereco=Endereco(
+                logradouro="ALAMEDA RIO NEGRO",
+                numero="503",
+                bairro="ALPHAVILLE CENTRO INDUSTRIAL E EMPRESARIAL",
+                codigo_municipio="3505708",
+                municipio="BARUERI",
+                uf="SP",
+                cep="06454000",
+            ),
+        )
+
+    def _extrair_tomador_nfcom_rlgr(self, t: str) -> Entidade:
+        """Extrai o destinatário (tomador) de uma NFCom da Rlgr Telefonia.
+
+        Bloco "DADOS FISCAIS" com rótulos "NOME:"/"CPF/CNPJ:"/"ENDEREÇO:" em
+        ordem DIRETA (rótulo e valor não vêm invertidos, ao contrário do
+        NFCOM_SALVADOR). O valor pode transbordar para uma 2ª linha física
+        antes da linha em branco que separa os campos (achado real, nota nº
+        7271: "NOME: SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA\\nBAHIA
+        ADPE" e "ENDEREÇO: Rua Direita da Piedade 11 Barris , 40070190 -\\n
+        Salvador, BA") — cada regex de campo captura até a linha em branco
+        (`\\n\\s*\\n`), não só até a próxima quebra de linha, e as 2 linhas
+        físicas são unidas com espaço.
+        """
+        cnpj_tom, nome_tom = "00000000000000", "Tomador Não Identificado"
+        logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
+        municipio, uf, cep = "Não informado", "BA", "00000000"
+
+        m_nome = re.search(r'NOME\s*:\s*(.+?)\n\s*\n', t, re.IGNORECASE | re.DOTALL)
+        if m_nome:
+            nome_tom = re.sub(r'\s+', ' ', m_nome.group(1)).strip() or nome_tom
+
+        m_cnpj = re.search(r'CPF\s*/\s*CNPJ\s*:\s*([\d./-]{11,18})', t, re.IGNORECASE)
+        if m_cnpj:
+            candidato = re.sub(r'\D', '', m_cnpj.group(1))
+            # Valida o checksum antes de aceitar - um scan degradado pode
+            # trocar 1 dígito no MEIO do CNPJ sem quebrar a formatação
+            # (achado real, nota nº 29377: "73353696000137" em vez de
+            # "73393696000137", dígito 4 trocado, ainda com 14 dígitos e
+            # formato plausível). Melhor cair no sentinela do que propagar um
+            # CNPJ tecnicamente inválido silenciosamente.
+            if self._validate_cnpj_cpf(candidato):
+                cnpj_tom = candidato
+
+        m_end = re.search(r'ENDERE[ÇC]O\s*:\s*(.+?)\n\s*\n', t, re.IGNORECASE | re.DOTALL)
+        if m_end:
+            endereco_val = re.sub(r'\s+', ' ', m_end.group(1)).strip()
+            # "<logradouro> <número> <bairro> , <CEP> - <Município>, <UF>"
+            m_bloco = re.match(r'^(.*?),\s*(\d{5}-?\d{3})\s*-\s*(.*?),\s*([A-Z]{2})$', endereco_val)
+            if m_bloco:
+                livre = m_bloco.group(1).strip()
+                cep = re.sub(r'\D', '', m_bloco.group(2))
+                municipio = m_bloco.group(3).strip()
+                uf = m_bloco.group(4).strip()
+                m_num = re.match(r'^(.*?)\s+(\d+)\s+(.*)$', livre)
+                if m_num:
+                    logradouro = m_num.group(1).strip() or logradouro
+                    numero = m_num.group(2).strip() or numero
+                    bairro = m_num.group(3).strip() or bairro
+                else:
+                    logradouro = livre or logradouro
+
         mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
 
         return Entidade(
@@ -10073,6 +10228,35 @@ class SPPdfExtractor:
                 valor_csll=csll,
             )
 
+        if self.layout == LAYOUT_NFCOM_RLGR:
+            # "TOTAL A PAGAR:\n\nR$ 71,37" (sem "(R$)" no rótulo, distinto do
+            # NFCOM_SALVADOR). Mesma decisão do usuário: documento tributado
+            # por ICMS, não ISS - base_calculo/aliquota/valor_iss ficam
+            # propositalmente em 0,00 (a grade "BC ICMS e FCP"/"ALÍQ ICMS +
+            # FCP"/"VALOR ICMS + FCP" da nota real nº 7271 sai com R$0,00/
+            # 0,00% em todo o item, provável isenção do serviço STTV) - o
+            # aviso explicativo é adicionado em `parse_multiple`.
+            m_total = re.search(r'TOTAL\s+A\s+PAGAR\s*:\s*\n+\s*R?\$?\s*([\d.,]+)', t, re.IGNORECASE)
+            if not m_total:
+                # Fallback pro recorte dedicado de contraste (ver
+                # `_ocr_recut_total_pagar_rlgr`) - achado real, nota nº
+                # 29377: nesse recorte estreito o "A" às vezes sai "À", e a
+                # data de VENCIMENTO vaza entre o rótulo e o valor ("TOTAL À
+                # PAGAR:\n25/07/2026\n\nR$71,37"), quebrando o padrão estrito
+                # acima (que exige só espaço entre rótulo e valor). Tolerante
+                # a qualquer conteúdo entre os dois, desde que "R$" apareça
+                # antes do valor.
+                m_total = re.search(r'TOTAL\s+[ÀA]\s+PAGAR\s*:[\s\S]{0,80}?R\$\s*([\d]{1,3}(?:[.,]\d{2})?)', t, re.IGNORECASE)
+            v = self._parse_valor(m_total.group(1)) if m_total else 0.0
+
+            return Valores(
+                valor_servicos=v,
+                valor_liquido_nfse=v,
+                base_calculo=0.0,
+                aliquota=0.0,
+                valor_iss=0.0,
+            )
+
         if self.layout == LAYOUT_SAO_JOSE_SC:
             # Grade "valores dumped, depois labels dumped" (ordem invertida em
             # relação aos demais layouts): 6 números seguidos vêm ANTES dos
@@ -11159,6 +11343,54 @@ class SPPdfExtractor:
                     if recut_telecom.strip():
                         best_text = f"{recut_telecom}\n{best_text}"
 
+                # NFCom da Rlgr Telefonia (`nfcom_rlgr`): o template imprime 2
+                # blocos lado a lado no cabeçalho (esquerda: NOME/CPF-CNPJ/
+                # ENDEREÇO/INSCRIÇÃO/CÓDIGO DO CLIENTE do destinatário; direita:
+                # NOTA FISCAL Nº/DATA DE EMISSÃO/PROTOCOLO/CHAVE DE ACESSO) - o
+                # PSM padrão (automático) FUNDE as 2 colunas linha a linha
+                # (achado real, nota nº 29377: "NOME: SINDICATO...DO ESTADO
+                # NOTA FISCAL Nº; 000029377" numa linha só), vazando a coluna
+                # direita pra dentro da razão social do tomador e quebrando a
+                # extração de CNPJ/endereço/chave de acesso (CNPJ saía com 1
+                # dígito trocado, endereço "Não informado", Código de
+                # Verificação caindo no sentinela "NFCOM"). `--psm 4` ("assume
+                # coluna única de texto") lê cada coluna por completo antes de
+                # trocar, separando-as corretamente - testado contra a página
+                # real em 6 combinações de zoom/PSM, só essa produz as duas
+                # colunas limpas. Troca (não prepend, ao contrário do Telecom/
+                # F&F acima) porque aqui a leitura inteira fica mais limpa, não
+                # só um trecho específico ausente. `_score_ocr_text` empata
+                # entre as duas leituras nesta nota (10 vs 10 - o heurístico
+                # conta termos fiscais e números em formato de moeda, nenhum
+                # dos dois pesa a separação de colunas em si), então o
+                # critério é "pelo menos empatar" (`>=`), não "pontuar
+                # estritamente melhor" (`>`) como nos demais achados deste
+                # tipo - validado contra a nota real que o PSM 4 nunca perde
+                # conteúdo que o padrão tinha, só reorganiza as colunas
+                # corretamente.
+                if re.search(r'57\.?675\.?896[/.]?0001-?26', best_text) and re.search(r'NOTA\s+FISCAL\s+FATURA\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', best_text, re.IGNORECASE):
+                    try:
+                        img_psm4 = img.rotate(-best_angle, expand=True) if best_angle else img
+                        texto_psm4 = pytesseract.image_to_string(img_psm4, lang='por', config='--psm 4')
+                        if self._score_ocr_text(texto_psm4) >= self._score_ocr_text(best_text):
+                            best_text = texto_psm4
+                    except Exception:
+                        pass
+
+                    # "TOTAL A PAGAR"/"VENCIMENTO"/"REFERÊNCIA (ANO/MÊS)"
+                    # impressas em cinza MUITO claro (achado real, nota
+                    # 29377) - nenhuma leitura de página inteira (nenhum
+                    # zoom/PSM, nem binarização em threshold usual) recupera
+                    # esse texto, mas ele É legível a olho nu na imagem
+                    # renderizada. Recorte dedicado com autocontraste +
+                    # threshold alto (ver `_ocr_recut_total_pagar_rlgr`)
+                    # recupera "R$71,37" de forma consistente. Prependado
+                    # (mesmo racional do Telecom/F&F): complementa, não
+                    # substitui, o restante do texto já lido.
+                    recut_total = self._ocr_recut_total_pagar_rlgr(page)
+                    if recut_total.strip():
+                        best_text = f"{recut_total}\n{best_text}"
+
                 # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): a leitura
                 # padrão (zoom 3x) já lê bem os blocos de entidade e o resumo
                 # em texto livre, mas embaralha a linha "Tributação de
@@ -11250,6 +11482,41 @@ class SPPdfExtractor:
             pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_total_pagar_rlgr(page) -> str:
+        """Recorta a faixa "REFERÊNCIA (ANO/MÊS)"/"VENCIMENTO"/"TOTAL A
+        PAGAR" da NFCom da Rlgr Telefonia com contraste realçado.
+
+        Achado real (nota nº 29377): essas 3 caixas são impressas em CINZA
+        MUITO CLARO (visível a olho nu na imagem renderizada, mas nenhuma
+        combinação de zoom/PSM do OCR padrão lê nada ali - nem sequer com
+        binarização em thresholds usuais, 120-180, porque o cinza do texto
+        fica ACIMA desses limiares e é classificado como fundo/branco).
+        `ImageOps.autocontrast` estica o histograma da própria faixa pro
+        range completo 0-255 (o cinza claro do texto passa a ficar bem mais
+        escuro que o fundo branco puro), e um threshold ALTO (230, não os
+        120-180 já tentados) finalmente separa esse texto do fundo -
+        validado contra a imagem real: "TOTAL À PAGAR:...R$71,37" sai
+        consistente em 3 PSMs diferentes (4, 6, 11) nesse threshold.
+
+        Faixa fixa em 42%-48% da altura da página (calibrado contra esta
+        nota - mesma posição visual das 3 caixas, logo abaixo de "PÁGINA:
+        1/1" e antes da tabela "ITENS DA NOTA FISCAL")."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image, ImageOps
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0))
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples).convert('L')
+            w, h = img.size
+            faixa = img.crop((0, int(h * 0.42), w, int(h * 0.48)))
+            realcada = ImageOps.autocontrast(faixa, cutoff=1)
+            binarizada = realcada.point(lambda p: 0 if p < 230 else 255)
+            return pytesseract.image_to_string(binarizada, lang='por', config='--psm 4')
         except Exception:
             return ""
 
@@ -13298,7 +13565,7 @@ class SPPdfExtractor:
             avisos.append("Dados do tomador não identificados")
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
-        if self.layout == LAYOUT_NFCOM_SALVADOR:
+        if self.layout in (LAYOUT_NFCOM_SALVADOR, LAYOUT_NFCOM_RLGR):
             avisos.append(
                 "Documento tributado por ICMS (NFCom - Nota Fiscal de Comunicação "
                 "Eletrônica), não sujeito a ISS - campos de Base de Cálculo/"
