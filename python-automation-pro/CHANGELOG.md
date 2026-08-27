@@ -13,6 +13,18 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Novo layout — São Paulo/SP, SKYTEF (plataforma Qive) — `sp_skytef`**:
+  fatura de licenciamento de uso de software (SKYTEF SOLUÇÕES EM CAPTURA DE
+  TRANSAÇÕES LTDA, CNPJ 04.988.631/0001-11) caía inteira no fallback
+  `generico` (entidades trocadas/garbladas, valores zerados). Detectado só
+  pelo CNPJ do emitente (nunca pela marca "Qive", plataforma SaaS
+  compartilhada por outros emitentes). Prestador fixo; tomador dinâmico
+  tolerante ao rótulo "Nome / Nome Empresarial" deslocado ANTES do
+  cabeçalho de seção e à Competência impressa como valor órfão. Ver detalhe
+  completo em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#30f-são-paulosp--skytef-qive--sp_skytef).
+
 ## [1.4.1] - 2026-08-26
 
 ### Corrigido
