@@ -13,6 +13,14 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Adicionado
+
+- **Novo layout — NFCom Rlgr Telefonia (`nfcom_rlgr`)**: nota nº 7271 (SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA ADPE, R$71,37 de Serviço de Terminação de Tráfego de Voz/STTV) caía no fallback genérico e saía com o CNPJ do tomador igual ao do prestador, razão social do tomador vazada de um rótulo vizinho, valores zerados e Código de Verificação em branco. Mesmo template nacional NFCom (portal SVRS) já usado por `nfcom_salvador`, mas de um emitente diferente (Rlgr Telefonia LTDA, CNPJ 57.675.896/0001-26, Barueri/SP) — detecção gated especificamente por esse CNPJ, prestador fixo (letterhead hardcoded), tomador extraído dinamicamente (rótulos em ordem direta, ao contrário do nfcom_salvador; CEP do tomador extraído de verdade, pois esta nota o imprime inline no endereço). Valor via "TOTAL A PAGAR:"; Base de Cálculo/Alíquota/ISS mantidos em 0,00 (tributado por ICMS, não ISS) com aviso explicativo. Data de Emissão extraída por rótulo dedicado (data+hora na mesma linha, "DATA DE EMISSÃO: 05/01/2026 11:10:01"). Suíte 325→332 verdes; 7 testes novos em `tests/test_nfcom_rlgr.py`. Ver detalhes em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#27c-nfcom-rlgr-telefonia--nfcom_rlgr).
+
+### Corrigido
+
+- **`nfcom_rlgr` em nota ESCANEADA (nota nº 29377)**: o OCR de página inteira com PSM padrão funde os 2 blocos lado a lado do cabeçalho (dados do destinatário à esquerda, dados da nota à direita), vazando a coluna direita pra dentro da razão social do tomador ("...NOTA FISCAL Nº; 000029377..."), trocando 1 dígito do CNPJ do tomador no meio (checksum inválido, mas formato plausível) e derrubando endereço/Código de Verificação por completo. Corrigido com uma 2ª tentativa de OCR em `--psm 4` (separa as colunas corretamente), trocada quando pontua pelo menos empatado com a leitura padrão; a marca de detecção foi ampliada para tolerar a palavra "FISCAL" do título partida ao meio (efeito colateral do PSM 4); validação de checksum adicionada ao CNPJ do tomador (cai no sentinela em vez de propagar dígito trocado). Grade de valores ("TOTAL A PAGAR") sai impressa em cinza muito claro, acima dos limiares usuais de binarização — recuperada com um recorte dedicado (`_ocr_recut_total_pagar_rlgr`: autocontraste + limiar alto de 230), agora extraindo `R$71,37` corretamente em vez de 0,00. Suíte 332→339 verdes; 7 testes novos em `tests/test_nfcom_rlgr_escaneado.py`.
+
 ## [1.4.1] - 2026-08-26
 
 ### Corrigido
