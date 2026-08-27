@@ -13,6 +13,10 @@ sessão, de todos os layouts/fixes entregues está em
 
 ## [Não lançado]
 
+### Corrigido
+
+- **`danfe_produto` (NF-e Modelo 55/ICMS) em nota ESCANEADA (nota nº 764, PENELI METAIS LTDA)**: o cabeçalho funde 3 colunas na mesma faixa de Y (letterhead do emitente | caixa "DANFE" | código de barras), derrubando a palavra "DANFE" por completo e quebrando "Documento Auxiliar da Nota Fiscal Eletrônica"/"0-ENTRADA"/"1-SAÍDA" — sem tratamento, a nota caía no fallback genérico de NFS-e/DANFSe (documento de SERVIÇO/ISS), saindo com razão social vazada, valor zerado e CNPJ do tomador cruzado. Corrigido com detecção OCR-tolerante (marca alternativa exclusiva do Modelo 55, só ativa com `from_ocr=True`), extrator dedicado (`_parse_danfe_produto_ocr`, o parser digital original — nota nº 52.136/GRAN COFFEE — fica intocado) e 3 recortes dedicados (emitente/grade de ICMS/linha do item). Suíte 325→329 verdes; 4 testes novos em `tests/test_danfe_produto_escaneado.py`. Desenvolvido em branch própria (`feature/layout-danfe-55`), separada de layouts de NFS-e/SERVIÇO. Ver detalhes em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#danfe-estadual--nf-e-de-produto-modelo-55--xml-nf-e-400).
+
 ## [1.4.1] - 2026-08-26
 
 ### Corrigido

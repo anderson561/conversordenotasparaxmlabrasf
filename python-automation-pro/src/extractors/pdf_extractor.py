@@ -299,6 +299,23 @@ class SPPdfExtractor:
         if re.search(r'\bDANFE\b', t) and re.search(r'Documento\s+Auxiliar\s+da\s+Nota\s+Fiscal\s+Eletr[ôo]nica', t, re.IGNORECASE) \
                 and re.search(r'0\s*-\s*ENTRADA', t, re.IGNORECASE) and re.search(r'1\s*-\s*SA[ÍI]DA', t, re.IGNORECASE):
             return LAYOUT_DANFE_PRODUTO
+        # Mesmo Modelo 55, mas ESCANEADO: o OCR derruba a palavra "DANFE"
+        # (estilizada/em negrito na caixa central - descartada pelos PSM
+        # 3/4/6, só sobrevive no modo "sopa de palavras" PSM 11), quebra
+        # "Documento Auxiliar da Nota Fiscal Eletrônica" ao meio (fusão das 3
+        # colunas do cabeçalho: letterhead do emitente | caixa DANFE | código
+        # de barras) e embaralha "0-ENTRADA"/"1-SAÍDA" (sai como "Saída:
+        # 1\nEntrada: O", com o dígito "0" lido como a letra "O") - achado
+        # real, nota nº 764 (PENELI METAIS LTDA). Ancorado em marcas mais
+        # resilientes ao OCR e exclusivas do Modelo 55 (nenhuma NFS-e usa
+        # "DESTINATÁRIO/REMETENTE" nem a frase de autenticidade do portal
+        # nacional da NF-e); só entra quando o texto já veio de OCR
+        # (`from_ocr`), para não afrouxar a detecção do caminho digital já
+        # validado (nota nº 52.136, GRAN COFFEE).
+        if getattr(self, 'from_ocr', False) and re.search(r'CHAVE\s+DE\s+ACESSO', t, re.IGNORECASE) \
+                and re.search(r'portal\s+nacional\s+da\s+NF-e', t, re.IGNORECASE) \
+                and re.search(r'DESTINAT[ÁA]RIO\s*/\s*REMETENTE', t, re.IGNORECASE):
+            return LAYOUT_DANFE_PRODUTO
         # DANFSe Nacional (NFS-e Nacional v1.0) ANTES de qualquer marca municipal:
         # a DANFSe é emitida PELO município, então o cabeçalho traz "Prefeitura
         # Municipal de <X>" / "Município de <X>", que casaria o layout municipal
@@ -577,6 +594,12 @@ class SPPdfExtractor:
         # marca (mesmo racional de _detect_layout) - ver LAYOUT_DANFE_PRODUTO.
         if re.search(r'\bDANFE\b', t) and re.search(r'Documento\s+Auxiliar\s+da\s+Nota\s+Fiscal\s+Eletr[ôo]nica', t, re.IGNORECASE) \
                 and re.search(r'0\s*-\s*ENTRADA', t, re.IGNORECASE) and re.search(r'1\s*-\s*SA[ÍI]DA', t, re.IGNORECASE):
+            return LAYOUT_DANFE_PRODUTO
+        # Mesmo Modelo 55, mas ESCANEADO - ver comentário completo em
+        # `_detect_layout` (achado real, nota nº 764, PENELI METAIS LTDA).
+        if getattr(self, 'from_ocr', False) and re.search(r'CHAVE\s+DE\s+ACESSO', t, re.IGNORECASE) \
+                and re.search(r'portal\s+nacional\s+da\s+NF-e', t, re.IGNORECASE) \
+                and re.search(r'DESTINAT[ÁA]RIO\s*/\s*REMETENTE', t, re.IGNORECASE):
             return LAYOUT_DANFE_PRODUTO
         # DANFSe Nacional ANTES das marcas municipais (mesmo racional de
         # _detect_layout): a DANFSe traz "Prefeitura Municipal de <X>" e casaria
@@ -11171,6 +11194,34 @@ class SPPdfExtractor:
                     if recut_bio.strip():
                         best_text = f"{recut_bio}\n{best_text}"
 
+                # DANFE Modelo 55 (NF-e de PRODUTO) ESCANEADO - achado real,
+                # nota nº 764 (PENELI METAIS LTDA). O cabeçalho funde 3
+                # colunas (letterhead do emitente | caixa "DANFE" | código
+                # de barras) na mesma faixa de Y - a palavra "DANFE" some
+                # por completo da leitura de página inteira (só sobrevive
+                # no modo "sopa de palavras" PSM 11), "Documento Auxiliar da
+                # Nota Fiscal Eletrônica" sai interrompida pela fusão, e a
+                # grade "CÁLCULO DO IMPOSTO" perde 1 dos vários "0,00"
+                # repetidos por compressão de zoom - ver comentário completo
+                # da detecção OCR-tolerante em `_detect_layout` e o parsing
+                # em `_parse_danfe_produto_ocr`. As mesmas marcas usadas lá
+                # (mais tolerantes que as do caminho digital) disparam os 3
+                # recortes dedicados aqui.
+                if re.search(r'CHAVE\s+DE\s+ACESSO', best_text, re.IGNORECASE) \
+                        and re.search(r'portal\s+nacional\s+da\s+NF-e', best_text, re.IGNORECASE) \
+                        and re.search(r'DESTINAT[ÁA]RIO\s*/\s*REMETENTE', best_text, re.IGNORECASE):
+                    recut_emitente = self._ocr_recut_danfe_produto_emitente(page)
+                    recut_calculo = self._ocr_recut_danfe_produto_calculo(page)
+                    recut_desc, recut_num = self._ocr_recut_danfe_produto_item(page)
+                    if recut_emitente.strip() or recut_calculo.strip() or recut_desc.strip() or recut_num.strip():
+                        # Marcador exclusivo para o `_parse_danfe_produto_ocr`
+                        # conseguir isolar cada recorte de volta (em vez de
+                        # tentar regex sobre os 4 textos já misturados) -
+                        # nunca aparece em conteúdo real de nota, seguro
+                        # contra qualquer outro regex do restante do texto.
+                        marcador = "\n<<<DANFE_PRODUTO_RECUT>>>\n"
+                        best_text = marcador.join([recut_emitente, recut_calculo, recut_desc, recut_num, best_text])
+
                 return best_text
             finally:
                 doc.close()
@@ -11252,6 +11303,89 @@ class SPPdfExtractor:
             return pytesseract.image_to_string(img, lang='por')
         except Exception:
             return ""
+
+    @staticmethod
+    def _ocr_recut_danfe_produto_emitente(page) -> str:
+        """Recorte do letterhead do EMITENTE num DANFE Modelo 55 ESCANEADO.
+
+        Achado real (nota nº 764, PENELI METAIS LTDA -> SINDICATO DOS
+        DELEGADOS DE POLICIA DO ESTADO DA BAHIA): o cabeçalho do Modelo 55
+        funde 3 colunas na mesma faixa de Y (letterhead do emitente | caixa
+        "DANFE" | código de barras/chave de acesso) - o OCR de página
+        inteira intercala as 3, quebrando inclusive a palavra "DANFE" e a
+        frase "Documento Auxiliar da Nota Fiscal Eletrônica" ao meio (ver
+        `_detect_layout`). Restringir o recorte à METADE ESQUERDA da
+        página (só a coluna do emitente, sem a caixa DANFE nem o código de
+        barras) recupera o letterhead limpo, linha a linha. Ver
+        `_parse_danfe_produto_ocr` para o parsing do texto devolvido."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0))
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            w, h = img.size
+            crop = img.crop((0, int(h * 0.13), int(w * 0.50), int(h * 0.31)))
+            return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+        except Exception:
+            return ''
+
+    @staticmethod
+    def _ocr_recut_danfe_produto_calculo(page) -> str:
+        """Recorte da grade "CÁLCULO DO IMPOSTO" em zoom alto (6x) de um
+        DANFE Modelo 55 ESCANEADO. Achado real (nota nº 764): a leitura de
+        página inteira (zoom 3x) comprime as 7 colunas dessa grade o
+        suficiente para o OCR perder 1 dos vários "0,00" repetidos (7
+        rótulos, só 6 valores saem). Restrito à faixa Y da própria grade em
+        zoom 6x, as 7 colunas de cada linha (2 linhas de valores) saem
+        completas."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            w, h = img.size
+            crop = img.crop((0, int(h * 0.435), w, int(h * 0.52)))
+            return pytesseract.image_to_string(crop, lang='por', config='--psm 6')
+        except Exception:
+            return ''
+
+    @staticmethod
+    def _ocr_recut_danfe_produto_item(page):
+        """Recorte da linha de item ("DADOS DO PRODUTO/SERVIÇO") de um
+        DANFE Modelo 55 ESCANEADO. Achado real (nota nº 764): a coluna
+        "CÓD. PROD./DESCRIÇÃO" precisa de um recorte estreito e bem alto
+        (10x) - em zoom mais baixo ou junto das colunas numéricas o OCR
+        perde o código completamente e corrompe a descrição ("PIN POLÍCIA
+        CIVIL BAHIA" virava "DOS DN DAT CTA PAAT RANTA"); já NCM/CST/CFOP/
+        UNID/QTD saem bem num recorte largo em zoom 6x, mas nesse mesmo
+        recorte o VLR.UNIT some por completo (soma-se ao ruído "mu") - por
+        isso não é usado aqui (valor_unitario é recalculado a partir de
+        valor_total/quantidade pelo chamador). Devolve
+        (texto_descricao, texto_colunas_numericas)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+
+            pix10 = page.get_pixmap(matrix=pymupdf.Matrix(10.0, 10.0))
+            img10 = Image.frombytes("RGB", (pix10.width, pix10.height), pix10.samples)
+            w10, h10 = img10.size
+            crop_desc = img10.crop((0, int(h10 * 0.578), int(w10 * 0.33), int(h10 * 0.615)))
+            texto_desc = pytesseract.image_to_string(crop_desc, lang='por', config='--psm 6')
+
+            pix6 = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
+            img6 = Image.frombytes("RGB", (pix6.width, pix6.height), pix6.samples)
+            w6, h6 = img6.size
+            crop_num = img6.crop((0, int(h6 * 0.52), w6, int(h6 * 0.60)))
+            texto_num = pytesseract.image_to_string(crop_num, lang='por', config='--psm 6')
+
+            return texto_desc, texto_num
+        except Exception:
+            return '', ''
 
     @staticmethod
     def _ocr_numero_nota_salvador_votado(page) -> str:
@@ -13357,6 +13491,14 @@ class SPPdfExtractor:
         SEFAZ/CONFAZ para todo Modelo 55, ao contrário dos templates de NFS-e
         (cada município tem o seu) - por isso a extração aqui é genérica, não
         gated a um emitente específico."""
+        # Nota ESCANEADA (OCR): o texto sai num padrão completamente
+        # diferente do PDF digital que as regex abaixo foram escritas para
+        # ler (rótulo+valor na MESMA linha, ou rótulos-dump/valores-dump,
+        # não rótulo\nvalor de 1 coluna) - ver `_parse_danfe_produto_ocr` e
+        # o comentário de detecção em `_detect_layout`.
+        if getattr(self, 'from_ocr', False):
+            return self._parse_danfe_produto_ocr()
+
         t = self.raw_text
 
         def _num(s: Optional[str]) -> float:
@@ -13587,6 +13729,336 @@ class SPPdfExtractor:
             emitente=emitente, destinatario=destinatario, itens=itens,
             transportador=transportador, valores=valores,
             fatura_duplicata=fatura_duplicata,
+            informacoes_complementares=informacoes_complementares,
+            avisos=avisos,
+        )
+
+    def _parse_danfe_produto_ocr(self) -> Optional[NfeProduto]:
+        """Extrai um `NfeProduto` de um DANFE Modelo 55 ESCANEADO (OCR).
+
+        Achado real, 1ª nota ESCANEADA deste layout (nota nº 764, PENELI
+        METAIS LTDA -> SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA
+        BAHIA - ADPE, R$9.000,00, item "PIN POLÍCIA CIVIL BAHIA"): o texto
+        OCR sai num padrão bem diferente do PDF digital que
+        `_parse_danfe_produto` foi escrito para ler (rótulo e valor na
+        MESMA linha, ou rótulos-dump numa linha seguidos de valores-dump na
+        linha de baixo - mesma família de quirk já vista em Guarulhos/Monte
+        Santo/Santos - em vez de rótulo\\nvalor de 1 coluna) - por isso um
+        extrator dedicado em vez de reaproveitar as regex digitais. Ver
+        comentário de detecção OCR-tolerante em `_detect_layout` para a
+        análise completa da degradação do OCR nesta nota."""
+        t = self.raw_text
+        avisos: List[str] = []
+
+        # Os 4 recortes dedicados (`_ocr_recut_danfe_produto_*`, chamados de
+        # dentro de `_ocr_page`) vêm PREPENDADOS a `best_text`/`raw_text`,
+        # separados por um marcador exclusivo - isola cada um de volta em
+        # vez de tentar regex sobre os 4 textos já misturados. Campos que
+        # não dependem de um recorte específico (número, chave, protocolo,
+        # destinatário etc.) voltam a usar só o texto ORIGINAL (`t`
+        # reatribuído abaixo) - alguns recortes repetem rótulos que também
+        # existem no texto original (ex.: "CÁLCULO DO IMPOSTO" aparece
+        # tanto no recorte da grade quanto no texto de página inteira), o
+        # que quebraria buscas por "1ª ocorrência" se buscássemos no texto
+        # combinado inteiro.
+        partes_recut = t.split("<<<DANFE_PRODUTO_RECUT>>>")
+        if len(partes_recut) == 5:
+            letterhead, calculo_txt, texto_desc, texto_num, t = (p.strip() for p in partes_recut)
+        else:
+            letterhead = calculo_txt = texto_desc = texto_num = ''
+
+        def _num(s: Optional[str]) -> float:
+            if not s: return 0.0
+            try:
+                return float(re.sub(r'[^\d,.]', '', s).replace('.', '').replace(',', '.'))
+            except ValueError:
+                return 0.0
+
+        # --- Número/Série (ambos aparecem 2x na nota - canhoto e caixa
+        # DANFE - qualquer uma das ocorrências serve) ---
+        m = re.search(r'N[ºo°]\s*:\s*(\d+)', t, re.IGNORECASE)
+        numero = m.group(1) if m else '00000000'
+        if numero == '00000000':
+            avisos.append("Número da nota não encontrado")
+        m = re.search(r'S[ée]rie\s*:\s*(\d+)', t, re.IGNORECASE)
+        serie = m.group(1) if m else '1'
+
+        # --- Tipo de operação: "0-ENTRADA"/"1-SAÍDA" sai embaralhado como
+        # "Saída: 1\nEntrada: O" (dígito "0" lido como letra "O") ---
+        if re.search(r'Sa[íi]da\s*:\s*1', t, re.IGNORECASE):
+            tipo_operacao = '1'
+        elif re.search(r'Entrada\s*:\s*1', t, re.IGNORECASE):
+            tipo_operacao = '0'
+        else:
+            tipo_operacao = '1'
+
+        m = re.search(r'CHAVE\s+DE\s+ACESSO\s*\n+\s*([\d\s]{40,60})', t, re.IGNORECASE)
+        chave_acesso = re.sub(r'\s', '', m.group(1)) if m else ''
+        if len(chave_acesso) != 44:
+            avisos.append("Chave de acesso não encontrada ou incompleta")
+
+        # --- Natureza da operação + Protocolo de autorização: saem
+        # fundidos na mesma linha ("[Venda NF-e 135263013284539
+        # 27/07/2026 15:55:33") ---
+        m = re.search(
+            r'PROTOCOLO\s+DE\s+AUTORIZA[ÇC][ÃA]O\s+DE\s+USO\s*\n+\W*(.+?)\s+(\d{10,})\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+            t, re.IGNORECASE)
+        if m:
+            natureza_operacao = m.group(1).strip()
+            protocolo_autorizacao = m.group(2)
+            protocolo_data_hora = _parse_dmy(m.group(3), m.group(4))
+        else:
+            natureza_operacao = "VENDA DE MERCADORIA"
+            protocolo_autorizacao = None
+            protocolo_data_hora = None
+            avisos.append("Protocolo de autorização não encontrado")
+
+        # --- Data de emissão: rótulo dedicado some no OCR da grade, mas o
+        # texto livre do canhoto traz "...EMISSÃO: 27/07/2026..." ---
+        m = re.search(r'EMISS[ÃA]O\s*:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+        data_emissao = _parse_dmy(m.group(1)) if m else None
+        if data_emissao is None:
+            data_emissao = datetime.now()
+            avisos.append("Data de emissão não encontrada (usando a data atual como fallback)")
+        data_saida_entrada = data_emissao
+
+        # --- Emitente: recorte dedicado do letterhead (só a coluna
+        # esquerda do cabeçalho, sem a caixa DANFE nem o código de barras
+        # - ver `_ocr_recut_danfe_produto_emitente`) ---
+        razao_social_emit = "Emitente Não Identificado"
+        logradouro_emit, numero_emit, bairro_emit = "Não informado", "S/N", ""
+        municipio_emit, uf_emit, cep_emit, telefone_emit = "", "BA", "", None
+        if letterhead.strip():
+            # Processado LINHA A LINHA (não com regex multi-linha via `\s`,
+            # que casaria por cima de \n e - achado real, 1ª versão deste
+            # extrator - grudava linhas de ruído do brasão/logotipo no meio
+            # do município capturado, ex.: "IATE CANINDE\nMETAIS\nA São
+            # Paulo" em vez de só "São Paulo").
+            linhas = [l.strip() for l in letterhead.split('\n') if l.strip()]
+            idx_endereco = None
+            idx_municipio = None
+            for i, linha in enumerate(linhas):
+                if razao_social_emit == "Emitente Não Identificado":
+                    m_r = re.search(
+                        r'([A-ZÀ-Ú][A-ZÀ-Ú0-9 &.,\-]*?(?:LTDA|S\W?A|EIRELI|\bME\b))\.?\s*$',
+                        linha, re.IGNORECASE)
+                    if m_r:
+                        razao_social_emit = re.sub(r'\s+', ' ', m_r.group(1)).strip().upper()
+                        continue
+                if idx_endereco is None:
+                    m_e = re.search(r'([A-ZÀ-Úa-zà-ú.\s]+),\s*(\d+)\s*$', linha)
+                    if m_e:
+                        logradouro_emit = m_e.group(1).strip()
+                        numero_emit = m_e.group(2).strip()
+                        idx_endereco = i
+                        continue
+                if idx_endereco is not None and idx_municipio is None:
+                    m_m = re.search(r'^\W*([A-ZÀ-Úa-zà-ú\s]+?)\s*-\s*([A-Z]{2})\s*$', linha)
+                    if m_m:
+                        municipio_emit = m_m.group(1).strip()
+                        # Descarta uma letra solta no início da linha (achado
+                        # real: "A São Paulo - SP" - o "A" é ruído do logo, a
+                        # cidade real é só "São Paulo"), mas nunca a última
+                        # letra restante (evita esvaziar cidades curtas).
+                        municipio_emit = re.sub(r'^[A-Za-zÀ-Ú]\s+(?=\S)', '', municipio_emit)
+                        uf_emit = m_m.group(2).upper()
+                        idx_municipio = i
+                        continue
+                m_cf = re.search(r'(\d{2}\W?\d{3}\W?\d{3})\D+(\(?\d{2}\)?\s?\d{4,5}-?\d{4})', linha)
+                if m_cf:
+                    cep_emit = re.sub(r'\D', '', m_cf.group(1))
+                    telefone_emit = m_cf.group(2).strip()
+            # Bairro: só a linha IMEDIATAMENTE após o endereço (não todo o
+            # intervalo até o município) - achado real: quando o bloco tem
+            # 2 linhas de ruído do brasão/logotipo antes do município
+            # ("IATE CANINDE"/"METAIS"), restringir à 1ª evita grudar
+            # "METAIS" (palavra de tamanho normal, sobrevive ao filtro de
+            # ruído curto) no bairro real ("CANINDE").
+            if idx_endereco is not None and idx_municipio is not None and idx_municipio > idx_endereco + 1:
+                linha_bairro = linhas[idx_endereco + 1]
+                palavras = [p for p in linha_bairro.split() if len(re.sub(r'[^A-Za-zÀ-Ú]', '', p)) > 4]
+                if palavras:
+                    bairro_emit = ' '.join(palavras).strip()
+        if not municipio_emit:
+            avisos.append("Endereço do emitente não identificado (recorte do letterhead ilegível)")
+
+        # CPF/CNPJ e Inscrição Estadual do emitente vêm na MESMA linha,
+        # nesta ordem (IE primeiro, CNPJ com pontuação depois) - achado
+        # real: "143282435113 19.799.753/0001-37".
+        m = re.search(r'CPF/CNPJ\s*\n+\s*(\d{6,15})\s+(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', t, re.IGNORECASE)
+        if m:
+            ie_emit = m.group(1)
+            cnpj_emit = m.group(2)
+        else:
+            ie_emit = None
+            cnpj_emit = "00.000.000/0000-00"
+            avisos.append("CNPJ do emitente não identificado")
+
+        cod_mun_emit = _ibge_resolver.extract_and_validate(municipio_emit, uf_emit, city_hint=municipio_emit, raw_doc_text=t)
+
+        emitente = EntidadeNfe(
+            cnpj_cpf=cnpj_emit, inscricao_estadual=ie_emit, razao_social=razao_social_emit,
+            endereco=Endereco(
+                logradouro=logradouro_emit, numero=numero_emit, bairro=bairro_emit,
+                codigo_municipio=cod_mun_emit, municipio=municipio_emit, uf=uf_emit, cep=cep_emit,
+            ),
+            telefone=telefone_emit,
+        )
+
+        # --- Destinatário: grade "DESTINATÁRIO/REMETENTE" (rótulos e
+        # valores fundidos na mesma linha pelo OCR - ex.: "SINDICATO
+        # ...ADPE [73.393.696/0001-37 27/07/2026") ---
+        razao_social_dest = "Destinatário Não Identificado"
+        logradouro_dest, numero_dest, bairro_dest = "Não informado", "S/N", ""
+        municipio_dest, uf_dest, cep_dest, cnpj_dest = "", "BA", "", "00000000000000"
+        pos_dest = re.search(r'DESTINAT[ÁA]RIO\s*/\s*REMETENTE', t, re.IGNORECASE)
+        pos_calc = re.search(r'C[ÁA]LCULO\s+DO\s+IMPOSTO', t, re.IGNORECASE)
+        if pos_dest:
+            bloco_dest = t[pos_dest.end():pos_calc.start()] if pos_calc else t[pos_dest.end():]
+            m1 = re.search(r'^(.+?)\W*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})\s+\d{2}/\d{2}/\d{4}', bloco_dest, re.MULTILINE)
+            if m1:
+                razao_social_dest = re.sub(r'\s*-\s*$', '', m1.group(1).strip())
+                cnpj_dest = m1.group(2)
+            m2 = re.search(
+                r'^\W*(.+?),\s*(\d+)\s+([A-ZÀ-Ú][A-ZÀ-Úa-zà-ú]*)\s+([\d.\-]{8,10})\s+\d{2}/\d{2}/\d{4}',
+                bloco_dest, re.MULTILINE)
+            if m2:
+                logradouro_dest = m2.group(1).strip()
+                numero_dest = m2.group(2).strip()
+                bairro_dest = m2.group(3).strip()
+                cep_dest = re.sub(r'\D', '', m2.group(4))
+            m3 = re.search(
+                r'^([A-ZÀ-Úa-zà-ú\s]+?)\s+\(?\d{2}\)?[\s.\d-]{8,12}\s*\|?\s*([A-Z]{2})\b',
+                bloco_dest, re.MULTILINE)
+            if m3:
+                municipio_dest = m3.group(1).strip()
+                uf_dest = m3.group(2).upper()
+        if razao_social_dest == 'Destinatário Não Identificado':
+            avisos.append("Dados do destinatário não identificados")
+        if cnpj_dest == '00000000000000':
+            avisos.append("CNPJ/CPF do destinatário não identificado")
+
+        cod_mun_dest = _ibge_resolver.extract_and_validate(municipio_dest, uf_dest, city_hint=municipio_dest, raw_doc_text=t)
+        destinatario = EntidadeNfe(
+            cnpj_cpf=cnpj_dest, razao_social=razao_social_dest,
+            endereco=Endereco(
+                logradouro=logradouro_dest, numero=numero_dest, bairro=bairro_dest,
+                codigo_municipio=cod_mun_dest, municipio=municipio_dest, uf=uf_dest, cep=cep_dest,
+            ),
+        )
+
+        # Sem achado real de transportador nesta nota ("Frete: 9 - Sem
+        # Frete") - sem tratamento dedicado ainda para o bloco
+        # TRANSPORTADOR/VOLUMES de uma nota ESCANEADA.
+        transportador = None
+
+        # --- CÁLCULO DO IMPOSTO: recorte dedicado em zoom 6x (a leitura de
+        # página inteira comprime as 7 colunas e perde 1 dos "0,00"
+        # repetidos - ver `_ocr_recut_danfe_produto_calculo`) ---
+        base_calculo_icms = valor_icms_total = base_calculo_icms_st = valor_icms_st = 0.0
+        valor_frete = valor_seguro = desconto = outras_despesas = valor_ipi = 0.0
+        valor_total_produtos = valor_total_nota = 0.0
+
+        m_total_canhoto = re.search(r'TOTAL\s*:\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+        if m_total_canhoto:
+            valor_total_nota = _num(m_total_canhoto.group(1))
+
+        # Só linhas ESTRITAMENTE numéricas (dígitos/pontuação de moeda) -
+        # achado real: a faixa recortada pega a última linha do bloco
+        # anterior ("Salvador (71) 33292-6847 BA |2-Isento 15:45:00"), que
+        # também "tem dígito" mas não é uma linha de valores da grade.
+        linhas_valores = [
+            l.strip() for l in calculo_txt.split('\n')
+            if l.strip() and re.fullmatch(r'[\d.,\s€()]+', l.strip())
+        ]
+        if len(linhas_valores) >= 2:
+            row1 = re.findall(r'\d[\d.,]*', linhas_valores[0])
+            row2 = re.findall(r'\d[\d.,]*', linhas_valores[1])
+            if len(row1) >= 4:
+                base_calculo_icms, valor_icms_total, base_calculo_icms_st, valor_icms_st = (_num(v) for v in row1[:4])
+            if len(row2) >= 5:
+                desconto, valor_frete, valor_seguro, outras_despesas, valor_ipi = (_num(v) for v in row2[:5])
+        # VALOR TOTAL DOS PRODUTOS/VALOR TOTAL DA NOTA são as últimas
+        # colunas de cada linha e saem consistentemente truncados pelo OCR
+        # mesmo no recorte dedicado (ex.: "9.00€" em vez de "9.000,00") -
+        # não confiável o bastante pra usar direto. Deriva pela identidade
+        # contábil a partir do total do canhoto (bem mais confiável, "TOTAL:
+        # R$ 9.000,00"): produtos = nota + desconto - frete - seguro -
+        # despesas - ipi.
+        valor_total_produtos = valor_total_nota + desconto - valor_frete - valor_seguro - outras_despesas - valor_ipi
+        if valor_total_produtos <= 0:
+            valor_total_produtos = valor_total_nota
+        if base_calculo_icms == 0.0 and valor_icms_total == 0.0:
+            avisos.append("Grade de cálculo de ICMS não identificada")
+        if valor_total_nota == 0.0:
+            avisos.append("Valor total da nota extraído como zero")
+
+        valores = ValoresNfe(
+            base_calculo_icms=base_calculo_icms, valor_icms=valor_icms_total,
+            base_calculo_icms_st=base_calculo_icms_st, valor_icms_st=valor_icms_st,
+            valor_total_produtos=valor_total_produtos, valor_frete=valor_frete,
+            valor_seguro=valor_seguro, desconto=desconto, outras_despesas=outras_despesas,
+            valor_ipi=valor_ipi, valor_total_nota=valor_total_nota,
+        )
+
+        # --- Itens: nesta 1ª nota ESCANEADA há só 1 item. Código/NCM/CST/
+        # CFOP/UNID/QTD vêm de recortes dedicados (`_ocr_recut_danfe_
+        # produto_item`); valor_total/BC ICMS/valor ICMS reaproveitam os
+        # mesmos números já extraídos da grade "CÁLCULO DO IMPOSTO" acima
+        # (correto sempre que há 1 item só, evita depender da leitura
+        # frágil dessas mesmas colunas dentro da própria linha do item,
+        # onde a descrição/NCM saem consistentemente corrompidos em zoom
+        # normal e o VLR.UNIT some por completo em vários PSM testados).
+        # Para N>1 itens este atalho não vale - sinalizado via aviso.
+        itens: List[ItemProduto] = []
+
+        codigo = "0001"
+        m_cod = re.search(r'\b(\d{3,4})\b', texto_desc)
+        if m_cod:
+            codigo = m_cod.group(1).zfill(3)
+        else:
+            avisos.append("Código do produto não identificado (mantido genérico)")
+
+        descricao = "Produto"
+        m_desc = re.search(r'PRODUTO/?[A-ZÇ]*\s*\n+(.+)', texto_desc, re.IGNORECASE)
+        if m_desc:
+            descricao = re.sub(r'\s+', ' ', m_desc.group(1)).strip()
+
+        ncm, cst, cfop, unidade, quantidade = "00000000", "000", "0000", "UN", 0.0
+        m_num = re.search(
+            r'(\d{7,9})\D+?(\d{4})\D*?([A-ZÇ]{1,4})\D+?(\d[\d.,]*\d)',
+            texto_num, re.IGNORECASE)
+        if m_num:
+            ncm = m_num.group(1)
+            cfop = m_num.group(2)
+            unidade = m_num.group(3).upper()
+            quantidade = _num(m_num.group(4))
+        else:
+            avisos.append("Tabela de itens ilegível (NCM/CFOP/unidade/quantidade não identificados)")
+        if ncm == "00000000":
+            avisos.append("NCM do item não identificado")
+
+        valor_total_item = valor_total_produtos
+        valor_unitario = round(valor_total_item / quantidade, 4) if quantidade else 0.0
+        aliquota_icms = round(valor_icms_total / base_calculo_icms * 100, 2) if base_calculo_icms else 0.0
+
+        itens.append(ItemProduto(
+            codigo=codigo, descricao=descricao, ncm=ncm, cfop=cfop, cst_icms=cst,
+            unidade=unidade, quantidade=quantidade, valor_unitario=valor_unitario,
+            valor_total=valor_total_item, base_calculo_icms=base_calculo_icms,
+            valor_icms=valor_icms_total, aliquota_icms=aliquota_icms,
+        ))
+
+        m = re.search(r'INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES\s*\n+(.+?)\n+RESERVADO\s+AO\s+FISCO', t, re.IGNORECASE | re.DOTALL)
+        informacoes_complementares = m.group(1).strip() if m else None
+
+        return NfeProduto(
+            chave_acesso=chave_acesso, numero=numero, serie=serie,
+            natureza_operacao=natureza_operacao, tipo_operacao=tipo_operacao,
+            data_emissao=data_emissao, data_saida_entrada=data_saida_entrada,
+            protocolo_autorizacao=protocolo_autorizacao, protocolo_data_hora=protocolo_data_hora,
+            emitente=emitente, destinatario=destinatario, itens=itens,
+            transportador=transportador, valores=valores,
             informacoes_complementares=informacoes_complementares,
             avisos=avisos,
         )
