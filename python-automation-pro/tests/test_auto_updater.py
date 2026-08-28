@@ -54,14 +54,14 @@ def test_check_latest_release_retorna_none_quando_ja_atualizado(monkeypatch):
 
 def test_check_latest_release_retorna_dict_quando_ha_versao_nova(monkeypatch):
     resp = DummyResponse(json_data={
-        "tag_name": "v1.4.0",
+        "tag_name": "v1.9.9",
         "assets": [{"name": "nfse_converter_gui.exe", "browser_download_url": "http://x/exe", "size": 100}],
         "html_url": "http://release",
         "body": "notas",
     })
     monkeypatch.setattr(requests, "get", lambda *a, **k: resp)
     release = auto_updater.check_latest_release()
-    assert release["version"] == "v1.4.0"
+    assert release["version"] == "v1.9.9"
     assert release["url"] == "http://release"
     assert len(release["assets"]) == 1
 
