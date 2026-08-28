@@ -24,6 +24,16 @@ sessão, de todos os layouts/fixes entregues está em
   tolerante ao rótulo "Nome / Nome Empresarial" deslocado ANTES do
   cabeçalho de seção e à Competência impressa como valor órfão. Ver detalhe
   completo em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#30f-são-paulosp--skytef-qive--sp_skytef).
+- **Novo layout — São Paulo/SP, CAIXA CARTÕES (mesma plataforma Qive do
+  SKYTEF, outro emitente) — `sp_caixa_cartoes`**: fatura de "Taxa de
+  Serviço" (reembolso/adquirência de cartões pré-pagos) da CAIXA CARTÕES
+  PRÉ-PAGOS S.A. (CNPJ 39.459.331/0006-34) caía no fallback `generico`.
+  Detectado só pelo CNPJ do emitente. Prestador fixo; tomador dinâmico
+  (extrator separado do SKYTEF, mesmo racional já usado entre
+  `nfcom_salvador`/`nfcom_rlgr`); ValorIr extraído de um valor de IRRF real
+  citado na discriminação (R$ 0,09, com base legal própria), em vez de
+  zerado como no SKYTEF. Ver detalhe completo em
+  [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#30g-são-paulosp--caixa-cartões-qive--sp_caixa_cartoes).
 - **Novo layout — NFCom Rlgr Telefonia (`nfcom_rlgr`)**: nota nº 7271 (SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA ADPE, R$71,37 de Serviço de Terminação de Tráfego de Voz/STTV) caía no fallback genérico e saía com o CNPJ do tomador igual ao do prestador, razão social do tomador vazada de um rótulo vizinho, valores zerados e Código de Verificação em branco. Mesmo template nacional NFCom (portal SVRS) já usado por `nfcom_salvador`, mas de um emitente diferente (Rlgr Telefonia LTDA, CNPJ 57.675.896/0001-26, Barueri/SP) — detecção gated especificamente por esse CNPJ, prestador fixo (letterhead hardcoded), tomador extraído dinamicamente (rótulos em ordem direta, ao contrário do nfcom_salvador; CEP do tomador extraído de verdade, pois esta nota o imprime inline no endereço). Valor via "TOTAL A PAGAR:"; Base de Cálculo/Alíquota/ISS mantidos em 0,00 (tributado por ICMS, não ISS) com aviso explicativo. Data de Emissão extraída por rótulo dedicado (data+hora na mesma linha, "DATA DE EMISSÃO: 05/01/2026 11:10:01"). Suíte 325→332 verdes; 7 testes novos em `tests/test_nfcom_rlgr.py`. Ver detalhes em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#27c-nfcom-rlgr-telefonia--nfcom_rlgr).
 
 ### Corrigido
