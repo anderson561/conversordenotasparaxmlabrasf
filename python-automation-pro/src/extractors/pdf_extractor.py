@@ -112,6 +112,7 @@ LAYOUT_SANTOS = 'santos_sp'  # Prefeitura Municipal de Santos/SP (plataforma Gin
 LAYOUT_GOIANIA = 'goiania_go'  # Prefeitura Municipal de Goiânia/GO (plataforma ISSNet Online, issnetonline.com.br/goiania — MESMO fornecedor/marca "ISSNet" já usada por LAYOUT_CUIABA, cidade diferente). Achado real: nota nº 4, ID Producao Musical Ltda -> ELOS ESTUDIO E SERVICOS LTDA, R$600,00 (valor_servicos saía zerado, ValorIss/ValorIr saíam 600,00 fabricados/trocados, RazaoSocial do prestador saía "Série do Documento" - um rótulo solto do cabeçalho -, e RazaoSocial do tomador saía como o próprio endereço dele). CAUSA-RAIZ: a nota inteira colidia com `LAYOUT_CUIABA` porque o detector daquele layout casava a palavra solta "ISSNet" (sem exigir "Cuiabá" por perto) em QUALQUER documento que a contivesse - e "issnetonline.com.br/goiania" contém "issnet" como substring (mesma família de bug já documentada em `gotcha-layout-detection-collision.md`: nunca detectar por marca de PLATAFORMA/SaaS compartilhada por vários municípios, só pelo nome do município - mesma decisão já tomada para Mata de São João/SAATRI e Rosário da Limeira/FUTURIZE). Fix: a marca "ISSNet" de Cuiabá passou a exigir que NÃO seja seguida de "online" (`ISSNet(?!\s*[Oo]nline)`), preservando o fallback OCR de Cuiabá (nenhum mock real daquele layout tem "online" colado). PDF DIGITAL cujo `pdfminer.extract_text()` produz uma ordem de leitura completamente fora de ordem (linhas de colunas visuais diferentes intercaladas de forma não-monotônica - pior que o quirk "labels dumped, values dumped" de outros layouts: aqui nem um mapeamento por índice fixo é confiável) - usa `_reconstruir_texto_por_coordenadas` (mesma técnica de reconstrução por LTChar já usada em `camacari_sisloc`) para obter o texto na ordem visual real antes de qualquer extração de campo. Após a reconstrução, o bloco do PRESTADOR (coluna esquerda do cabeçalho) fica intercalado linha a linha com os METADADOS do cabeçalho (coluna direita: Data de Geração/Competência/Cód. Autenticidade), pois ambos compartilham a mesma faixa de Y - cada regex de campo do prestador pula exatamente 1 linha (a do metadado concorrente) até o valor real. Bloco do TOMADOR já vem limpo (rótulo\s*:\s*valor, sem essa intercalação). Bloco "Dados do Intermediário de Serviços" vem sempre vazio nesta plataforma (raiz do "Intermediário fantasma" no bug original, que inventava um intermediário a partir de texto solto de outra seção) - mapeado para `None`.
 LAYOUT_BARUERI = 'barueri_sp'  # Prefeitura Municipal de Barueri/SP (barueri.sp.gov.br/nfe). Achado real: nota nº 0380578, ALELO INSTITUIÇÃO DE PAGAMENTO S.A. (CNPJ 04.740.876/0001-25) -> CLINICA PNEUMOLOGICA PROF ALMERIO MACHADO (Salvador/BA), R$2,74 de tarifa (fatura de "agenciamento, corretagem ou intermediação" cobrada pela Alelo sobre um benefício-alimentação de R$430,00 repassado ao tomador). PDF DIGITAL (pdfminer, sem OCR). Bloco "Prestador de Serviços" com razão social + 2 linhas de endereço (logradouro/número/complemento, depois bairro) ANTES dos rótulos "CNPJ/CPF"/"Inscrição Municipal"/"Telefone"/"e-mail" (Telefone/e-mail ficam em branco nesta nota — nenhum valor colado neles, só o próximo cabeçalho de seção). Bloco "Nome Tomador de Serviços" tem cada rótulo adjacente ao próprio valor (não é "labels dumped, depois values dumped") - EXCETO "CEP"/"Bairro", que saem como 2 rótulos consecutivos com um ÚNICO valor combinado logo abaixo ("40150-130 Graça", sem separador). Só a grade de item que vem depois (Qtde/Descrição do Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total) segue o padrão "6 rótulos dumped, depois os 6 valores na MESMA ordem" (mesma família de Monte Santo/Ginfes/Santos), usada para extrair descrição/código de serviço/alíquota. "VALOR LIQUIDO DA NOTA" impresso no rodapé (R$432,74) inclui o REPASSE a terceiros (R$430,00, o crédito do benefício-alimentação que a Alelo só está repassando, não é receita de serviço) somado à tarifa — usar esse valor como `ValorServicos`/`ValorLiquidoNfse` sobrestimaria em ~150x o valor tributável do serviço. `ValorServicos`/`BaseCalculo` = "TOTAL DE TARIFA" (R$2,74, bate com a "Valor Total" da grade do item); `Aliquota` = "Alíquota" da grade (2,00% → 0.02); `ValorIr` = "IRRF" da grade de retenções federais (labels-dumped/values-dumped: IRRF/PIS-PASEP/COFINS/CSLL, depois os 4 valores); `ValorIss` mantido em 0,00 (nenhum valor de ISS impresso separadamente — "TOTAL DE IMPOSTOS" bate exatamente com o IRRF sozinho, sem sobra pro ISS; não fabricado). Repasse a terceiros descartado do XML (não é ValorDeducoes nem faz parte do serviço tributável) — sinalizado em `Nfse.avisos` para o usuário conferir manualmente se precisa de tratamento contábil à parte.
 LAYOUT_SP_SKYTEF = 'sp_skytef'  # SKYTEF SOLUÇÕES EM CAPTURA DE TRANSAÇÕES LTDA (CNPJ 04.988.631/0001-11, Vila Olímpia/São Paulo-SP) - fatura de licenciamento de uso de software (TEF Nuvem) emitida pela plataforma Qive (www.qive.com.br), estruturalmente diferente do template oficial da Prefeitura de São Paulo (LAYOUT_SAO_PAULO exige o texto "MUNICÍPIO DE SÃO PAULO", ausente aqui - sem colisão). PDF DIGITAL (pdfminer). Achado real: nota nº 902735, SKYTEF -> RG RESTAURANTE LTDA (Camaçari/BA), R$86,80 (fallback genérico saía com entidades trocadas/garbladas e valores zerados). Detectado só pelo CNPJ do emitente (nunca pela marca "Qive", plataforma SaaS compartilhada por outros emitentes - mesmo critério já usado para não colidir em ISSNet Cuiabá×Goiânia e Mata de São João/SAATRI). Prestador FIXO (hardcoded do próprio letterhead, estável entre notas). Cabeçalho com quirk de "rótulo antes do valor deslocado": "Nome / Nome Empresarial" do TOMADOR aparece ANTES do cabeçalho de seção "Dados do Tomador de Serviços" (não depois, como os demais campos do bloco) - mesma família geral de "rótulo deslocado" já vista em Santos/Vinhedo, faceta nova aqui (só a razão social sai invertida, não o bloco inteiro). Competência ("02/2026") sai como um valor solto ANTES do rótulo "Numero da NFS-e:", sem nenhum rótulo "Competência" adjacente ao seu próprio valor (o rótulo "Competência" do cabeçalho fica órfão, sem valor colado). Bloco final de valores (Código do Serviço/PIS/COFINS/IR/INSS/CSLL/B.Cálculo/Alíquota/V.ISS/V.Líquido/ISS Retido) já sai em pares rótulo\nvalor limpos - extração direta. Informações IBS/CBS (Reforma Tributária) não têm tag no ABRASF 2.01 - descartadas.
+LAYOUT_SP_CAIXA_CARTOES = 'sp_caixa_cartoes'  # CAIXA CARTÕES PRÉ-PAGOS S.A. (CNPJ 39.459.331/0006-34, Vila Olímpia/São Paulo-SP) - fatura de "Taxa de Serviço" (reembolso/adquirência de cartões pré-pagos), emitida pela MESMA plataforma Qive do LAYOUT_SP_SKYTEF (outro emitente, mesmo template nacional NFS-e) - sem colisão com o template oficial da Prefeitura de São Paulo (exige "MUNICÍPIO DE SÃO PAULO", ausente aqui). PDF DIGITAL (pdfminer). Achado real: nota nº 27723844, CAIXA CARTÕES -> RG RESTAURENTE LTDA - EPP (Camaçari/BA), R$6,30. Detectado só pelo CNPJ do emitente (nunca pela marca "Qive" - mesmo critério do SKYTEF, para não colidir com outros emitentes na mesma plataforma). Prestador FIXO (hardcoded do letterhead). Extratores de tomador/valores/data mantidos SEPARADOS dos do SKYTEF (mesma decisão já tomada entre LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR - mesmo template nacional/plataforma, extratores próprios por emitente, para uma mudança futura da Qive numa nota não arrastar a outra), apesar da estrutura quase idêntica. Diferença notada: aqui a Competência SAI LIMPA ("Competência\n\n03/2026", rótulo adjacente ao valor) - ao contrário do SKYTEF, onde o valor da Competência sai órfão antes do rótulo "Numero da NFS-e:". A discriminação cita um valor de IRRF explícito e com base legal própria ("IRRF 1,5%... R$ 0,09... conforme I.N. 153/87 e Lei 7450/85, art. 53") mesmo com o campo estruturado "IR" mostrando só "-" - extraído da discriminação (valor real declarado na nota, não fabricado), diferente do SKYTEF (que mantém IR em 0,00 por não haver nenhum valor real citado ali). Informações IBS/CBS não têm tag no ABRASF 2.01 - descartadas.
 LAYOUT_VINHEDO = 'vinhedo_sp'  # Prefeitura Municipal de Vinhedo/SP (plataforma Balker, vinhedo.balker.com.br). Achado real: nota nº 139, WEDO DECOR LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, R$1.049,79 (fallback genérico saía com valor_servicos zerado, valor_iss fabricado, UF do prestador "BA", município caindo no fallback Salvador/BA - Vinhedo ausente de KNOWN_CITIES -, e a razão social do TOMADOR saindo como "País: BRASIL"). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com rótulo→valor adjacente (label + dois-pontos, mesma linha ou linha seguinte) para quase todo campo - mas o cabeçalho de seção "TOMADOR DE SERVIÇOS" sai DESLOCADO no MEIO do próprio bloco do tomador (entre as Inscrições e o Endereço), mesmo quirk do Santos/SP; fatiamento usa a 2ª ocorrência de "Razão Social/Nome:" como início do bloco tomador. Data de Emissão em formato "DD/MMM/AAAA - HH:MM:SS" com mês abreviado em PT-BR ("28/JUL/2026"), único layout com esse formato - usa o dicionário `_MESES_PT` já existente. Grade de Retenções Federais + Base/Alíquota/ISS (2 linhas x 7 colunas, sem linhas de separação): o pdfminer emite cada VALOR defasado em 1 coluna em relação ao próprio rótulo (mesma família de quirk "labels dumped, values dumped", mas aqui por DESLOCAMENTO DE COLUNA em vez de por blocos separados) - ordem real observada no texto: INSS, IRRF, CSLL, PIS, COFINS, Outras Retenções, Base de Cálculo, Deduções, Alíquota, Vlr ISS, IBS, CBS, Vlr Líquido (mapeado por índice fixo, documentado no código). "Desc. Incondicional" nunca aparece impresso nesta plataforma (nem "0,00" nem placeholder) - mantido em 0,00 (default do model). IBS/CBS (Reforma Tributária) não têm tag no ABRASF 2.01 - descartados após a leitura.
 
 
@@ -384,6 +385,10 @@ class SPPdfExtractor:
         # Goiânia e Mata de São João/SAATRI, ver docstring do layout).
         if re.search(r'04\.?988\.?631[/.]?0001-?11', t, re.IGNORECASE):
             return LAYOUT_SP_SKYTEF
+        # Caixa Cartões Pré-Pagos (mesma plataforma Qive, outro emitente) -
+        # detectado só pelo CNPJ, mesmo critério do SKYTEF.
+        if re.search(r'39\.?459\.?331[/.]?0006-?34', t, re.IGNORECASE):
+            return LAYOUT_SP_CAIXA_CARTOES
         if re.search(r'LMR\s+ENGENHARIA|LTR\s+ENGENHARIA|L\.M\.R\.\s+ENGENHARIA', t, re.IGNORECASE):
             return LAYOUT_LMR_ENGENHARIA
         # F&F Comércio (fatura de locação de CFTV) - detectado pelo CNPJ do
@@ -671,6 +676,10 @@ class SPPdfExtractor:
         # Goiânia e Mata de São João/SAATRI, ver docstring do layout).
         if re.search(r'04\.?988\.?631[/.]?0001-?11', t, re.IGNORECASE):
             return LAYOUT_SP_SKYTEF
+        # Caixa Cartões Pré-Pagos (mesma plataforma Qive, outro emitente) -
+        # detectado só pelo CNPJ, mesmo critério do SKYTEF.
+        if re.search(r'39\.?459\.?331[/.]?0006-?34', t, re.IGNORECASE):
+            return LAYOUT_SP_CAIXA_CARTOES
         if re.search(r'LMR\s+ENGENHARIA|LTR\s+ENGENHARIA|L\.M\.R\.\s+ENGENHARIA', t, re.IGNORECASE):
             return LAYOUT_LMR_ENGENHARIA
         # F&F Comércio (fatura de locação de CFTV) - detectado pelo CNPJ do
@@ -1336,6 +1345,14 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
+        if self.layout == LAYOUT_SP_CAIXA_CARTOES:
+            # "Data de Emissão\n\n02/03/2026 04:19:07" - mesmo formato do
+            # SKYTEF (mesma plataforma Qive), rótulo adjacente ao valor.
+            m = re.search(r'Data\s+de\s+Emiss[ãa]o\s*\n+\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
         if self.layout == LAYOUT_LOCONTAINERS:
             m = re.search(r'DATA\s+DA\s+EMISS[AÃÕO]*\s*[\n\r\s]+(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -1567,6 +1584,12 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_SP_SKYTEF:
             # "Numero da NFS-e:\n902735" — rótulo distinto de "Número RPS"
             # (que fica órfão, sem valor colado, no cabeçalho desta nota).
+            m = re.search(r'Numero\s+da\s+NFS-e\s*:\s*\n+\s*(\d+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_SP_CAIXA_CARTOES:
+            # "Numero da NFS-e:\n27723844" — mesmo rótulo do SKYTEF (mesma
+            # plataforma Qive).
             m = re.search(r'Numero\s+da\s+NFS-e\s*:\s*\n+\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
@@ -2385,6 +2408,17 @@ class SPPdfExtractor:
                 if texto:
                     return texto
 
+        if self.layout == LAYOUT_SP_CAIXA_CARTOES:
+            # Mesmo bloco "Discriminação dos Serviços" -> "Código do Serviço"
+            # do template Qive (ver LAYOUT_SP_SKYTEF).
+            m = re.search(
+                r'Discrimina[çc][ãa]o\s+dos\s+Servi[çc]os\s*\n+(.*?)(?=\n\s*C[óo]digo\s+do\s+Servi[çc]o|$)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                texto = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if texto:
+                    return texto
+
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
             # "1 - CGB-0001   CORTADOR DE GRAMA A BATERIA" — nº do item, código
             # interno do produto e descrição colados na mesma linha, logo após
@@ -2638,6 +2672,18 @@ class SPPdfExtractor:
             m = re.search(r'Discrimina[çc][ãa]o\s+dos\s+Servi[çc]os\s*\n+\s*(\d{1,2})\.(\d{2})\s*-', t, re.IGNORECASE)
             if m:
                 return m.group(1).zfill(2) + m.group(2)
+
+        if self.layout == LAYOUT_SP_CAIXA_CARTOES:
+            # Discriminação NÃO começa com "N.NN-" (texto livre "Taxa de
+            # Servico: R$ 6,30..."), diferente do SKYTEF. "Código do
+            # Serviço\n\n171201" (6 dígitos, mesmo formato de desdobro
+            # municipal da Qive: item "17.12" + desdobro "01") - item LC116
+            # 17.12 "Administração em geral, inclusive de bens e negócios de
+            # terceiros e de consórcio" (compatível com a "Taxa de Serviço"
+            # de reembolso/adquirência de cartões pré-pagos desta nota).
+            m = re.search(r'C[óo]digo\s+do\s+Servi[çc]o\s*\n+\s*(\d{2})(\d{2})\d{2}\b', t, re.IGNORECASE)
+            if m:
+                return m.group(1) + m.group(2)
 
         if self.layout == LAYOUT_GOIANIA:
             # "Atividade do Município ...\n1212 - 12.12 - Execução de
@@ -2911,11 +2957,12 @@ class SPPdfExtractor:
                 if re.match(r'^[A-Z0-9][A-Z0-9.\-]{6,}$', candidato, re.IGNORECASE) and re.search(r'\d', candidato):
                     return candidato.upper()
 
-        if self.layout in (LAYOUT_SANTOS, LAYOUT_VINHEDO, LAYOUT_SP_SKYTEF):
+        if self.layout in (LAYOUT_SANTOS, LAYOUT_VINHEDO, LAYOUT_SP_SKYTEF, LAYOUT_SP_CAIXA_CARTOES):
             # "Código de Verificação\nAKBT3QZT1" (Santos) / "Código de
             # Verificação\n\n1156785ZOC" (Vinhedo) / "Código de Verificação\n\n
-            # 355030812...49" (SKYTEF/Qive) — rótulo próprio, adjacente (uma
-            # ou mais quebras de linha). 1ª ocorrência já é a correta.
+            # 355030812...49" (SKYTEF/Caixa Cartões, mesma plataforma Qive) —
+            # rótulo próprio, adjacente (uma ou mais quebras de linha). 1ª
+            # ocorrência já é a correta.
             m = re.search(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*\n+\s*([A-Z0-9]+)', t, re.IGNORECASE)
             if m: return m.group(1).strip().upper()
 
@@ -3395,6 +3442,14 @@ class SPPdfExtractor:
                 return self._extrair_prestador_sp_skytef()
             else:
                 return self._extrair_tomador_sp_skytef(t)
+
+        if self.layout == LAYOUT_SP_CAIXA_CARTOES:
+            if is_intermediario:
+                return None
+            if is_prestador:
+                return self._extrair_prestador_sp_caixa_cartoes()
+            else:
+                return self._extrair_tomador_sp_caixa_cartoes(t)
 
         if self.layout == LAYOUT_SAO_JOSE_SC:
             if is_intermediario:
@@ -5718,6 +5773,105 @@ class SPPdfExtractor:
         # DEPOIS do cabeçalho de seção - restringe as buscas a esse trecho
         # para não casar com o bloco "Endereço e CEP"/"CPF/CNPJ" homônimo do
         # PRESTADOR, que aparece mais acima no documento.
+        t_bloco = t[pos_header:] if pos_header is not None else t
+
+        m_doc = re.search(
+            r'CPF\s*/\s*CNPJ\s*\n+\s*([\d./-]{11,18})\s*\n+Inscri[çc][ãa]o\s+Municipal\s*\n+(\S*)\s*Munic[íi]pio\s*\n+(.+)',
+            t_bloco, re.IGNORECASE)
+        if m_doc:
+            cnpj_tom = re.sub(r'\D', '', m_doc.group(1)) or cnpj_tom
+            im_val = m_doc.group(2).strip()
+            if im_val and im_val != '-':
+                im_tom = im_val
+            m_mun = re.match(r'^\s*(\d{7})?\s*-?\s*(.+?)\s*-\s*([A-Z]{2})\s*$', m_doc.group(3).strip())
+            if m_mun:
+                municipio = m_mun.group(2).strip()
+                uf = m_mun.group(3).strip()
+
+        m_end = re.search(
+            r'Endere[çc]o\s+e\s+CEP\s*\n+(.*?)\s*-\s*\d{7}\s*-\s*.+?\s*-\s*[A-Z]{2}\s*-\s*CEP:\s*([\d.\-]{8,10})',
+            t_bloco, re.IGNORECASE)
+        if m_end:
+            cep = re.sub(r'\D', '', m_end.group(2)) or cep
+            trecho = m_end.group(1).strip()
+            if '-' in trecho:
+                logradouro, bairro = (p.strip() for p in trecho.rsplit('-', 1))
+            else:
+                logradouro = trecho
+            m_num = re.search(r'\b(\d+)\b', logradouro)
+            if m_num:
+                numero = m_num.group(1)
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
+
+        return Entidade(
+            cnpj_cpf=cnpj_tom,
+            inscricao_municipal=im_tom,
+            razao_social=nome_tom,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+        )
+
+    def _extrair_prestador_sp_caixa_cartoes(self) -> Entidade:
+        """Prestador FIXO (emissor único gated por CNPJ): CAIXA CARTÕES
+        PRÉ-PAGOS S.A., Vila Olímpia/São Paulo-SP. Endereço/e-mail vêm do
+        próprio letterhead do template Qive (mesma plataforma do SKYTEF,
+        outro emitente) — extrator dedicado e separado do SKYTEF, mesmo
+        racional já aplicado entre LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR."""
+        return Entidade(
+            cnpj_cpf="39459331000634",
+            inscricao_municipal="72114592",
+            razao_social="CAIXA CARTOES PRE-PAGOS S.A.",
+            endereco=Endereco(
+                logradouro="GOMES DE CARVALHO",
+                numero="1629",
+                complemento="ANDAR 5",
+                bairro="VILA OLIMPIA",
+                codigo_municipio="3550308",
+                municipio="São Paulo",
+                uf="SP",
+                cep="04547006",
+            ),
+            email="fiscal@caixaprepagos.com.br",
+        )
+
+    def _extrair_tomador_sp_caixa_cartoes(self, t: str) -> Entidade:
+        """Extrai o tomador de uma nota Caixa Cartões (mesma plataforma
+        Qive do SKYTEF, outro emitente) — extrator dedicado e separado do
+        SKYTEF (mesmo racional já aplicado entre
+        LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR: mesmo template nacional/
+        plataforma, extratores próprios por emitente).
+
+        Mesmo quirk de rótulo deslocado do SKYTEF: a razão social do
+        tomador sai ANTES do cabeçalho de seção "Dados do Tomador de
+        Serviços" (rótulo "Nome / Nome Empresarial" seguido do valor), e o
+        mesmo rótulo também aparece antes, colado na linha do valor do
+        PRESTADOR — por isso pegamos a ÚLTIMA ocorrência antes do
+        cabeçalho do tomador, não a primeira.
+        """
+        cnpj_tom, nome_tom = "00000000000000", "Tomador Não Identificado"
+        logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
+        municipio, uf, cep = "Não informado", "SP", "00000000"
+        im_tom = None
+
+        pos_header = None
+        m_header = re.search(r'Dados\s+do\s+Tomador\s+de\s+Servi[çc]os', t, re.IGNORECASE)
+        if m_header:
+            pos_header = m_header.start()
+            # Achado real: aqui o valor vem COLADO na mesma linha do rótulo
+            # ("Nome / Nome Empresarial RG RESTAURENTE LTDA - EPP"), ao
+            # contrário do quirk em 2 linhas do SKYTEF — \s+ tolera ambos.
+            nomes = list(re.finditer(r'Nome\s*/\s*Nome\s+Empresarial\s+(.+)', t[:pos_header], re.IGNORECASE))
+            if nomes:
+                nome_tom = nomes[-1].group(1).strip() or nome_tom
+
         t_bloco = t[pos_header:] if pos_header is not None else t
 
         m_doc = re.search(
@@ -8768,6 +8922,75 @@ class SPPdfExtractor:
                 valor_liquido = self._parse_valor(m_liq.group(1))
 
             # "ISS Retido\n2 - Não" (padrão) / "1 - Sim" — só True se explícito.
+            iss_retido = bool(re.search(r'ISS\s+Retido\s*\n+\s*1\s*-', t, re.IGNORECASE))
+
+            return Valores(
+                valor_servicos=valor_servicos,
+                valor_deducoes=0.0,
+                valor_pis=valor_pis,
+                valor_cofins=valor_cofins,
+                valor_inss=valor_inss,
+                valor_ir=valor_ir,
+                valor_csll=valor_csll,
+                iss_retido=iss_retido,
+                valor_iss=valor_iss,
+                base_calculo=base_calculo,
+                aliquota=aliquota,
+                valor_liquido_nfse=valor_liquido,
+            )
+
+        if self.layout == LAYOUT_SP_CAIXA_CARTOES:
+            # Mesmo bloco final limpo do SKYTEF (mesma plataforma Qive) —
+            # PIS/COFINS/INSS/CSLL/B.Cálculo/Alíquota/V.ISS/V.Líquido extraídos
+            # igual. DIFERENÇA: o campo estruturado "IR" mostra só "-" (sem
+            # retenção na grade), mas a discriminação cita um valor de IRRF
+            # real e com base legal própria ("IRRF 1,5%... conforme I.N.
+            # 153/87 e Lei 7450/85, art. 53 - R$ 0,09") — extraído daí em vez
+            # de zerado, por ser um valor real declarado na nota (não
+            # fabricado), diferente do SKYTEF (sem nenhum valor real citado).
+            def _campo(rotulo: str) -> str:
+                m = re.search(r'\b' + rotulo + r'\b\s*\n+\s*(?:R\$\s*([\d.,]+)|(-))', t, re.IGNORECASE)
+                if m and m.group(1):
+                    return m.group(1)
+                return ''
+
+            valor_servicos = 0.0
+            m_serv = re.search(r'VALOR\s+DO\s+SERVI[ÇC]O\s*=\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            if m_serv:
+                valor_servicos = self._parse_valor(m_serv.group(1))
+
+            valor_pis = self._parse_valor(_campo(r'PIS'))
+            valor_cofins = self._parse_valor(_campo(r'COFINS'))
+            valor_inss = self._parse_valor(_campo(r'INSS'))
+            valor_csll = self._parse_valor(_campo(r'CSLL'))
+
+            valor_ir = 0.0
+            m_irrf = re.search(
+                r'IRRF\s+[\d.,]+\s*%.{0,200}?-\s*R\$\s*([\d.,]+)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m_irrf:
+                valor_ir = self._parse_valor(m_irrf.group(1))
+
+            base_calculo = valor_servicos
+            m_base = re.search(r'B\.\s*C[áa]lculo\s*\(R\$\)\s*\n+\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            if m_base:
+                base_calculo = self._parse_valor(m_base.group(1))
+
+            aliquota = 0.0
+            m_aliq = re.search(r'Al[íi]quota\s*\(%\)\s*\n+\s*([\d.,]+)\s*%', t, re.IGNORECASE)
+            if m_aliq:
+                aliquota = self._parse_valor(m_aliq.group(1)) / 100
+
+            valor_iss = 0.0
+            m_iss = re.search(r'V\.\s*do\s+ISS\s*\(R\$\)\s*\n+\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            if m_iss:
+                valor_iss = self._parse_valor(m_iss.group(1))
+
+            valor_liquido = valor_servicos
+            m_liq = re.search(r'V\.\s*L[íi]quido\s*\(R\$\)\s*\n+\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
+            if m_liq:
+                valor_liquido = self._parse_valor(m_liq.group(1))
+
             iss_retido = bool(re.search(r'ISS\s+Retido\s*\n+\s*1\s*-', t, re.IGNORECASE))
 
             return Valores(
