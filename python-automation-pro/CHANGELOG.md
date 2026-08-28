@@ -11,7 +11,36 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
-## [Não lançado]
+## [1.5.0] - 2026-08-28
+
+### Adicionado
+
+- **Novo layout — São Paulo/SP, SKYTEF (plataforma Qive) — `sp_skytef`**:
+  fatura de licenciamento de uso de software (SKYTEF SOLUÇÕES EM CAPTURA DE
+  TRANSAÇÕES LTDA, CNPJ 04.988.631/0001-11) caía inteira no fallback
+  `generico` (entidades trocadas/garbladas, valores zerados). Detectado só
+  pelo CNPJ do emitente (nunca pela marca "Qive", plataforma SaaS
+  compartilhada por outros emitentes). Prestador fixo; tomador dinâmico
+  tolerante ao rótulo "Nome / Nome Empresarial" deslocado ANTES do
+  cabeçalho de seção e à Competência impressa como valor órfão. Ver detalhe
+  completo em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#30f-são-paulosp--skytef-qive--sp_skytef).
+- **Novo layout — São Paulo/SP, CAIXA CARTÕES (mesma plataforma Qive do
+  SKYTEF, outro emitente) — `sp_caixa_cartoes`**: fatura de "Taxa de
+  Serviço" (reembolso/adquirência de cartões pré-pagos) da CAIXA CARTÕES
+  PRÉ-PAGOS S.A. (CNPJ 39.459.331/0006-34) caía no fallback `generico`.
+  Detectado só pelo CNPJ do emitente. Prestador fixo; tomador dinâmico
+  (extrator separado do SKYTEF, mesmo racional já usado entre
+  `nfcom_salvador`/`nfcom_rlgr`); ValorIr extraído de um valor de IRRF real
+  citado na discriminação (R$ 0,09, com base legal própria), em vez de
+  zerado como no SKYTEF. Ver detalhe completo em
+  [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#30g-são-paulosp--caixa-cartões-qive--sp_caixa_cartoes).
+- **Novo layout — NFCom Rlgr Telefonia (`nfcom_rlgr`)**: nota nº 7271 (SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA ADPE, R$71,37 de Serviço de Terminação de Tráfego de Voz/STTV) caía no fallback genérico e saía com o CNPJ do tomador igual ao do prestador, razão social do tomador vazada de um rótulo vizinho, valores zerados e Código de Verificação em branco. Mesmo template nacional NFCom (portal SVRS) já usado por `nfcom_salvador`, mas de um emitente diferente (Rlgr Telefonia LTDA, CNPJ 57.675.896/0001-26, Barueri/SP) — detecção gated especificamente por esse CNPJ, prestador fixo (letterhead hardcoded), tomador extraído dinamicamente (rótulos em ordem direta, ao contrário do nfcom_salvador; CEP do tomador extraído de verdade, pois esta nota o imprime inline no endereço). Valor via "TOTAL A PAGAR:"; Base de Cálculo/Alíquota/ISS mantidos em 0,00 (tributado por ICMS, não ISS) com aviso explicativo. Data de Emissão extraída por rótulo dedicado (data+hora na mesma linha, "DATA DE EMISSÃO: 05/01/2026 11:10:01"). Suíte 325→332 verdes; 7 testes novos em `tests/test_nfcom_rlgr.py`. Ver detalhes em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#27c-nfcom-rlgr-telefonia--nfcom_rlgr).
+
+### Corrigido
+
+- **`nfcom_rlgr` em nota ESCANEADA (nota nº 29377)**: o OCR de página inteira com PSM padrão funde os 2 blocos lado a lado do cabeçalho (dados do destinatário à esquerda, dados da nota à direita), vazando a coluna direita pra dentro da razão social do tomador ("...NOTA FISCAL Nº; 000029377..."), trocando 1 dígito do CNPJ do tomador no meio (checksum inválido, mas formato plausível) e derrubando endereço/Código de Verificação por completo. Corrigido com uma 2ª tentativa de OCR em `--psm 4` (separa as colunas corretamente), trocada quando pontua pelo menos empatado com a leitura padrão; a marca de detecção foi ampliada para tolerar a palavra "FISCAL" do título partida ao meio (efeito colateral do PSM 4); validação de checksum adicionada ao CNPJ do tomador (cai no sentinela em vez de propagar dígito trocado). Grade de valores ("TOTAL A PAGAR") sai impressa em cinza muito claro, acima dos limiares usuais de binarização — recuperada com um recorte dedicado (`_ocr_recut_total_pagar_rlgr`: autocontraste + limiar alto de 230), agora extraindo `R$71,37` corretamente em vez de 0,00. Suíte 332→339 verdes; 7 testes novos em `tests/test_nfcom_rlgr_escaneado.py`.
+- **`danfe_produto` (NF-e Modelo 55/ICMS) em nota ESCANEADA (nota nº 764, PENELI METAIS LTDA)**: o cabeçalho funde 3 colunas na mesma faixa de Y (letterhead do emitente | caixa "DANFE" | código de barras), derrubando a palavra "DANFE" por completo e quebrando "Documento Auxiliar da Nota Fiscal Eletrônica"/"0-ENTRADA"/"1-SAÍDA" — sem tratamento, a nota caía no fallback genérico de NFS-e/DANFSe (documento de SERVIÇO/ISS), saindo com razão social vazada, valor zerado e CNPJ do tomador cruzado. Corrigido com detecção OCR-tolerante (marca alternativa exclusiva do Modelo 55, só ativa com `from_ocr=True`), extrator dedicado (`_parse_danfe_produto_ocr`, o parser digital original — nota nº 52.136/GRAN COFFEE — fica intocado) e 3 recortes dedicados (emitente/grade de ICMS/linha do item). Suíte 325→329 verdes; 4 testes novos em `tests/test_danfe_produto_escaneado.py`. Desenvolvido em branch própria (`feature/layout-danfe-55`), separada de layouts de NFS-e/SERVIÇO. Ver detalhes em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md#danfe-estadual--nf-e-de-produto-modelo-55--xml-nf-e-400).
+- **Teste `test_check_latest_release_retorna_dict_quando_ha_versao_nova` obsoleto desde o release 1.4.0**: mockava a tag remota como `"v1.4.0"` fixo, esperando que `check_latest_release()` a reconhecesse como "versão mais nova" — parou de bater assim que `APP_VERSION` alcançou 1.4.0, e passou a falhar (`check_latest_release()` corretamente retorna `None` quando não há versão mais nova, mas o teste ainda esperava um dict). Corrigido gerando a tag mockada dinamicamente a partir de `APP_VERSION` (major+1), pra nunca mais ficar obsoleto a cada bump de versão. Suíte volta a 100% verde (352/352).
 
 ## [1.4.1] - 2026-08-26
 
