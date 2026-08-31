@@ -143,6 +143,7 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 ### 9. Fortaleza/CE — `fortaleza_ce`
 - **Cabeçalho**: "PREFEITURA MUNICIPAL DE FORTALEZA"
 - **Data de Competência**: Busca do rótulo `Competência`.
+- **Data de Emissão / Código de Verificação** (fix real, nota nº 109, RESCUE SOLUCOES AMBIENTAIS LTDA): o cabeçalho é uma grade multi-coluna que o pdfminer despeja fora da ordem visual — o valor da Data de Emissão (`19/12/2025 13:02:43`) sai logo após o título da nota, ANTES de qualquer rótulo, enquanto "Data e Hora da Emissão" aparece bem mais abaixo sem valor colado depois; o Código de Verificação sofre o mesmo problema (rótulo cai adjacente ao bloco "Número da NFS-e", não ao próprio valor). Sem âncora dedicada, ambos caíam nos fallbacks genéricos (`datetime.now()` e sentinela `XXXX-XXXX`, respectivamente). Corrigido ancorando a Data de Emissão no título da nota ("NOTA FISCAL ELETRÔNICA DE SERVIÇO - NFS-e" seguido do timestamp) e o Código de Verificação na sequência "Número da NFS-e / número / código". Testes em `tests/test_fortaleza_ce_data_emissao.py`.
 
 ### 10. Brasília/DF — `brasilia_df`
 - **Cabeçalho**: "Governo do Distrito Federal", "Secretária de Estado de Economia do Distrito Federal" ou "Coordenação do ISS"

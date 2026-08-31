@@ -1119,6 +1119,22 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
+        if self.layout == LAYOUT_FORTALEZA:
+            # O cabeçalho é uma grade multi-coluna que o pdfminer reconstrói
+            # fora de ordem: o valor "19/12/2025 13:02:43" sai logo após o
+            # título da nota (antes de qualquer rótulo), e "Data e Hora da
+            # Emissão" só aparece bem mais abaixo, sem valor colado depois -
+            # o loop genérico de rótulos não encontra nada e cai em
+            # datetime.now() (achado real, nota nº 109, RESCUE SOLUCOES
+            # AMBIENTAIS LTDA). Ancoramos no título, que sempre precede o
+            # valor diretamente.
+            m = re.search(
+                r'NOTA\s+FISCAL\s+ELETR[ÔO]NICA\s+DE\s+SERVI[ÇC]O\s*-\s*NFS-e\s*\n+\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+                t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
         if self.layout == LAYOUT_BARUERI:
             # "Data Emissão\n06/01/2026\nCódigo Autenticidade\n\nHora
             # Emissão\n08:21" — a caixa de cabeçalho é uma grade 2 colunas x 3
@@ -2945,6 +2961,20 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_FORTALEZA:
+            # Mesmo cabeçalho multi-coluna que atrapalha a Data de Emissão
+            # (ver `_extrair_data_emissao`): o rótulo "Código de Verificação"
+            # não fica adjacente ao próprio valor, e sim ao bloco "Número da
+            # NFS-e" (outro campo). O valor real do código aparece logo
+            # DEPOIS do número da nota ("Número da\nNFS-e\n109\n\n488231688"),
+            # antes do rótulo seguinte "No. NFS-e substituída" - achado real,
+            # nota nº 109, RESCUE SOLUCOES AMBIENTAIS LTDA (saía como o
+            # sentinela "XXXX-XXXX", sem nenhum valor real extraído).
+            m = re.search(
+                r'N[uú]mero\s+da\s*\n?\s*NFS-e\s*\n+\s*\d+\s*\n+\s*(\d{6,})\s*\n+\s*No\.\s*NFS-e\s+substitu',
+                t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_BARUERI:
             # "Código Autenticidade" aparece 2x: a 1ª (caixa de cabeçalho,
             # grade 2 colunas lida por coluna) tem "Hora Emissão" colado logo
