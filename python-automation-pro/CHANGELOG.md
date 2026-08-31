@@ -11,6 +11,12 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
+## [Não lançado]
+
+### Corrigido
+
+- **`fortaleza_ce` — Data de Emissão e Código de Verificação derrubados pela ordem de leitura do cabeçalho (nota real nº 109, RESCUE SOLUCOES AMBIENTAIS LTDA -> TEMIS PROJETOS DE MEIO AMBIENTE E SUSTENTABILIDADE LTDA)**: o cabeçalho desta NFS-e é uma grade multi-coluna que o pdfminer reconstrói fora da ordem visual — o valor `19/12/2025 13:02:43` sai logo após o título da nota, ANTES de qualquer rótulo, enquanto "Data e Hora da Emissão" só aparece bem mais abaixo sem nenhum valor colado depois; sem âncora dedicada, o loop genérico de rótulos não encontrava nada e caía no fallback `datetime.now()` (a nota saía sempre com a data da conversão, nunca a real). Mesmo defeito derrubava o Código de Verificação (rótulo "Código de Verificação" cai adjacente ao bloco "Número da NFS-e", não ao próprio valor), retornando o sentinela `XXXX-XXXX` em vez do código real. Corrigido ancorando a Data de Emissão no título da nota ("NOTA FISCAL ELETRÔNICA DE SERVIÇO - NFS-e" seguido do timestamp) e o Código de Verificação na sequência "Número da NFS-e / <número> / <código>". Suíte 352→354 verdes; 2 testes novos em `tests/test_fortaleza_ce_data_emissao.py`.
+
 ## [1.5.0] - 2026-08-28
 
 ### Adicionado
