@@ -69,6 +69,7 @@ LAYOUT_FEIRA     = 'feira_de_santana' # Feira de Santana/BA
 LAYOUT_RIO       = 'rio_de_janeiro'   # Rio de Janeiro/RJ (Nota Carioca)
 LAYOUT_GENERICO  = 'generico'         # SP / ABRASF / outros
 LAYOUT_LOCALIZA  = 'localiza_fatura'  # Localiza Rent A Car S/A (Fatura de Locação)
+LAYOUT_LOCALIZA_PETROLINA = 'localiza_petrolina'  # Localiza - agência MC LOCADORA PETROLINA LTDA (mesmo CNPJ corporativo, PDF com campos em ordem invertida - valor antes do rótulo)
 LAYOUT_SAO_PAULO = 'sao_paulo_sp'     # São Paulo/SP
 LAYOUT_JOINVILLE = 'joinville_sc'     # Joinville/SC
 LAYOUT_FORTALEZA = 'fortaleza_ce'     # Fortaleza/CE
@@ -462,6 +463,21 @@ class SPPdfExtractor:
         # Prefeitura, sem exigir nenhum contexto além do nome da cidade,
         # capturava essa fatura inteira (achado real: fatura ACFSA-237512,
         # TEMIS PROJETOS -> perdia número/valores/tomador por completo).
+        # Agência MC LOCADORA PETROLINA (mesmo CNPJ corporativo da Localiza,
+        # mas PDF com os campos em ordem invertida - valor antes do rótulo,
+        # ex. "PETROLINA - PECNPJ", "18/12/202502640209DATA DE EMISSÃOCÓDIGO")
+        # - checado ANTES do gate genérico abaixo, que também casaria
+        # ("FATURA / DUPLICATA" está presente aqui também), para não perder o
+        # tratamento dedicado. Ancorado ESTRITAMENTE na razão social exclusiva
+        # desta franquia (não no título genérico "Contrato de Aluguel de
+        # Carros/Proposta de Seguro", usado só em `_detect_layout_page` para
+        # decidir se uma PÁGINA isolada é lixo — esse título é boilerplate
+        # comum a QUALQUER nota Localiza, e usá-lo aqui roteava a nota INTEIRA
+        # de outra agência pra este layout por engano: achado real, nota
+        # ACFSA-237512/Feira de Santana saindo com prestador "MC LOCADORA
+        # PETROLINA LTDA" em vez do seu próprio nome).
+        if re.search(r'MC\s+LOCADORA\s+PETROLINA\s+LTDA', t, re.IGNORECASE):
+            return LAYOUT_LOCALIZA_PETROLINA
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
             return LAYOUT_LOCALIZA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
@@ -745,6 +761,22 @@ class SPPdfExtractor:
         # Prefeitura, sem exigir nenhum contexto além do nome da cidade,
         # capturava essa fatura inteira (achado real: fatura ACFSA-237512,
         # TEMIS PROJETOS -> perdia número/valores/tomador por completo).
+        # Agência MC LOCADORA PETROLINA (mesmo CNPJ corporativo da Localiza,
+        # mas PDF com os campos em ordem invertida - valor antes do rótulo,
+        # ex. "PETROLINA - PECNPJ", "18/12/202502640209DATA DE EMISSÃOCÓDIGO")
+        # - checado ANTES do gate genérico abaixo, que também casaria
+        # ("FATURA / DUPLICATA" está presente aqui também), para não perder o
+        # tratamento dedicado. Razão social exclusiva desta franquia, não
+        # colide com nenhuma outra agência Localiza já suportada. A página do
+        # "Contrato de Aluguel de Carros/Proposta de Seguro" (onde fica o
+        # "TOTAL GERAL", valor real da fatura) não repete essa razão social
+        # nem o CNPJ - só o título/cláusulas genéricas do contrato, comuns a
+        # qualquer nota Localiza - por isso também casa aqui, senão essa
+        # página caía em `LAYOUT_GENERICO` e era descartada como lixo (achado
+        # real, nota nº 53044: valor saía sempre 0,00 mesmo com a página
+        # certa existindo no PDF).
+        if re.search(r'MC\s+LOCADORA\s+PETROLINA\s+LTDA|Contrato\s+de\s+Aluguel\s+de\s+Carros\s*/\s*Proposta\s+de\s+Seguro', t, re.IGNORECASE):
+            return LAYOUT_LOCALIZA_PETROLINA
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
             return LAYOUT_LOCALIZA
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
@@ -1401,6 +1433,18 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1))
                 if res: return res
 
+        if self.layout == LAYOUT_LOCALIZA_PETROLINA:
+            # O box "CLIENTE" do cabeçalho imprime os campos em ordem invertida
+            # (valor antes do rótulo: "...18/12/202502640209DATA DE EMISSÃO
+            # CÓDIGO..."), então o rótulo "DATA DE EMISSÃO:" nunca precede o
+            # valor - ancoramos em "Data do documento", que aparece 2x no
+            # boleto/ficha de compensação já no formato rótulo-antes-do-valor
+            # padrão, com o mesmo timestamp (18/12/2025).
+            m = re.search(r'Data\s+do\s+documento\s+(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
+                if res: return res
+
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
             # "DATA DE EMISSÃO: 16/06/2026" ou variações com espaços
             m = re.search(r'DATA\s+DE\s+EMISS[AÃ]O\s*[:\s]+(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
@@ -1759,7 +1803,7 @@ class SPPdfExtractor:
             m = re.search(r'AVULSA\s*\)?\s*(\d{5,})', t, re.IGNORECASE)
             if m: return str(int(m.group(1)))
 
-        if self.layout == LAYOUT_LOCALIZA:
+        if self.layout in (LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA):
             # "FATURA / DUPLICATA Nº: ACPIT - 311630" -> só o número (o "código
             # da filial" antes do traço, ex. ACPIT/AAREC/AASSA/ACBUL, não é
             # numérico). Capturar o valor alfanumérico inteiro quebrava a
@@ -2776,7 +2820,7 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).zfill(2) + m.group(2)
 
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO, LAYOUT_LOCALIZA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA):
             # LAYOUT_LOCALIZA faltava aqui (achado real, fatura ACFSA-237512):
             # caía no default genérico "03115" em vez do item de locação de
             # bens móveis, mesma convenção das demais faturas de locação.
@@ -3017,7 +3061,7 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).upper()
 
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_FF_LOCACAO):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA, LAYOUT_FF_LOCACAO):
             return "FATURA"
 
         if self.layout == LAYOUT_SIMOES_FILHO:
@@ -4259,6 +4303,99 @@ class SPPdfExtractor:
             if 'LFV3_' in t:
                 return self._extrair_entidade_lauro_freitas_v3(is_prestador)
             return self._extrair_entidade_lauro_freitas(is_prestador)
+
+        if self.layout == LAYOUT_LOCALIZA_PETROLINA:
+            # Agência MC LOCADORA PETROLINA: o texto digital imprime os campos
+            # em ordem invertida (valor antes do rótulo), quebrando os 2
+            # formatos já cobertos pelo LAYOUT_LOCALIZA genérico logo abaixo -
+            # nenhum rótulo ("CLIENTE:"/"ENDEREÇO:"/"CEP/CID/UF:") precede seu
+            # próprio valor aqui. Em vez de tentar casar o box "CLIENTE"
+            # embaralhado do cabeçalho, ancoramos em campos LIMPOS (rótulo
+            # antes do valor) do boleto/ficha de compensação anexados ao mesmo
+            # PDF - achado real, nota nº 53044 (TEMIS PROJETOS DE MEIO
+            # AMBIENTE E SUSTENTABILIDADE LTDA).
+            def _split_endereco_virgula(raw_addr: str):
+                """"AVENIDA HONORATO VIANA, 309 - GERCINO COELHO" -> logradouro/
+                número/bairro (mesmo formato do prestador Localiza genérico)."""
+                m_num = re.search(r',\s*(\d+)', raw_addr)
+                if m_num:
+                    logradouro = raw_addr[:m_num.start()].strip()
+                    numero = m_num.group(1)
+                    resto = raw_addr[m_num.end():].strip(' -')
+                else:
+                    logradouro, numero, resto = raw_addr.strip(), "S/N", ""
+                bairro = resto or "Não informado"
+                return logradouro or "Não informado", numero, bairro
+
+            if is_prestador:
+                # CNPJ da agência (mesmo CNPJ corporativo da Localiza, "CNPJ -
+                # 06.890.020/0001-61") e cidade/UF/CEP ("56308000 - PETROLINA -
+                # PE"), sem exigir fronteira de palavra depois da UF - aqui ela
+                # vem colada ao rótulo seguinte sem espaço ("PECNPJ").
+                m_cnpj = re.search(r'CNPJ\s*-\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', t, re.IGNORECASE)
+                m_cep = re.search(r'(\d{5}-?\d{3})\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})', t, re.IGNORECASE)
+
+                logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
+                if m_cep:
+                    # O endereço da agência vem DEPOIS do bloco CEP/CNPJ (ordem
+                    # invertida em relação ao LAYOUT_LOCALIZA genérico), colado
+                    # sem espaço ao sufixo "LTDA" da razão social - por isso
+                    # sem `\b` antes do prefixo de logradouro.
+                    resto = t[m_cep.end(): m_cep.end() + 300]
+                    m_addr = re.search(
+                        r'(?:AV|AVENIDA|R|ROD|TV|AL|PC|ESTRADA|PRA[ÇC]A|ALAMEDA|TRAVESSA)\.?\s[^\n]*?(?=DESCRI[ÇC][ÃA]O|\Z)',
+                        resto, re.IGNORECASE)
+                    if m_addr:
+                        logradouro, numero, bairro = _split_endereco_virgula(m_addr.group(0).strip())
+
+                cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else "06890020000161"
+                mun = m_cep.group(2).strip() if m_cep else "PETROLINA"
+                uf = m_cep.group(3).strip() if m_cep else "PE"
+                cep = re.sub(r'\D', '', m_cep.group(1)) if m_cep else ""
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf, city_hint=mun)
+
+                return Entidade(
+                    cnpj_cpf=cnpj,
+                    razao_social="MC LOCADORA PETROLINA LTDA",
+                    endereco=Endereco(
+                        logradouro=logradouro, numero=numero, complemento=None,
+                        bairro=bairro, codigo_municipio=mun_cod, municipio=mun, uf=uf, cep=cep or "00000000"
+                    )
+                )
+            else:
+                # "Pagador:  TEMIS PROJETOS... LTDA 07345543000190" +
+                # "Endereço: RUA TERRITORIO DO AMAPA - 146 - PITUBA - Salvador -
+                # BA - CEP: 41830540" - campos do boleto/ficha de compensação,
+                # em ordem rótulo-antes-do-valor normal (ao contrário do box
+                # "CLIENTE" do cabeçalho da fatura).
+                m_pagador = re.search(r'Pagador:?\s*([A-ZÀ-Ú][A-ZÀ-Ú0-9À-Ú\s.,&]*?)\s+(\d{14})', t)
+                m_end = re.search(
+                    r'Endere[çc]o:\s*(.+?)\s*-\s*([A-ZÀ-Ú][a-zà-úãõçé]+)\s*-\s*([A-Z]{2})\s*-\s*CEP:\s*(\d{5}-?\d{3})',
+                    t, re.IGNORECASE)
+
+                razao = m_pagador.group(1).strip() if m_pagador else "Não Identificado"
+                cnpj = m_pagador.group(2) if m_pagador else ""
+
+                logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
+                mun, uf, cep = None, _ibge_resolver.default_uf, ""
+                if m_end:
+                    partes = [p.strip() for p in m_end.group(1).split(' - ')]
+                    logradouro = partes[0] if len(partes) > 0 and partes[0] else "Não informado"
+                    numero = partes[1] if len(partes) > 1 and partes[1] else "S/N"
+                    bairro = partes[2] if len(partes) > 2 and partes[2] else "Não informado"
+                    mun = m_end.group(2).strip()
+                    uf = m_end.group(3).strip()
+                    cep = re.sub(r'\D', '', m_end.group(4))
+                mun_cod = _ibge_resolver.extract_and_validate(mun, uf, city_hint=mun) if mun else _ibge_resolver.default_code
+
+                return Entidade(
+                    cnpj_cpf=cnpj or "00000000000000", razao_social=razao,
+                    endereco=Endereco(
+                        logradouro=logradouro, numero=numero, complemento=None,
+                        bairro=bairro, codigo_municipio=mun_cod, municipio=mun, uf=uf,
+                        cep=cep or "00000000"
+                    )
+                )
 
         if self.layout == LAYOUT_LOCALIZA:
             # Notas Localiza reais chegam em pelo menos 2 formatos de texto BEM
@@ -10648,6 +10785,22 @@ class SPPdfExtractor:
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
             )
 
+        if self.layout == LAYOUT_LOCALIZA_PETROLINA:
+            # "VALOR TOTAL" aqui é só o cabeçalho de uma coluna da tabela do
+            # topo (sem R$ nas proximidades - acha "TOTAL02/01/2026À PRAZO...",
+            # sem nenhum valor monetário ali), então o regex genérico do
+            # LAYOUT_LOCALIZA abaixo nunca casa e o valor cai no fallback 0.0.
+            # O valor real está no resumo "Demonstrativo de Valores" do
+            # contrato anexado ("...Taxa de Aluguel 12% 82,35  TOTAL GERAL
+            # 768,57  FATURADO PARA EMPRESA 768,57..."), confirmado também no
+            # boleto ("Valor documento768,57").
+            m_val = re.search(r'TOTAL\s+GERAL\s+([\d.,]+)', t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
         if self.layout == LAYOUT_LOCALIZA:
             # "VALOR TOTAL" e o "R$ valor" nem sempre ficam colados: no OCR da
             # grade de vencimento/condição de pagamento, o rótulo e o valor saem
@@ -14994,8 +15147,14 @@ class SPPdfExtractor:
             # ACFSA-237512/TEMIS) — nenhuma dessas páginas é uma fatura nova.
             # Sem este caso, a heurística genérica de número diverge entre as
             # páginas (não têm "Nº:" próprio, então cada uma pega um dígito
-            # solto de outro campo) e a mesma fatura vira várias XMLs.
-            if is_localiza and re.search(r'LOCALIZA\s+RENT\s+A\s+CAR', text, re.IGNORECASE) \
+            # solto de outro campo) e a mesma fatura vira várias XMLs. Mesmo
+            # princípio para a agência MC LOCADORA PETROLINA (achado real,
+            # nota nº 53044): boleto/contrato repetem "MC LOCADORA PETROLINA
+            # LTDA" como beneficiário/locador em vez de "LOCALIZA RENT A CAR"
+            # — sem esta alternativa, as páginas do boleto e do contrato
+            # (onde ficam o tomador real e o valor) viravam notas-fantasma
+            # próprias em vez de completar a mesma fatura da página 1.
+            if is_localiza and re.search(r'LOCALIZA\s+RENT\s+A\s+CAR|MC\s+LOCADORA\s+PETROLINA\s+LTDA', text, re.IGNORECASE) \
                     and not re.search(r'FATURA\s*/\s*DUPLICATA\s*N[ºo]', text, re.IGNORECASE):
                 return False
 
@@ -15110,9 +15269,17 @@ class SPPdfExtractor:
                     or re.search(r'\bCNPJ\b|\bCPF\b|\bPrestador\b|\bTomador\b|\bNota\b|\bNFS', block_text, re.IGNORECASE)
                 ):
                     continue
-                if not is_localiza:
-                    current_invoice.append((block_text, page_idx))
-                    if block_num: current_num = block_num
+                # Achado real (nota Localiza nº 53044, MC LOCADORA PETROLINA):
+                # este `if not is_localiza:` chegava a excluir o append em SI
+                # mesmo depois de `is_new_invoice` já ter decidido que o bloco
+                # é continuação — o boleto/contrato (páginas com o tomador e
+                # o valor reais) nunca entrava em `current_invoice` quando
+                # `is_localiza=True`, virando texto perdido em vez de mesclado
+                # na mesma fatura. O guard acima (bloco de PREÂMBULO) já
+                # cobre o único caso em que Localiza não deveria contribuir
+                # aqui; uma vez passado ele, o append deve sempre acontecer.
+                current_invoice.append((block_text, page_idx))
+                if block_num: current_num = block_num
                     
         if current_invoice:
             invoices_texts.append(("\n\x0c\n".join([c[0] for c in current_invoice]), current_invoice[0][1]))
