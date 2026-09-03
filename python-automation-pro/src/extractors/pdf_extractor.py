@@ -64,6 +64,7 @@ LAYOUT_CUIABA    = 'cuiaba_issnet'    # Cuiabá/MT via ISSNet
 LAYOUT_BARREIRAS = 'barreiras_ba'     # Barreiras/BA
 LAYOUT_CAMACARI  = 'camacari_cpqd'    # Camaçari/BA via CPqD
 LAYOUT_NACIONAL  = 'danfse_nacional'  # NFS-e Nacional / DANFSe v1.0
+LAYOUT_NACIONAL_REFORMA = 'danfse_nacional_reforma'  # NFS-e Nacional / DANFSe v2.0 (pós-reforma tributária). SUPERSET do LAYOUT_NACIONAL: herda os branches da v1.0 nos campos cujo rótulo NÃO mudou (BC ISSQN, ISSQN Apurado, Contribuição Previdenciária - Retida, Contribuições Sociais - Retidas, decode da Chave de Acesso) e trata só o que a v2.0 renomeou/reorganizou, sem tocar no código já validado da v1.0. Achado real: nota nº 11, UNICA SEGURANCA PATRIMONIAL LTDA (Lauro de Freitas/BA) -> CONDOMINIO EDIFICIO TK TOWER (Salvador/BA), R$ 12.353,68, PDF escaneado (OCR). Diferenças estruturais em relação à v1.0: (1) o valor do serviço deixou de se chamar "Valor do Serviço" e passou a "VALOR DA OPERAÇÃO / SERVIÇO" - sem tratamento, TODA nota v2.0 caía no fallback e gravava o VALOR LÍQUIDO como ValorServicos (9.817,41 em vez de 12.353,68); (2) blocos de entidade renomeados ("PRESTADOR / FORNECEDOR", "TOMADOR / ADQUIRENTE") e com as colunas da direita (Inscrição/Município/E-mail/Telefone/Código IBGE-CEP) despejadas DEPOIS dos dois blocos, em pares prestador-depois-tomador (extração por ORDINAL de ocorrência); (3) o município do prestador passa a vir com código IBGE explícito na própria nota ("Código IBGE / CEP"); (4) retenção do ISSQN deixou de ser a coluna "ISSQN Retido: Sim/Não" e virou "Retenção do ISSQN: Retido pelo Tomador"; (5) seções novas da reforma (TRIBUTAÇÃO IBS/CBS, CST/cClassTrib, "VALOR LÍQUIDO DA NFS-e + IBS/CBS") que não têm equivalente no ABRASF 2.01 e ficam fora do XML
 LAYOUT_SALVADOR  = 'salvador_ba'      # Salvador/BA
 LAYOUT_FEIRA     = 'feira_de_santana' # Feira de Santana/BA
 LAYOUT_RIO       = 'rio_de_janeiro'   # Rio de Janeiro/RJ (Nota Carioca)
@@ -334,6 +335,21 @@ class SPPdfExtractor:
         # municipais próprios —, então este check estreito no topo é seguro. O
         # check largo (Chave de Acesso|Competência da NFS-e) permanece adiante
         # como fallback para OCR severo em notas sem colisão municipal.
+        #
+        # DANFSe v2.0 (pós-reforma tributária) ANTES da v1.0: o check abaixo
+        # casa `DANFSe v\d`, ou seja, engolia a v2.0 e a roteava para o parser
+        # da v1.0, cujo vocabulário de rótulos é outro (ver LAYOUT_NACIONAL_
+        # REFORMA). Marca estreita: o próprio título "DANFSe v2", ou o par
+        # exclusivo da reforma "TRIBUTAÇÃO IBS/CBS" + "VALOR DA OPERAÇÃO /
+        # SERVIÇO" (para OCR que come o "2" do título). Não colide com os
+        # layouts municipais que já imprimem blocos IBS/CBS em template
+        # próprio — Brasília ("IMPOSTO E CONTRIBUIÇÃO SOBRE BENS E SERVIÇOS -
+        # IBS/CBS") e Santos/SKytef/Caixa Cartões ("Informações IBS/CBS") usam
+        # outro cabeçalho e não têm o rótulo "VALOR DA OPERAÇÃO / SERVIÇO".
+        if re.search(r'DANFSe\s*v\s*2', t, re.IGNORECASE) or (
+                re.search(r'TRIBUTA[ÇC][ÃA]O\s+IBS\s*/\s*CBS', t, re.IGNORECASE)
+                and re.search(r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*/\s*SERVI[ÇC]O', t, re.IGNORECASE)):
+            return LAYOUT_NACIONAL_REFORMA
         if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
             return LAYOUT_NACIONAL
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
@@ -649,6 +665,11 @@ class SPPdfExtractor:
         # _detect_layout): a DANFSe traz "Prefeitura Municipal de <X>" e casaria
         # o layout municipal homônimo antes. "DANFSe v1.0"/"Documento Auxiliar da
         # NFS-e" são do documento nacional padrão — check estreito e seguro.
+        # DANFSe v2.0 (reforma) antes da v1.0 — mesmo racional de `_detect_layout`.
+        if re.search(r'DANFSe\s*v\s*2', t, re.IGNORECASE) or (
+                re.search(r'TRIBUTA[ÇC][ÃA]O\s+IBS\s*/\s*CBS', t, re.IGNORECASE)
+                and re.search(r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*/\s*SERVI[ÇC]O', t, re.IGNORECASE)):
+            return LAYOUT_NACIONAL_REFORMA
         if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
             return LAYOUT_NACIONAL
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
@@ -1035,8 +1056,9 @@ class SPPdfExtractor:
                 mes = _MESES_PT.get(m.group(1).lower())
                 if mes:
                     result = datetime(2000 + int(m.group(2)), mes, 1)
-        elif layout == LAYOUT_NACIONAL:
+        elif layout in (LAYOUT_NACIONAL, LAYOUT_NACIONAL_REFORMA):
             # Captura o trecho logo após a label e busca a primeira data (DD/MM/YYYY ou MM/YYYY)
+            # (rótulo "Competência da NFS-e" idêntico na v1.0 e na v2.0)
             m = re.search(r'Compet[eê]ncia\s+da\s+NFS-e', t, re.IGNORECASE)
             if m:
                 snippet = t[m.end():m.end()+150]
@@ -1506,6 +1528,21 @@ class SPPdfExtractor:
             m = re.search(r'Data\s+Impress[aã]o\s*:?\s*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}))?', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
+        if self.layout == LAYOUT_NACIONAL_REFORMA:
+            # DANFSe v2.0: rótulo e valor em linhas próprias ("DATA E HORA DA
+            # EMISSÃO DA NFS-e" / "05/08/2026 16:11:07"), sem a grade de 2
+            # colunas da v1.0 que o regex abaixo desenrola. Ancorado em "DA
+            # NFS-e" para não pegar a "DATA E HORA DA EMISSÃO DA DPS", que na
+            # v2.0 vem logo em seguida com o MESMO formato (nesta nota as duas
+            # coincidem, mas não é garantido: a DPS pode ser anterior).
+            m_v2 = re.search(
+                r'DATA\s+E\s+HORA\s+DA\s+EMISS[ÃA]O\s+DA\s+NFS-?e\s*\n+\s*'
+                r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)',
+                t, re.IGNORECASE)
+            if m_v2:
+                res = _parse_dmy(m_v2.group(1), m_v2.group(2))
                 if res: return res
 
         if self.layout == LAYOUT_NACIONAL:
@@ -2070,12 +2107,15 @@ class SPPdfExtractor:
                     return m_fn.group(1).strip()
             return '00000000'
 
-        if self.layout == LAYOUT_NACIONAL:
+        if self.layout in (LAYOUT_NACIONAL, LAYOUT_NACIONAL_REFORMA):
             # DANFSe Nacional: o número da NFS-e vem codificado na Chave de Acesso
             # de 50 dígitos (posições 24-36, zero-preenchidas) — fonte de verdade
             # imune ao OCR, que costuma comer dígitos do valor impresso ao lado do
             # rótulo "Número da NFS-e" (ex.: "21" sai "2"). Por isso priorizamos o
             # decode da chave sobre a proximidade do rótulo (usada mais abaixo).
+            # Vale igual na v2.0: lá o OCR sequer lê o número impresso (sai como
+            # uma aspa solta) e o rótulo vizinho "NÚMERO DA DPS" traz outro
+            # número (1, não 11) — só o decode da chave acerta.
             m_chave = re.search(r'\b(?:\d\s*){44,60}\b', t)
             if m_chave:
                 chave = re.sub(r'\D', '', m_chave.group(0))
@@ -2151,6 +2191,25 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_NACIONAL_REFORMA:
+            # DANFSe v2.0: o rótulo "Descrição do Serviço" fica na coluna da
+            # ESQUERDA da grade da seção "SERVIÇO PRESTADO", enquanto o texto
+            # livre em si só é impresso DEPOIS de toda a grade (Código de
+            # Tributação / Código da NBS / Local da Prestação) — âncora
+            # rótulo->valor não serve. Fatiamos entre a linha de valor do
+            # "Local da Prestação" (último campo da grade) e o cabeçalho da
+            # seção seguinte, "TRIBUTAÇÃO MUNICIPAL". Preserva tudo o que o
+            # prestador escreveu ali (descrição, custos de transporte/mão de
+            # obra, dados bancários, valor aproximado de tributos).
+            m = re.search(
+                r'Local\s+da\s+Presta[çc][ãa]o[^\n]*\n+[^\n]*\n+(.*?)'
+                r'TRIBUTA[ÇC][ÃA]O\s+MUNICIPAL',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_BARUERI:
             # A grade do item tem 5 rótulos dumped juntos (Descrição do
             # Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total),
@@ -2971,6 +3030,22 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).zfill(4)
 
+        if self.layout == LAYOUT_NACIONAL_REFORMA:
+            # DANFSe v2.0: os dois rótulos da v1.0 ("Código de Tributação
+            # Nacional" e "... Municipal") foram fundidos num só ("Código de
+            # Tributação Nacional/Municipal") e — pior — o VALOR é impresso
+            # ANTES do rótulo na ordem de leitura ("SERVIÇO PRESTADO\n
+            # 11.02.01/-\n...\nCódigo de Tributação Nacional/Municipal"), de
+            # modo que a âncora rótulo->valor da v1.0 nunca casa. Ancoramos no
+            # cabeçalho da seção "SERVIÇO PRESTADO" e pegamos o primeiro código
+            # no formato "XX.XX.XX" (item da LC 116 + desdobro); usamos os 2
+            # primeiros pares (11.02 -> 1102), mesma convenção da v1.0.
+            m = re.search(
+                r'SERVI[ÇC]O\s+PRESTADO[\s\S]{0,120}?(\d{2})\.(\d{2})\.\d{2}',
+                t, re.IGNORECASE)
+            if m:
+                return m.group(1) + m.group(2)
+
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe: "Código de Tributação Nacional ... 16.02.01 - Outros serviços
             # de transporte..." — item da LC 116 no formato "XX.XX.XX" (o 3º par é o
@@ -3357,10 +3432,16 @@ class SPPdfExtractor:
                 if re.search(r'[A-Z]', cand) and re.search(r'\d', cand):
                     return cand
 
-        if self.layout == LAYOUT_NACIONAL:
+        if self.layout in (LAYOUT_NACIONAL, LAYOUT_NACIONAL_REFORMA):
             # DANFSe Nacional não tem "Código de Verificação" — sua identidade e
             # autenticidade são a Chave de Acesso de 50 dígitos ("Chave de Acesso
             # da NFS-e"), que também é a chave de consulta no portal nacional.
+            # Na v2.0 vale o mesmo, com uma ressalva: quando a nota SUBSTITUI
+            # outra, o rodapé "INFORMAÇÕES COMPLEMENTARES" traz uma SEGUNDA
+            # chave de 50 dígitos ("NFS-e Subst.: ..."), a da nota substituída.
+            # A busca pega a PRIMEIRA ocorrência, que é sempre a do cabeçalho —
+            # correto — desde que a página não tenha sido fatiada antes dele
+            # (ver o guard de nota-fantasma em `parse_multiple`).
             # Preenche o <CodigoVerificacao> do XML (decisão do usuário). É a única
             # sequência contígua de 50 dígitos do documento (CNPJ tem 14).
             m = re.search(r'\b(?:\d\s*){50,60}\b', t)
@@ -3461,6 +3542,9 @@ class SPPdfExtractor:
         t = self.raw_text
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
+
+        if self.layout == LAYOUT_NACIONAL_REFORMA:
+            return self._extrair_entidade_nacional_reforma(is_prestador, is_intermediario)
 
         if self.layout == LAYOUT_SANTOS:
             if is_intermediario:
@@ -8044,6 +8128,190 @@ class SPPdfExtractor:
             ),
         )
 
+    def _extrair_entidade_nacional_reforma(self, is_prestador: bool,
+                                           is_intermediario: bool = False) -> Optional[Entidade]:
+        """Extrai prestador/tomador/intermediário da DANFSe v2.0 (pós-reforma).
+
+        A v1.0 imprimia cada entidade num bloco fechado ("EMITENTE DA NFS-e" /
+        "TOMADOR DO SERVIÇO"), com Município/CEP dentro do próprio bloco. A
+        v2.0 renomeou os cabeçalhos ("PRESTADOR / FORNECEDOR", "TOMADOR /
+        ADQUIRENTE") e, principalmente, MUDOU a ordem de leitura: só CNPJ,
+        Nome e Endereço ficam no bloco de cada entidade; as colunas da direita
+        (Indicador Municipal, Município/Sigla UF, E-mail, Telefone, Código
+        IBGE/CEP) são despejadas DEPOIS dos dois blocos, agrupadas por coluna e
+        em pares — sempre o valor do prestador primeiro, o do tomador em
+        seguida. Sem tratamento, o extrator genérico delimitava o bloco do
+        tomador até o fim da seção e atribuía a ele o e-mail, o telefone e até
+        o código IBGE do PRESTADOR (achado real, nota nº 11: tomador saía com
+        `unica@unicaseguranca.com`, `(71) 3378-9186` e CEP "2919207" — que é o
+        IBGE de Lauro de Freitas, a cidade do prestador).
+
+        Por isso esses 5 campos são colhidos por ORDINAL de ocorrência
+        (ocorrência 1 = prestador, ocorrência 2 = tomador), com a janela de
+        busca de cada ocorrência limitada até a ocorrência seguinte do MESMO
+        rótulo e com validação de FORMA do valor. Um campo em branco (o
+        Indicador Municipal do tomador, nesta nota) devolve `None` sem
+        consumir a posição do outro — senão o valor do prestador escorregaria
+        para o tomador."""
+        t = self.raw_text
+
+        m_prest = re.search(r'PRESTADOR\s*/\s*FORNECEDOR', t, re.IGNORECASE)
+        m_tom = re.search(r'TOMADOR\s*/\s*ADQUIRENTE', t, re.IGNORECASE)
+        m_fim = re.search(
+            r'(?:DESTINAT[ÁA]RIO|INTERMEDI[ÁA]RIO)\s+DA\s+OPERA[ÇC][ÃA]O|SERVI[ÇC]O\s+PRESTADO',
+            t[m_tom.end():] if m_tom else t, re.IGNORECASE)
+        fim = (m_tom.end() + m_fim.start()) if (m_tom and m_fim) else len(t)
+
+        if is_intermediario:
+            # A v1.0 dizia "INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA
+            # NFS-e"; a v2.0 diz "INTERMEDIÁRIO DA OPERAÇÃO ...". O rótulo
+            # genérico 'Intermediário' casava a tarja e transformava a própria
+            # frase em razão social de um intermediário fantasma (achado real:
+            # <RazaoSocial>DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e</RazaoSocial>
+            # com CNPJ 00000000000100).
+            if re.search(r'INTERMEDI[ÁA]RIO\s+DA\s+OPERA[ÇC][ÃA]O\s+N[ÃA]O\s+IDENTIFICADO',
+                         t, re.IGNORECASE):
+                return None
+            m_int = re.search(r'INTERMEDI[ÁA]RIO\s+DA\s+OPERA[ÇC][ÃA]O', t, re.IGNORECASE)
+            if not m_int:
+                return None
+            bloco_int = t[m_int.end(): m_int.end() + 400]
+            m_doc = re.search(r'(\d{2}\.?\d{3}\.?\d{3}/\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})', bloco_int)
+            if not m_doc:
+                return None
+            m_nome = re.search(r'Nome\s*/\s*Nome\s+Empresarial\s*\n+\s*([^\n]+)', bloco_int, re.IGNORECASE)
+            # O <Intermediario> do ABRASF 2.01 carrega só CpfCnpj, Inscrição
+            # Municipal e Razão Social — endereço não é emitido, por isso não
+            # tentamos reconstruí-lo aqui.
+            return Entidade(
+                cnpj_cpf=re.sub(r'\D', '', m_doc.group(1)),
+                razao_social=(m_nome.group(1).strip() if m_nome else 'Intermediário Não Identificado'),
+                endereco=Endereco(logradouro='Não informado', numero='S/N', bairro='Não informado',
+                                  codigo_municipio='', municipio='Não informado', uf='', cep='00000000'),
+            )
+
+        if is_prestador:
+            bloco = t[m_prest.end():m_tom.start()] if (m_prest and m_tom) else ''
+        else:
+            bloco = t[m_tom.end():fim] if m_tom else ''
+        idx = 0 if is_prestador else 1
+
+        # Região onde ficam as colunas despejadas das DUAS entidades.
+        regiao = t[m_prest.start():fim] if m_prest else t[:fim]
+
+        def _colher(label_re, aceita):
+            """Um item por OCORRÊNCIA do rótulo (None quando o campo vem em
+            branco), preservando o pareamento posicional prestador/tomador."""
+            ocorrencias = list(re.finditer(label_re, regiao, re.IGNORECASE))
+            valores = []
+            for i, m in enumerate(ocorrencias):
+                limite = ocorrencias[i + 1].start() if i + 1 < len(ocorrencias) else len(regiao)
+                achado = None
+                for linha in regiao[m.end():limite].split('\n'):
+                    linha = linha.strip()
+                    if not linha:
+                        continue
+                    achado = aceita(linha)
+                    if achado is not None:
+                        break
+                valores.append(achado)
+            return valores
+
+        def _pega(valores):
+            return valores[idx] if idx < len(valores) else None
+
+        def _arroba(s):
+            """O OCR lê o "@" ora como uma maiúscula solta colada
+            ("unicaDunicaseguranca.com"), ora como parêntese + maiúscula
+            ("nf(Dtkpatrimonial.com.br") — as duas variantes aparecem na MESMA
+            nota, uma em cada entidade."""
+            if '@' in s:
+                return s
+            s2 = re.sub(r'\(\s*[A-Z]', '@', s, count=1)
+            return s2 if '@' in s2 else self._corrigir_arroba_ocr(s)
+
+        def _ac_municipio(l):
+            m = re.match(r'^([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*/\s*([A-Za-z]{2})$', l)
+            return (re.sub(r'\s+', ' ', m.group(1)).strip(), m.group(2).upper()) if m else None
+
+        def _ac_ibge_cep(l):
+            m = re.match(r'^([\d.]{5,12})\s*/\s*([\d.\-]{8,12})$', l)
+            if not m:
+                return None
+            ibge, cep = re.sub(r'\D', '', m.group(1)), re.sub(r'\D', '', m.group(2))
+            return (ibge if len(ibge) == 7 else '', cep if len(cep) == 8 else '')
+
+        def _ac_email(l):
+            if ' ' in l or '.' not in l:
+                return None
+            e = _arroba(l)
+            return e if re.match(r'^[^@\s]+@[^@\s]+\.[A-Za-z][^@\s]*$', e) else None
+
+        def _ac_telefone(l):
+            return l if re.match(r'^\(?\d{2}\)?\s*\d{4,5}-?\s?\d{4}$', l) else None
+
+        def _ac_im(l):
+            return l if re.match(r'^\d{4,}$', l) else None
+
+        mun_uf = _pega(_colher(r'Munic[íi]pio\s*/\s*Sigla\s+UF(?!\s*/)', _ac_municipio)) or ('', '')
+        ibge_cep = _pega(_colher(r'C[óo]digo\s+IBGE\s*/\s*CEP', _ac_ibge_cep)) or ('', '')
+        email = _pega(_colher(r'E-?\s*mail', _ac_email))
+        telefone = _pega(_colher(r'Telefone', _ac_telefone))
+        inscricao = _pega(_colher(r'Indicador\s+Municipal\s*\(Inscri[çc][ãa]o\)', _ac_im))
+
+        municipio, uf = mun_uf
+        cod_mun, cep = ibge_cep
+        # O código IBGE impresso na própria nota é a melhor fonte possível;
+        # o resolver por nome só entra se ele não sobreviver ao OCR.
+        if not cod_mun and municipio:
+            cod_mun = _ibge_resolver.extract_and_validate(
+                municipio, uf, city_hint=municipio, raw_doc_text=t) or ''
+
+        m_doc = re.search(r'(\d{2}\.?\d{3}\.?\d{3}/\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})', bloco)
+        cnpj = re.sub(r'\D', '', m_doc.group(1)) if m_doc else '00000000000000'
+
+        m_nome = re.search(r'Nome\s*/\s*Nome\s+Empresarial\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
+        razao = m_nome.group(1).strip() if m_nome else ''
+
+        # Endereço em linha única: "logradouro, número, [complemento,] bairro"
+        # (mesma convenção da v1.0 — o bairro é sempre o ÚLTIMO segmento e o
+        # que houver no meio é complemento; nesta nota o tomador tem "LOTE 02"
+        # como complemento e "PITUBA" como bairro, e o parser genérico gravava
+        # "LOTE 02" no bairro).
+        logradouro, numero, complemento, bairro = 'Não informado', 'S/N', None, 'Não informado'
+        m_end = re.search(r'^\s*Endere[çc]o\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE | re.MULTILINE)
+        if m_end:
+            segs = [s.strip() for s in m_end.group(1).split(',') if s.strip()]
+            if segs:
+                logradouro = segs[0]
+                if len(segs) >= 2 and re.match(r'^\d+[A-Za-z]?$|^S/?N$', segs[1], re.IGNORECASE):
+                    numero = segs[1]
+                    resto = segs[2:]
+                else:
+                    resto = segs[1:]
+                if resto:
+                    bairro = resto[-1]
+                    if len(resto) > 1:
+                        complemento = ', '.join(resto[:-1])
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=inscricao,
+            razao_social=razao or ('Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'),
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=cod_mun,
+                municipio=municipio or 'Não informado',
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+            email=email,
+            telefone=telefone,
+        )
+
     def _extrair_entidade_rosario_limeira(self, is_prestador: bool) -> Entidade:
         """Extrai prestador/tomador da NFS-e de Rosário da Limeira/MG (plataforma
         FUTURIZE, PDF digital). Blocos "PRESTADOR DE SERVIÇOS" / "TOMADOR DE
@@ -9541,6 +9809,116 @@ class SPPdfExtractor:
                     valor_iss_retido=iss if iss_retido else 0.0,
                     valor_liquido_nfse=liquido or serv,
                 )
+
+        if self.layout == LAYOUT_NACIONAL_REFORMA:
+            # DANFSe v2.0 (pós-reforma). Mesma mecânica de grade da v1.0
+            # (rótulo em cima, valor embaixo, "-" quando vazio), mas com o
+            # vocabulário renomeado — por isso um branch próprio em vez de
+            # afrouxar o da v1.0.
+            #
+            # REGRA DO VALOR (decisão do usuário 2026-09-03): nesta versão o
+            # valor do serviço aparece em DOIS campos distintos — "BC ISSQN"
+            # (base de cálculo do ISSQN) e "VALOR DA OPERAÇÃO / SERVIÇO" (o
+            # valor da operação em si). Eles coincidem quando não há exclusão
+            # nem redução de base; quando DIVERGEM, vale o VALOR DA OPERAÇÃO /
+            # SERVIÇO para `valor_servicos`, e o BC ISSQN fica apenas na
+            # `base_calculo`. O "VALOR LÍQUIDO DA NFS-e" (bruto menos as
+            # retenções) NUNCA é fonte de `valor_servicos` — era exatamente
+            # esse o erro quando a nota caía no parser da v1.0, que procura
+            # "Valor do Serviço" (rótulo inexistente na v2.0) e, sem achar,
+            # copiava o líquido: 9.817,41 no lugar de 12.353,68.
+            m_rs = r'R\$\s*(\d[\d.,]*\d)'
+
+            def _rs_apos_v2(label, janela=120):
+                m = re.search(label, t, re.IGNORECASE)
+                if not m:
+                    return 0.0
+                m_v = re.search(m_rs, t[m.end(): m.end() + janela])
+                return self._parse_valor_tolerante(m_v.group(1)) if m_v else 0.0
+
+            valor_operacao = _rs_apos_v2(r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*/\s*SERVI[ÇC]O')
+            base = _rs_apos_v2(r'BC\s+ISSQN', janela=60)
+            # "VALOR LÍQUIDO DA NFS-e" aparece DUAS vezes na v2.0: o líquido
+            # do ISSQN/retenções federais e, no fim da grade da reforma,
+            # "VALOR LÍQUIDO DA NFS-e + IBS/CBS" (R$ 0,00 enquanto o IBS/CBS
+            # não está em vigor). O negative lookahead descarta o segundo —
+            # sem ele, uma nota cujo OCR inverta a ordem das duas linhas
+            # gravaria líquido zero.
+            liquido = _rs_apos_v2(r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-?e(?!\s*\+)')
+
+            serv = valor_operacao or base
+            if not liquido:
+                liquido = serv
+
+            iss = _rs_apos_v2(r'ISSQN\s+Apurado', janela=60)
+
+            # Retenção do ISSQN: a v1.0 tinha a coluna "ISSQN Retido" com
+            # "Sim"/"Não"; a v2.0 troca por "Retenção do ISSQN" com o texto
+            # "Retido pelo Tomador"/"Retido pelo Intermediário"/"Não Retido".
+            # Sem este tratamento a nota sai com IssRetido=2 (não retido) e
+            # sem a tag <ValorIssRetido> — inversão de sinal contábil numa
+            # nota em que o tomador reteve o ISS de fato.
+            iss_retido = bool(re.search(
+                r'Reten[çc][ãa]o\s+do\s+ISSQN\s*\n+\s*Retido\s+pelo\b',
+                t, re.IGNORECASE))
+
+            aliquota = 0.0
+            m_aliq = re.search(
+                r'Al[íi]quota\s+Aplicada[\s\S]{0,80}?(\d{1,3}[.,]\d{1,4})\s*%',
+                t, re.IGNORECASE)
+            if m_aliq:
+                aliquota = self._parse_valor_tolerante(m_aliq.group(1)) / 100
+
+            # Retenções federais: MESMOS rótulos da v1.0 (por isso já vinham
+            # certas mesmo com a nota caindo no parser errado — ver
+            # `test_danfse_nacional_retencoes_federais.py`), com a mesma
+            # adjacência ESTRITA rótulo->valor: quando o valor não aparece
+            # adjacente no texto, o campo fica 0.0 em vez de pescar o número
+            # de outro campo. "IRRF" na v2.0 vem colado ao cabeçalho da seção
+            # ("TRIBUTAÇÃO FEDERAL (EXCETO CBS) | IRRF"), o que não atrapalha
+            # a âncora (que olha para o que vem DEPOIS do rótulo).
+            def _valor_apos_rotulo_grade_v2(label):
+                m = re.search(label + r'\s*\n+\s*(-|' + m_rs + r')', t, re.IGNORECASE)
+                if not m:
+                    return 0.0
+                val = m.group(1)
+                if val == '-':
+                    return 0.0
+                m_v = re.search(m_rs, val)
+                return self._parse_valor_tolerante(m_v.group(1)) if m_v else 0.0
+
+            irrf = _valor_apos_rotulo_grade_v2(r'\bIRRF\b')
+            inss = _valor_apos_rotulo_grade_v2(r'Contribui[çc][ãa]o\s+Previdenci[áa]ria\s*-\s*Retida')
+            contrib_sociais = _valor_apos_rotulo_grade_v2(r'Contribui[çc][õo]es\s+Sociais\s*-\s*Retidas')
+
+            # NÃO extraídos de propósito:
+            # - "PIS/COFINS - Débito Apuração Própria": débito tributário do
+            #   próprio prestador, não retenção do tomador (decisão do usuário
+            #   no PR #44, mantida aqui).
+            # - "Exclusões e Reduções da Base de Cálculo" (R$ 1.068,59 nesta
+            #   nota): pertence à base do IBS/CBS, não à do ISSQN — mapeá-la
+            #   para `valor_deducoes` deduziria da base do ISS um valor que a
+            #   própria nota não deduziu (BC ISSQN = valor da operação cheio).
+            # - "Total das Retenções (ISSQN / Federais)": total derivado, sem
+            #   tag ABRASF própria; serve de conferência (ISS retido + INSS +
+            #   contribuições sociais), não de fonte.
+            return Valores(
+                valor_servicos=serv,
+                valor_deducoes=0.0,
+                valor_pis=0.0,
+                valor_cofins=0.0,
+                valor_csll=0.0,
+                valor_inss=inss,
+                valor_ir=irrf,
+                valor_contribuicoes_sociais_retidas=contrib_sociais,
+                outras_retencoes=0.0,
+                base_calculo=base or serv,
+                aliquota=aliquota,
+                valor_iss=iss,
+                iss_retido=iss_retido,
+                valor_iss_retido=iss if iss_retido else 0.0,
+                valor_liquido_nfse=liquido or serv,
+            )
 
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe Nacional: grade "rótulo(s) em cima / valores embaixo", com
@@ -14984,6 +15362,27 @@ class SPPdfExtractor:
         Serviço: Fora do Município" + linha de texto livre "OBRA: ...,
         <CIDADE>/<UF>" (achado real, nota nº 65, obra em Camaçari/BA)."""
         t = self.raw_text
+        if self.layout == LAYOUT_NACIONAL_REFORMA:
+            # DANFSe v2.0: o município de incidência do ISSQN é um campo
+            # PRÓPRIO da nota ("Município / Sigla UF / País de Incidência do
+            # ISSQN"), não uma inferência. Precisa ser lido explicitamente
+            # porque o padrão do transformer é usar o município do PRESTADOR —
+            # e nesta nota eles são diferentes: prestador em Lauro de Freitas,
+            # serviço prestado e ISSQN devido em Salvador (LC 116/2003 art. 3º,
+            # vigilância/segurança). Antes deste layout o município do
+            # prestador saía errado (Salvador) e o resultado batia por
+            # acidente; com o prestador corrigido para Lauro de Freitas, sem
+            # este override a incidência migraria para o município errado.
+            m = re.search(
+                r'Munic[íi]pio\s*/\s*Sigla\s+UF\s*/\s*Pa[íi]s\s+de\s+Incid[êe]ncia\s+do\s+ISSQN'
+                r'[\s\S]{0,80}?\n\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*/\s*([A-Za-z]{2})\s*/',
+                t, re.IGNORECASE)
+            if not m:
+                return None
+            municipio, uf = re.sub(r'\s+', ' ', m.group(1)).strip(), m.group(2).upper()
+            return _ibge_resolver.extract_and_validate(
+                municipio, uf, city_hint=municipio, raw_doc_text=t)
+
         if self.layout == LAYOUT_GUARULHOS:
             if not re.search(r'Tributa[çc][ãa]o\s+fora\s+do\s+munic[íi]pio', t, re.IGNORECASE):
                 return None
@@ -15220,11 +15619,32 @@ class SPPdfExtractor:
             # a fantasma da nota única por página.
             DANFSE_HEADER_MIN_OFFSET = 200
 
+            # O limiar de offset sozinho não bastou para a DANFSe v2.0
+            # (pós-reforma): lá o cabeçalho de 2 colunas empurra o título
+            # "DANFSe v2.0" para ~230 caracteres — depois da Chave de Acesso,
+            # do Número da NFS-e, da Competência e do Número/Série da DPS —,
+            # de modo que o preâmbulo voltava a ser fatiado como nota-fantasma
+            # (achado real, nota nº 11: o PDF de 1 nota virava 2, uma com a
+            # chave e o número certos e nenhuma entidade, outra com as
+            # entidades e o número/chave decodificados do "NFS-e Subst." do
+            # rodapé). Condição adicional: o texto ANTES do título candidato
+            # precisa conter ao menos um CNPJ/CPF — um preâmbulo de cabeçalho
+            # nunca tem, e uma 1ª nota genuína (o caso que este split existe
+            # para resolver) sempre tem o do prestador.
+            #
+            # O documento PRECISA estar pontuado ("03.037.698/0001-08"), como
+            # toda DANFSe imprime: um padrão com pontuação opcional casaria
+            # qualquer corrida de 11+ dígitos e a própria Chave de Acesso (50
+            # dígitos), que fica JUSTAMENTE no preâmbulo que queremos
+            # descartar — o guard nunca dispararia.
+            _RE_DOC_NOTA = r'\d{2}\.?\d{3}\.?\d{3}\s*/\s*\d{4}-?\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}'
+
             final_parts = []
             for p in parts:
                 split_positions = [
                     m.start() for m in re.finditer(r'\n\s*\bDANFSe\b', p, flags=re.I)
                     if m.start() >= DANFSE_HEADER_MIN_OFFSET
+                    and re.search(_RE_DOC_NOTA, p[:m.start()])
                 ]
                 if split_positions:
                     bounds = [0] + split_positions + [len(p)]
