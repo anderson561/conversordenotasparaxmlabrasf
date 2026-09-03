@@ -11,7 +11,7 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
-## [Não lançado]
+## [1.6.0] - 2026-09-03
 
 ### Adicionado
 
