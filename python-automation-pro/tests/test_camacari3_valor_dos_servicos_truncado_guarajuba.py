@@ -144,16 +144,16 @@ def test_tomador_razao_social_tolera_soclal_no_lugar_de_social(nfse):
     # "Nome/Razão Soclal:" ("i" lido como "l") não deve mais cair em
     # "Tomador Não Identificado".
     assert nfse.tomador.razao_social == "GUARAJUBA SHOPPING LTDA"
-    # O CNPJ desta nota também sai corrompido no texto ("CPFI/CNPI:" em vez
-    # de "CPF/CNPJ:", achado independente da razão social) — na produção é
-    # recuperado por `_recuperar_cnpj_tomador_camacari`, um recorte que
-    # re-OCRa a IMAGEM real da página (via `_pagina_hint`) e não é
-    # reproduzível com texto mockado (mesmo padrão de outros recortes de
-    # página deste extrator, sem teste unitário dedicado). Confirmado
-    # manualmente contra o PDF real: tomador sai 24890395000103. Aqui, sem
-    # PDF de origem, cai no sentinela — comportamento correto e já esperado
-    # para este cenário, não uma regressão.
-    assert nfse.tomador.cnpj_cpf == "00000000000000"
+    # O CNPJ desta nota também sai corrompido no rótulo ("CPFI/CNPI:" em vez
+    # de "CPF/CNPJ:", o "J" também virando "I" — não reconhecido pela
+    # tolerância de rótulo `CPF[/I]CNPJ`). Recuperado pelo fallback SEM
+    # rótulo introduzido para a nota nº 160 (busca o padrão de CNPJ
+    # formatado em qualquer lugar do bloco já isolado do tomador, sem
+    # depender do rótulo sobreviver) — antes caía no sentinela
+    # `00000000000000` aqui (só recuperado em produção por
+    # `_recuperar_cnpj_tomador_camacari`, um recorte à parte que re-OCRa a
+    # imagem da página); agora extrai correto até no texto mockado.
+    assert nfse.tomador.cnpj_cpf == "24890395000103"
 
 
 def test_prestador_permanece_correto(nfse):

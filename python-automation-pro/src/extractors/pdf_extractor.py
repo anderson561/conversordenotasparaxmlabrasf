@@ -8123,6 +8123,33 @@ class SPPdfExtractor:
             r'\s*(?:Inscri[çc][ãa]o\s+Municipal|CPF[/I]?CNPJ)\b.*$',
             '', razao, flags=re.IGNORECASE
         ).strip()
+        if not razao:
+            # Fallback POSICIONAL, não mais por rótulo — achado real, nota
+            # nº 160, GUARAJUBA SHOPPING LTDA: o PSM 6 (recuperado por
+            # `_ocr_page` quando o PSM automático falha por completo, ver
+            # esse fix) embaralha o rótulo "Nome/Razão Social" de um jeito
+            # NOVO e mais severo que os já tolerados acima — chega a trocar
+            # as PRÓPRIAS letras do prefixo "Raz" ("Nois Rraão Social:" no
+            # prestador, "Nomemianão Social:" no tomador), não só o sufixo
+            # "ão"/"Social". Perseguir cada grafia específica não escala —
+            # em vez disso, aproveitamos que "Nome/Razão Social" é sempre o
+            # PRIMEIRO campo impresso logo após o cabeçalho "PRESTADOR/
+            # TOMADOR DE SERVIÇOS" neste layout: pegamos a 1ª linha não-vazia
+            # do bloco e tudo depois do primeiro ":" nela, não importa como o
+            # rótulo em si tenha saído. Mesma limpeza de ruído já aplicada
+            # acima (corte em 2+ espaços / próximo rótulo colado).
+            for l in bloco.split('\n'):
+                l = l.strip()
+                if not l:
+                    continue
+                if ':' in l:
+                    razao = l.split(':', 1)[1].strip()
+                    razao = re.sub(r'\s{2,}.*$', '', razao).strip()
+                    razao = re.sub(
+                        r'\s*(?:Inscri[çc][ãa]o\s+Municipal|CPF[/I]?CNPJ)\b.*$',
+                        '', razao, flags=re.IGNORECASE
+                    ).strip()
+                break
 
         # Separadores tolerantes a espaço no lugar do ponto (achado real: "24.928
         # 188/0001-47" — o 2º ponto do CNPJ saiu como espaço no OCR), a "."
@@ -8139,6 +8166,16 @@ class SPPdfExtractor:
         # S/A: a barra "/" de "CPF/CNPJ" saiu lida como "I" pelo OCR) além do
         # "/" original.
         m_cnpj = re.search(r'CPF[/I]CNPJ\s*[:.]?\s*(\d{2}[.\s,]?\d{3}[.\s,]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
+        if not m_cnpj:
+            # Fallback SEM rótulo — mesmo achado da nota nº 160 acima: o
+            # rótulo "CPF/CNPJ" saiu reduzido a só ":"/"PJ:" pelo PSM 6,
+            # irreconhecível por qualquer tolerância de rótulo. Dentro deste
+            # `bloco` (já isolado entre "PRESTADOR DE SERVIÇOS" e "TOMADOR
+            # DE SERVIÇOS", ou entre "TOMADOR..." e "DISCRIMINAÇÃO") só pode
+            # aparecer o CNPJ da PRÓPRIA entidade — nenhum outro CNPJ
+            # formatado (com "/" e "-") é esperado aí, então buscamos o
+            # padrão sem exigir rótulo nenhum.
+            m_cnpj = re.search(r'(\d{2}[.\s,]?\d{3}[.\s,]?\d{3}/\d{4}-\d{2})', bloco)
         cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ''
         if is_prestador and cnpj and not self._validate_cnpj_cpf(cnpj):
             # Prestador não tem mecanismo de correção de dígito conhecido
@@ -12054,6 +12091,11 @@ class SPPdfExtractor:
                 best_text = pytesseract.image_to_string(img, lang='por')
                 best_score = self._score_ocr_text(best_text)
                 best_angle = 0
+                # Preservado à parte de `best_score` (que a busca de rotação
+                # abaixo pode sobrescrever) — ver uso no fallback de PSM 6
+                # mais adiante (achado real, nota nº 160, GUARAJUBA SHOPPING
+                # LTDA/Camaçari).
+                score_angle_0 = best_score
 
                 # Só vale a pena testar outras rotações se a leitura em 0°
                 # não pareceu um documento fiscal de verdade.
@@ -12081,16 +12123,34 @@ class SPPdfExtractor:
                 # de primeira). Já usado com sucesso como fallback pontuado só
                 # para o layout Salvador (ver abaixo); generalizado aqui para
                 # QUALQUER layout, mas gated de forma a nunca arriscar regressão:
-                # só dispara quando as 4 rotações com PSM automático já
-                # fracassaram por completo (`best_score == 0`, ou seja, estamos
-                # prestes a devolver uma página 100% vazia de qualquer forma).
-                if best_score == 0:
+                # só dispara quando a orientação 0° (a original, sem rotação)
+                # já fracassou por completo sob PSM automático.
+                #
+                # Usamos `score_angle_0` (não `best_score`) nesta condição —
+                # achado real, nota nº 160, GUARAJUBA SHOPPING LTDA/Camaçari:
+                # em 0° o PSM automático lê 0 caracteres (igual à nota 201),
+                # mas a rotação de 90° (claramente ERRADA — a imagem já está
+                # na orientação certa) produz texto embaralhado que, por
+                # coincidência, pontua > 0 em `_score_ocr_text` (bate algum
+                # termo/formato de moeda ao acaso). Isso fazia a busca de
+                # rotação "vencer" com essa rotação errada (`best_score = 17`)
+                # e o gate antigo (`best_score == 0`) nunca disparava — mesmo
+                # com PSM 6 em 0° recuperando a nota inteira corretamente
+                # (1513 caracteres limpos, confirmado manualmente). Não há
+                # risco de regressão: quando 0° já pontua > 0 sob PSM
+                # automático (a grande maioria das notas), `score_angle_0`
+                # é idêntico ao comportamento anterior; quando TODAS as
+                # rotações já zeravam (caso original da nota 201),
+                # `score_angle_0 == 0` também era verdade, então o
+                # comportamento ali não muda.
+                if score_angle_0 == 0:
                     try:
                         texto_psm6 = pytesseract.image_to_string(img, lang='por', config='--psm 6')
                         score_psm6 = self._score_ocr_text(texto_psm6)
                         if score_psm6 > best_score:
                             best_score = score_psm6
                             best_text = texto_psm6
+                            best_angle = 0
                     except Exception:
                         pass
 
