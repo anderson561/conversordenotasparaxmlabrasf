@@ -1790,6 +1790,86 @@ class SPPdfExtractor:
                 if m_num:
                     return m_num.group(1).strip()
 
+        if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
+            # Achado real, nota nº 258, GUARAJUBA MALLS S/A: `_ocr_header_box_camacari`
+            # faz várias tentativas redundantes de ler a caixa "Número da Nota /
+            # Data de Emissão / Código de autenticidade". Nesta nota, na única
+            # tentativa em que o RÓTULO sai limpo ("Número da Nota"), o VALOR
+            # logo abaixo saiu ilegível ("PaACnno um", nenhum dígito) — a busca
+            # genérica de proximidade (mais abaixo nesta função) então "vaza"
+            # para a linha seguinte ("Data de Emissão\n09/06/2026") e devolve
+            # "09" (a data, não o número). O valor real ("258") sobrevive limpo
+            # numa OUTRA tentativa, onde é o RÓTULO que sai ilegível
+            # ("INUMMGTO OA Feia RA MO ea DR O") — por isso nunca reconhecido
+            # pelo regex de rótulo.
+            #
+            # Corrigido de forma estreita para não regredir a nota nº 20335
+            # (PADUA COMÉRCIO, já documentada): lá o rótulo "Número da Nota"
+            # NUNCA bate limpo em nenhuma tentativa (sempre "Núrmero da Nta"/
+            # "enero da Nota"/"Nirmaro da Nota", todos degradados demais para
+            # o regex reconhecer) — a correção já existente para aquele caso
+            # (recuperar pelo nome do arquivo) depende EXATAMENTE de o rótulo
+            # nunca casar, então só entramos neste ramo quando o rótulo BATE
+            # limpo E o valor logo depois está contaminado (ausente ou é,
+            # visivelmente, um fragmento de data/ano) — a nota 20335 nunca
+            # aciona esta condição, preservando seu comportamento intacto.
+            #
+            # Achado real, nota nº 256, GUARAJUBA MALLS S/A: ao contrário da
+            # nota 258 (onde a ÚNICA ocorrência limpa do rótulo tinha o valor
+            # contaminado), aqui a PRIMEIRA ocorrência do rótulo é que está
+            # contaminada (valor vaza para a data seguinte, "09/06/2026" ->
+            # "09"), mas uma tentativa de recorte POSTERIOR no mesmo texto
+            # repete o rótulo com o valor limpo ("Número da Nota\n256"). Por
+            # isso iteramos TODAS as ocorrências do rótulo (não só a
+            # primeira) e devolvemos o primeiro valor não-contaminado
+            # encontrado, na ordem em que aparecem no texto.
+            #
+            # Duas checagens ADICIONAIS de contaminação, além de "/" e ano
+            # (necessárias para não regredir a nota nº 9100, PH GESTÃO —
+            # `test_camacari2_numero_data_pag14.py` — onde este texto tem 2
+            # ocorrências do rótulo, AMBAS com valor aparentemente "limpo" por
+            # essas 2 regras antigas, mas ambas erradas): (1) o candidato não
+            # pode ter mais de 6 dígitos — um número de nota real nunca chega
+            # a isso, mas a Inscrição Municipal do prestador (10 dígitos,
+            # "9042148001") colada perto do rótulo, sim; (2) o candidato não
+            # pode vir seguido imediatamente de uma LETRA — um número de nota
+            # real é sempre seguido de espaço/quebra de linha, mas o Código de
+            # autenticidade alfanumérico ("8075H0406") colado perto de outra
+            # ocorrência do rótulo produz um candidato just por sorte curto
+            # ("8075") seguido da letra "H" do próprio código.
+            labels_num = list(re.finditer(r'N[uú]mero\s+da\s+Nota\b', t, re.IGNORECASE))
+            for m_num_label in labels_num:
+                janela = t[m_num_label.end():m_num_label.end() + 100]
+                m_prox = re.search(r'(\d+)', janela)
+                if not m_prox:
+                    continue
+                candidato = m_prox.group(1)
+                depois = janela[m_prox.end():m_prox.end() + 1]
+                contaminado = (
+                    depois == '/'
+                    or candidato in ('2024', '2025', '2026', '2027')
+                    or len(candidato) > 6
+                    or depois.isalpha()
+                )
+                if not contaminado:
+                    return candidato
+            if labels_num:
+                # Nenhuma ocorrência do rótulo teve valor limpo (caso da nota
+                # 258) — procura um número isolado numa tentativa de recorte
+                # ANTERIOR à primeira ocorrência do rótulo (mesma caixa, lida
+                # repetidas vezes) — mesmo princípio de corroboração já usado
+                # no fix da nota 285 (ver achado documentado). `\d{2,6}` no
+                # início da linha evita blocos de dígitos longos (CNPJ/
+                # Inscrição Municipal, sempre ≥10 dígitos): o `\b` exige
+                # fronteira logo após o candidato, que uma sequência mais
+                # longa de dígitos nunca satisfaz dentro do limite de 6.
+                antes = t[:labels_num[0].start()]
+                for m_cand in re.finditer(r'^\s*(\d{2,6})\b', antes, re.MULTILINE):
+                    depois_cand = antes[m_cand.end():m_cand.end() + 1]
+                    if depois_cand == '/' or m_cand.group(1) in ('2024', '2025', '2026', '2027'):
+                        continue
+                    return m_cand.group(1)
+
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             # "# NFS-e 24052" — texto já reconstruído por coordenada
             # (ver `_reconstruir_texto_por_coordenadas`); ancorado no "#"
@@ -5682,17 +5762,31 @@ class SPPdfExtractor:
                 cnpj_prest = re.sub(r'\D', '', m_cnpj.group(1))
                 break
 
-        # Nome: primeiras linhas não-vazias antes do primeiro CNPJ/telefone/CEP,
-        # pulando o título fixo "DOCUMENTO AUXILIAR..." do cabeçalho deste layout
-        # (senão o loop parava nele por engano, achando que era o nome do prestador).
-        # `re.search` (não `re.match`): o OCR às vezes cola ruído solto ANTES
-        # do título (". | DOCUMENTO AUXILIAR..."), e `re.match` (ancorado no
-        # início da linha) não pulava essa variante — achado real, nota F&F
+        # Nome: primeiras linhas não-vazias APÓS o título fixo "DOCUMENTO
+        # AUXILIAR..." do cabeçalho deste layout (senão o loop parava nele
+        # por engano, achando que era o nome do prestador). `re.search` (não
+        # `re.match`): o OCR às vezes cola ruído solto ANTES do título
+        # (". | DOCUMENTO AUXILIAR..."), e `re.match` (ancorado no início da
+        # linha) não pulava essa variante — achado real, nota F&F
         # Comunicações nº 31696.
+        #
+        # Achado real, nota Grupo FeF nº 22570: nesta nota o ruído do OCR não
+        # sai colado NA MESMA linha do título (como na nº 31696 acima), mas
+        # numa linha SEPARADA e INTEIRA logo ANTES dele ("sr rent er rr ar e
+        # e rr..."). Como essa linha de ruído também tem letras e mais de 3
+        # caracteres, o loop antigo (que só pulava a própria linha do título,
+        # sem exigir tê-lo visto primeiro) escolhia essa linha de ruído como
+        # nome — nunca chegava a ver "Grupo FeF", 2 linhas depois do título.
+        # Corrigido para só começar a considerar candidatos DEPOIS de ver o
+        # título pela 1ª vez.
         linhas = [l.strip() for l in t.split('\n') if l.strip()]
-        nome_prest = linhas[0] if linhas else "Prestador de Telecomunicação"
+        nome_prest = "Prestador de Telecomunicação"
+        titulo_visto = False
         for l in linhas:
             if re.search(r'DOCUMENTO\s+AUXILIAR', l, re.IGNORECASE):
+                titulo_visto = True
+                continue
+            if not titulo_visto:
                 continue
             if re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\(\d{2}\)\s*\d{4}', l):
                 break
@@ -11272,6 +11366,14 @@ class SPPdfExtractor:
             # vírgula/ponto no valor capturado, tratamos os 2 últimos dígitos
             # como centavos em vez de propagar R$55.840,00 (100x o valor real).
             m_total = re.search(r'TOTAL\s*A?\s*PAGAR\s*[:\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+            if not m_total:
+                # Achado real, nota Grupo FeF nº 22570: a caixa cinza "TOTAL A
+                # PAGAR" nunca é lida pelo OCR nesta nota (área ilegível nas 2
+                # tentativas de recorte, zoom padrão e zoom alto) — mas o
+                # mesmo total aparece também na grade de itens, no campo
+                # "VALOR TOTAL NF" (ex.: "VALOR TOTAL NF 11990" -> R$119,90),
+                # sempre presente nessa grade independente da caixa de cima.
+                m_total = re.search(r'VALOR\s+TOTAL\s+NF\s*[:\s]*([\d\.,]+)', t, re.IGNORECASE)
             if m_total:
                 bruto = m_total.group(1)
                 if '.' not in bruto and ',' not in bruto and len(bruto) > 2:
@@ -11481,7 +11583,7 @@ class SPPdfExtractor:
             # quando esta linha não é encontrada. `\d{4}` depois da vírgula
             # da quantidade é o discriminador seguro contra falso-positivo
             # (nenhum valor monetário da grade usa 4 casas decimais).
-            m_item = re.search(r'\d+,\d{4}\s+([\d\.,]+)\s+([\d\.,]+)', t)
+            m_item = re.search(r'(\d+),\d{4}\s+([\d\.,]+)\s+([\d\.,]+)', t)
             m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
             # "Al.?quota" tolera o "í" de "Alíquota" ser lido pelo OCR como "i" comum
             # ou até como o caractere de substituição Unicode "�" (falha total de
@@ -11509,11 +11611,35 @@ class SPPdfExtractor:
             # linha seguinte), o valor capturado no grupo 2 pode ser só esse
             # "1" truncado — sem vírgula, não é um total plausível, e a
             # célula da grade (aqui lida limpa) deve prevalecer em vez dele.
-            val_serv_item = (
+            #
+            # Exige também que UNITÁRIO == TOTAL quando a quantidade é "1"
+            # (um único item: o total é sempre igual ao unitário, sem
+            # arredondamento) — achado real, nota nº 258, GUARAJUBA MALLS
+            # S/A: o OCR leu "1,0000 512,28 512,48" (um dígito de centavo
+            # trocado só no total, "2"->"4"), um valor SINTATICAMENTE válido
+            # (tem vírgula, não é zero) que passava despercebido pela guarda
+            # acima. As 3 células da grade ("Valor dos Serviços",
+            # "Base de Cálculo", "Valor Líquido da Nota") concordavam em
+            # "512,28", confirmando que o total da linha do item é que
+            # estava corrompido.
+            _qtd_item = m_item.group(1) if m_item else None
+            _unit_item = (
                 _parse_valor_camacari(m_item.group(2))
                 if m_item and ',' in m_item.group(2)
+                else None
+            )
+            val_serv_item = (
+                _parse_valor_camacari(m_item.group(3))
+                if m_item and ',' in m_item.group(3)
                 else 0.0
             )
+            if (
+                val_serv_item > 0.0
+                and _qtd_item == '1'
+                and _unit_item is not None
+                and abs(_unit_item - val_serv_item) > 0.01
+            ):
+                val_serv_item = 0.0
             val_serv = val_serv_item if val_serv_item > 0.0 else val_serv_grade
             base = _parse_valor_camacari(m_base.group(1)) if m_base else 0.0
             aliq = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
