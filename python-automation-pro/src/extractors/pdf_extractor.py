@@ -7873,7 +7873,12 @@ class SPPdfExtractor:
             m = re.search(pat, bloco, re.IGNORECASE)
             return m.group(1).strip(' .:|') if m else ''
 
-        razao = _campo(r'Nome/Raz[ãa]o\s+Social\s*:?\s*(.+)')
+        # "Social" tolera "Soclal" (achado real, nota nº 148, GUARAJUBA
+        # SHOPPING LTDA): o "i" sai como "l" no OCR (confusão visual clássica
+        # entre as duas letras) — sem essa tolerância o tomador caía em
+        # "Tomador Não Identificado" mesmo com o CNPJ lido certo (regex
+        # independente, não afetada por este mesmo defeito).
+        razao = _campo(r'Nome/Raz[ãa]o\s+Soc[il]al\s*:?\s*(.+)')
         razao = re.sub(r'\s{2,}.*$', '', razao).strip()  # corta ruído após 2+ espaços
 
         # Separadores toleram VÍRGULA no lugar do ponto (achado real, nota nº
@@ -7998,7 +8003,9 @@ class SPPdfExtractor:
         # saiu "Nome/Razho Social." e o tomador saiu "None/Razão Social:" —
         # dois OCRs diferentes do MESMO rótulo, na mesma nota). Separador
         # tolera ":" OU "." (achado real: "Social. PADUA COMERCIO...").
-        razao = _campo(r'Raz.{0,2}o\s+Social\s*[:.]?\s*(.+)')
+        # "Social" tolera "Soclal" (achado real, nota nº 148, GUARAJUBA
+        # SHOPPING LTDA: "Nome/Razão Soclal:" — "i" lido como "l").
+        razao = _campo(r'Raz.{0,2}o\s+Soc[il]al\s*[:.]?\s*(.+)')
         razao = re.sub(r'\s{2,}.*$', '', razao).strip()  # corta ruído após 2+ espaços
 
         # Separadores tolerantes a espaço no lugar do ponto (achado real: "24.928
@@ -11433,6 +11440,23 @@ class SPPdfExtractor:
                 return self._parse_valor(digits)
 
             m_val = re.search(r'Valor\s+dos\s+Servi[cç]os\s*(?:\(R\$\)|\(=\))?\s*([\d\.,]+)', t, re.IGNORECASE)
+            # Linha do item em "DISCRIMINAÇÃO DOS SERVIÇOS" (formato
+            # "<descrição> <qtd>,0000 <unitário> <total>") — achado real,
+            # nota nº 148, GUARAJUBA SHOPPING LTDA: a célula "Valor dos
+            # Serviços (R$)" da grade saiu "42.892,8" (um dígito de centavo
+            # perdido pelo OCR, "9" comido de "92") em vez de "42.892,92" —
+            # um número SINTATICAMENTE válido, então nenhuma das guardas
+            # acima (célula vazia/zero) pega esse erro. A linha do item,
+            # em contraste, é um número isolado e simples (sem a grade
+            # "Retenções x Totais" de 2 colunas que já corrompeu várias
+            # outras notas deste lote — ver nº 159 acima) e se mostrou
+            # limpa em toda nota já testada deste layout (unitário e total
+            # sempre batem com a grade quando ela está íntegra). Vira fonte
+            # PRIMÁRIA do Valor dos Serviços; a célula da grade só é usada
+            # quando esta linha não é encontrada. `\d{4}` depois da vírgula
+            # da quantidade é o discriminador seguro contra falso-positivo
+            # (nenhum valor monetário da grade usa 4 casas decimais).
+            m_item = re.search(r'\d+,\d{4}\s+([\d\.,]+)\s+([\d\.,]+)', t)
             m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
             # "Al.?quota" tolera o "í" de "Alíquota" ser lido pelo OCR como "i" comum
             # ou até como o caractere de substituição Unicode "�" (falha total de
@@ -11450,11 +11474,22 @@ class SPPdfExtractor:
             m_liq = re.search(r'Valor\s+L[ií]quido\s+da\s+Nota\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
             m_ded = re.search(r'Dedu[cç][oõ]es\s*\(-\)\s*([\d\.,]+)', t, re.IGNORECASE)
 
-            val_serv = _parse_valor_camacari(m_val.group(1)) if m_val else 0.0
+            val_serv_grade = _parse_valor_camacari(m_val.group(1)) if m_val else 0.0
+            val_serv_item = _parse_valor_camacari(m_item.group(2)) if m_item else 0.0
+            val_serv = val_serv_item if val_serv_item > 0.0 else val_serv_grade
             base = _parse_valor_camacari(m_base.group(1)) if m_base else 0.0
             aliq = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
             iss = _parse_valor_camacari(m_iss.group(1)) if m_iss else 0.0
-            liquido = _parse_valor_camacari(m_liq.group(1)) if m_liq else val_serv
+            # Captura "degenerada" do Valor Líquido: só sobrevive um caractere
+            # de pontuação solto (ex. "." sozinho, ruído de OCR colado logo
+            # antes do número — achado real, mesma nota nº 148), sem nenhum
+            # dígito. `re.search` casa e `m_liq` fica truthy, mas o valor
+            # resultante não presta — tratado como não encontrado.
+            liquido = (
+                _parse_valor_camacari(m_liq.group(1))
+                if m_liq and re.search(r'\d', m_liq.group(1))
+                else val_serv
+            )
             deducoes = _parse_valor_camacari(m_ded.group(1)) if m_ded else 0.0
 
             # "Valor dos Serviços (R$)" totalmente ilegível (nenhum dígito
@@ -11462,10 +11497,9 @@ class SPPdfExtractor:
             # GUARAJUBA SHOPPING LTDA (R$ 9.194,55). Este branch nunca modela
             # ISS retido pelo tomador (`iss_retido` fica no default `False`
             # do modelo, nunca setado aqui), então Valor dos Serviços = Valor
-            # Líquido já é a equivalência assumida nesta mesma função (ver
-            # "liquido = ... if m_liq else val_serv" acima, a mesma
-            # equivalência na direção oposta) — usamos o líquido, lido limpo
-            # nesta nota, como fonte quando a célula do valor bruto falhar.
+            # Líquido já é a equivalência assumida nesta mesma função — usamos
+            # o líquido, lido limpo nesta nota, como último recurso quando
+            # nem a linha do item nem a célula do valor bruto renderam nada.
             if val_serv == 0.0 and liquido > 0.0:
                 val_serv = liquido
 
