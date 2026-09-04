@@ -167,6 +167,13 @@ class SPPdfExtractor:
         # documento e caiu no fallback de "agora" — usado por parse() para
         # gerar um aviso de baixa confiança em vez de mascarar o problema.
         self._data_emissao_fallback = False
+        # Sinaliza que a grade de valores do Camaçari escaneado (LAYOUT_
+        # CAMACARI/_2/_3) calculou uma Alíquota implausível (>100%, sinal
+        # inequívoco de célula ilegível na grade "Retenções x Totais" — ver
+        # `_extrair_valores`) e zerou Alíquota/ValorIss em vez de propagar o
+        # número sem lastro — usado por `parse()` para gerar um aviso em vez
+        # de mascarar o problema.
+        self._camacari_aliquota_iss_zerada = False
         # Sinaliza que o texto veio de OCR (PDF imagem/escaneado), não de texto
         # embutido (pdfminer). Usado para distinguir layouts que existem em duas
         # origens — ex.: SP digital (LAYOUT_SAO_PAULO) vs SP escaneado
@@ -5230,6 +5237,22 @@ class SPPdfExtractor:
         if not self._validate_cnpj_cpf(cnpj) and 'BONI TRANSPORTES' in razao.upper():
             cnpj = '04555283000199'
 
+        # GUARAJUBA SHOPPING LTDA (CNPJ real 24.890.395/0001-03, confirmado
+        # pelo usuário) — contraparte recorrente num lote de 30 notas onde
+        # ela é sempre a TOMADORA, em municípios/layouts diferentes. Achado
+        # real, nota Salvador/BA nº 00054394 (prestador M ESCRITA COMÉRCIO E
+        # SERVIÇOS LTDA): o OCR deste scan lê consistentemente "24.890.396/
+        # 0001-03" (o "5" de ".395" sai "6"), o que quebra o dígito
+        # verificador (a base ".396" fecha em "-58", não em "-03") — sem
+        # nenhum outro CNPJ válido sobrando no documento para o fallback de
+        # "scavenge" (`_scavenge_all_cnpjs`) usar, o tomador caía no
+        # sentinela `00000000000100`. Mesmo princípio já usado para BONI
+        # TRANSPORTES logo acima: só substitui quando o checksum JÁ reprovou
+        # e a razão social bate com esta contraparte conhecida, nunca
+        # mascarando um CNPJ genuinamente diferente de outra empresa.
+        if not self._validate_cnpj_cpf(cnpj) and 'GUARAJUBA SHOPPING' in razao.upper():
+            cnpj = '24890395000103'
+
         # 5. Endereço e IBGE
         end_data = {
             'logradouro': 'Não informado', 'numero': 'S/N', 'bairro': 'Não informado',
@@ -7853,7 +7876,14 @@ class SPPdfExtractor:
         razao = _campo(r'Nome/Raz[ãa]o\s+Social\s*:?\s*(.+)')
         razao = re.sub(r'\s{2,}.*$', '', razao).strip()  # corta ruído após 2+ espaços
 
-        m_cnpj = re.search(r'CPF/CNPJ\s*:?\s*(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
+        # Separadores toleram VÍRGULA no lugar do ponto (achado real, nota nº
+        # 159, prestador AVANÇO GESTÃO E ADMINISTRAÇÃO LTDA: "59.132,742/0001-
+        # 13" — o 2º ponto do CNPJ saiu como vírgula no OCR, checksum válido
+        # uma vez limpa a pontuação; mesma classe de tolerância já usada no
+        # extrator genérico para outro achado, "61,235.378/0001-69") — sem
+        # ela o regex nunca casava e o prestador caía no sentinela mesmo com
+        # o CNPJ legível e válido na própria nota.
+        m_cnpj = re.search(r'CPF/CNPJ\s*:?\s*(\d{2}[.,]?\d{3}[.,]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
         cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ''
         if not cnpj and not is_prestador and getattr(self, 'from_ocr', False):
             # OCR padrão não achou nenhum valor para o rótulo "CPF/CNPJ" do
@@ -7972,13 +8002,17 @@ class SPPdfExtractor:
         razao = re.sub(r'\s{2,}.*$', '', razao).strip()  # corta ruído após 2+ espaços
 
         # Separadores tolerantes a espaço no lugar do ponto (achado real: "24.928
-        # 188/0001-47" — o 2º ponto do CNPJ saiu como espaço no OCR) e a "."
+        # 188/0001-47" — o 2º ponto do CNPJ saiu como espaço no OCR), a "."
         # no lugar de ":" depois do rótulo (achado real: "CPF/CNPJ. 01
         # 813.680/0001-25" — sem essa tolerância o CNPJ do TOMADOR, que sai
         # correto e com checksum válido, deixava de casar e disparava sem
         # necessidade o recorte de recuperação de último recurso, que tem
-        # sua própria margem de erro de OCR).
-        m_cnpj = re.search(r'CPF/CNPJ\s*[:.]?\s*(\d{2}[.\s]?\d{3}[.\s]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
+        # sua própria margem de erro de OCR) e VÍRGULA no lugar do ponto
+        # (achado real, nota nº 159, prestador AVANÇO GESTÃO E ADMINISTRAÇÃO
+        # LTDA: "59.132,742/0001-13" — checksum válido uma vez limpa a
+        # pontuação, mas sem essa tolerância o regex nunca casava e o
+        # prestador caía no sentinela mesmo com o CNPJ legível na nota).
+        m_cnpj = re.search(r'CPF/CNPJ\s*[:.]?\s*(\d{2}[.\s,]?\d{3}[.\s,]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
         cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ''
         if is_prestador and cnpj and not self._validate_cnpj_cpf(cnpj):
             # Prestador não tem mecanismo de correção de dígito conhecido
@@ -11422,14 +11456,43 @@ class SPPdfExtractor:
             iss = _parse_valor_camacari(m_iss.group(1)) if m_iss else 0.0
             liquido = _parse_valor_camacari(m_liq.group(1)) if m_liq else val_serv
             deducoes = _parse_valor_camacari(m_ded.group(1)) if m_ded else 0.0
+
+            # "Valor dos Serviços (R$)" totalmente ilegível (nenhum dígito
+            # sobrevive na célula, ex.: "RE pone") — achado real, nota nº 159,
+            # GUARAJUBA SHOPPING LTDA (R$ 9.194,55). Este branch nunca modela
+            # ISS retido pelo tomador (`iss_retido` fica no default `False`
+            # do modelo, nunca setado aqui), então Valor dos Serviços = Valor
+            # Líquido já é a equivalência assumida nesta mesma função (ver
+            # "liquido = ... if m_liq else val_serv" acima, a mesma
+            # equivalência na direção oposta) — usamos o líquido, lido limpo
+            # nesta nota, como fonte quando a célula do valor bruto falhar.
+            if val_serv == 0.0 and liquido > 0.0:
+                val_serv = liquido
+
             # Base de cálculo = Valor dos Serviços - Deduções quando o rótulo
-            # "Base de Cálculo" não foi capturado (mesma causa do m_aliq acima).
-            if base == 0.0 and val_serv > 0.0:
+            # "Base de Cálculo" não foi capturado (mesma causa do m_aliq acima)
+            # OU quando o valor capturado é IMPLAUSÍVEL (menor que Valor dos
+            # Serviços - Deduções, o que esta grade nunca permite) — sinal de
+            # célula truncada pelo OCR (achado real, mesma nota nº 159: "Base
+            # de Cálculo (=) 0194," -> 194,00 em vez de 9.194,55, o "9"
+            # inicial foi comido pelo OCR).
+            if val_serv > 0.0 and base < (val_serv - deducoes):
                 base = val_serv - deducoes
             # Alíquota derivada de ISS/Base quando o rótulo da alíquota falhou
             # mas o valor do ISS foi lido com confiança (formato de moeda).
             if aliq == 0.0 and iss > 0.0 and base > 0.0:
                 aliq = iss / base
+            # Alíquota IMPLAUSÍVEL (>100%) é sinal inequívoco de célula(s)
+            # ilegível(is) nesta grade (achado real, mesma nota nº 159: Base/
+            # ISS truncados geravam uma "alíquota" derivada de 206%) —
+            # preferimos zerar Alíquota/ISS e avisar o usuário a fabricar um
+            # número sem lastro no documento (mesmo princípio já aplicado em
+            # outros layouts, ex. WebISS/Aracaju - "dado errado é pior que
+            # dado ausente", decisão do usuário 2026-09-04).
+            if aliq > 1.0:
+                aliq = 0.0
+                iss = 0.0
+                self._camacari_aliquota_iss_zerada = True
             pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
             # Fallback: em PDFs deste layout gerados digitalmente (não escaneados/OCR),
@@ -14736,6 +14799,13 @@ class SPPdfExtractor:
                     "cobrada pelo prestador é considerada valor tributável; "
                     "confira se esse repasse precisa de tratamento contábil à parte"
                 )
+        if getattr(self, '_camacari_aliquota_iss_zerada', False):
+            avisos.append(
+                "Alíquota/Valor do ISS não confiáveis nesta grade (célula "
+                "ilegível no scan) - mantidos zerados por não haver valor "
+                "real recuperável; confira manualmente o percentual de ISS "
+                "desta nota"
+            )
         if self.layout == LAYOUT_NACIONAL and re.search(r'\*{3,}', self.raw_text):
             # Achado real (Aracaju/SE, WebISS, nota 2026000000014): a
             # própria prefeitura imprime "*****" no lugar de Base de Cálculo
