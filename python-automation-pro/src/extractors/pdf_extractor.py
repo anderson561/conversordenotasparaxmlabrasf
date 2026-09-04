@@ -7880,6 +7880,18 @@ class SPPdfExtractor:
         # independente, não afetada por este mesmo defeito).
         razao = _campo(r'Nome/Raz[ãa]o\s+Soc[il]al\s*:?\s*(.+)')
         razao = re.sub(r'\s{2,}.*$', '', razao).strip()  # corta ruído após 2+ espaços
+        # Corta também quando o PRÓXIMO rótulo da tabela (normalmente numa
+        # linha separada) sai colado na mesma linha da razão social — achado
+        # real, nota nº 201, AVANÇO GESTÃO E ADMINISTRAÇÃO LTDA: o fallback
+        # de PSM 6 (ver `_ocr_page`) reordena colunas de um jeito diferente
+        # do PSM automático, e "Inscrição Municipal: 0066628001" (ou
+        # "CPF/CNPJ"/"CPFICNPJ") aparece na MESMA linha da razão social em
+        # vez da linha seguinte, sem 2 espaços entre os dois para o corte
+        # acima já pegar.
+        razao = re.sub(
+            r'\s*(?:Inscri[çc][ãa]o\s+Municipal|CPF[/I]?CNPJ)\b.*$',
+            '', razao, flags=re.IGNORECASE
+        ).strip()
 
         # Separadores toleram VÍRGULA no lugar do ponto (achado real, nota nº
         # 159, prestador AVANÇO GESTÃO E ADMINISTRAÇÃO LTDA: "59.132,742/0001-
@@ -7888,7 +7900,10 @@ class SPPdfExtractor:
         # extrator genérico para outro achado, "61,235.378/0001-69") — sem
         # ela o regex nunca casava e o prestador caía no sentinela mesmo com
         # o CNPJ legível e válido na própria nota.
-        m_cnpj = re.search(r'CPF/CNPJ\s*:?\s*(\d{2}[.,]?\d{3}[.,]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
+        # Rótulo tolera "CPFICNPJ" (achado real, nota nº 201, GUARAJUBA MALLS
+        # S/A: a barra "/" de "CPF/CNPJ" saiu lida como "I" pelo OCR) além do
+        # "/" original.
+        m_cnpj = re.search(r'CPF[/I]CNPJ\s*:?\s*(\d{2}[.,]?\d{3}[.,]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
         cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ''
         if not cnpj and not is_prestador and getattr(self, 'from_ocr', False):
             # OCR padrão não achou nenhum valor para o rótulo "CPF/CNPJ" do
@@ -8007,6 +8022,13 @@ class SPPdfExtractor:
         # SHOPPING LTDA: "Nome/Razão Soclal:" — "i" lido como "l").
         razao = _campo(r'Raz.{0,2}o\s+Soc[il]al\s*[:.]?\s*(.+)')
         razao = re.sub(r'\s{2,}.*$', '', razao).strip()  # corta ruído após 2+ espaços
+        # Corta também quando o PRÓXIMO rótulo sai colado na mesma linha da
+        # razão social (achado real, nota nº 201 — ver mesmo comentário em
+        # `_extrair_entidade_camacari2`).
+        razao = re.sub(
+            r'\s*(?:Inscri[çc][ãa]o\s+Municipal|CPF[/I]?CNPJ)\b.*$',
+            '', razao, flags=re.IGNORECASE
+        ).strip()
 
         # Separadores tolerantes a espaço no lugar do ponto (achado real: "24.928
         # 188/0001-47" — o 2º ponto do CNPJ saiu como espaço no OCR), a "."
@@ -8019,7 +8041,10 @@ class SPPdfExtractor:
         # LTDA: "59.132,742/0001-13" — checksum válido uma vez limpa a
         # pontuação, mas sem essa tolerância o regex nunca casava e o
         # prestador caía no sentinela mesmo com o CNPJ legível na nota).
-        m_cnpj = re.search(r'CPF/CNPJ\s*[:.]?\s*(\d{2}[.\s,]?\d{3}[.\s,]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
+        # Rótulo tolera "CPFICNPJ" (achado real, nota nº 201, GUARAJUBA MALLS
+        # S/A: a barra "/" de "CPF/CNPJ" saiu lida como "I" pelo OCR) além do
+        # "/" original.
+        m_cnpj = re.search(r'CPF[/I]CNPJ\s*[:.]?\s*(\d{2}[.\s,]?\d{3}[.\s,]?\d{3}/?\d{4}-?\d{2})', bloco, re.IGNORECASE)
         cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ''
         if is_prestador and cnpj and not self._validate_cnpj_cpf(cnpj):
             # Prestador não tem mecanismo de correção de dígito conhecido
@@ -11475,7 +11500,20 @@ class SPPdfExtractor:
             m_ded = re.search(r'Dedu[cç][oõ]es\s*\(-\)\s*([\d\.,]+)', t, re.IGNORECASE)
 
             val_serv_grade = _parse_valor_camacari(m_val.group(1)) if m_val else 0.0
-            val_serv_item = _parse_valor_camacari(m_item.group(2)) if m_item else 0.0
+            # Exige vírgula decimal no total capturado da linha do item: um
+            # "VALOR TOTAL (R$)" de verdade nesta grade SEMPRE traz centavos
+            # com vírgula (ex. "12.694,47") — achado real, nota nº 201,
+            # GUARAJUBA MALLS S/A: quando o fallback de PSM 6 (ver `_ocr_page`)
+            # recupera a página mas embaralha a linha do item em 2 pedaços
+            # ("12.694,47" vira "2.694," numa linha e um "1" solto sobra na
+            # linha seguinte), o valor capturado no grupo 2 pode ser só esse
+            # "1" truncado — sem vírgula, não é um total plausível, e a
+            # célula da grade (aqui lida limpa) deve prevalecer em vez dele.
+            val_serv_item = (
+                _parse_valor_camacari(m_item.group(2))
+                if m_item and ',' in m_item.group(2)
+                else 0.0
+            )
             val_serv = val_serv_item if val_serv_item > 0.0 else val_serv_grade
             base = _parse_valor_camacari(m_base.group(1)) if m_base else 0.0
             aliq = (self._parse_valor(m_aliq.group(1)) / 100) if m_aliq else 0.0
@@ -11904,6 +11942,31 @@ class SPPdfExtractor:
                             best_angle = angle
                         if best_score > 0:
                             break
+
+                # PSM automático (3, layout automático) pode falhar por COMPLETO
+                # em páginas com pouco texto denso e muito espaço em branco —
+                # a segmentação automática não encontra nenhum bloco de texto em
+                # NENHUMA das 4 rotações testadas acima, mesmo a imagem estando
+                # perfeitamente legível e na orientação certa (achado real, nota
+                # nº 201, GUARAJUBA MALLS S/A, Camaçari/BA: uma tabela de item
+                # único seguida de uma área em branco enorme — PSM automático lê
+                # 0 caracteres em qualquer orientação; PSM 6, que assume um
+                # único bloco uniforme de texto, lê a nota inteira corretamente
+                # de primeira). Já usado com sucesso como fallback pontuado só
+                # para o layout Salvador (ver abaixo); generalizado aqui para
+                # QUALQUER layout, mas gated de forma a nunca arriscar regressão:
+                # só dispara quando as 4 rotações com PSM automático já
+                # fracassaram por completo (`best_score == 0`, ou seja, estamos
+                # prestes a devolver uma página 100% vazia de qualquer forma).
+                if best_score == 0:
+                    try:
+                        texto_psm6 = pytesseract.image_to_string(img, lang='por', config='--psm 6')
+                        score_psm6 = self._score_ocr_text(texto_psm6)
+                        if score_psm6 > best_score:
+                            best_score = score_psm6
+                            best_text = texto_psm6
+                    except Exception:
+                        pass
 
                 # Guarda o ângulo vencedor para recortes dedicados (ex.: caixa de
                 # cabeçalho do SP2) renderizarem a região na mesma orientação.
