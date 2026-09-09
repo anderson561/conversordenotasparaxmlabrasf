@@ -12815,6 +12815,21 @@ class SPPdfExtractor:
                     if recut_telecom.strip():
                         best_text = f"{recut_telecom}\n{best_text}"
 
+                    # Bloco de identificação colado ao QR Code (número, série,
+                    # data de emissão, chave de acesso, protocolo): em algumas
+                    # notas deste layout a segmentação automática o descarta
+                    # por completo, em QUALQUER zoom de página inteira — ver
+                    # `_ocr_recut_identificacao_telecom` (achado real, nota nº
+                    # 34350, pág. 29 do lote PH Gestão 08/2026). Só disparamos
+                    # quando "NOTA FISCAL Nº" NÃO foi lido em nada do que já
+                    # temos: as notas em que o cabeçalho já sai legível (o caso
+                    # comum, e todas as já validadas deste layout) pulam o
+                    # custo extra e ficam com o comportamento intacto.
+                    if not re.search(r'NOTA\s+FISCAL\s+N[ºo°]', best_text, re.IGNORECASE):
+                        recut_ident = self._ocr_recut_identificacao_telecom(page)
+                        if re.search(r'NOTA\s+FISCAL\s+N[ºo°]', recut_ident, re.IGNORECASE):
+                            best_text = f"{recut_ident}\n{best_text}"
+
                 # NFCom da Rlgr Telefonia (`nfcom_rlgr`): o template imprime 2
                 # blocos lado a lado no cabeçalho (esquerda: NOME/CPF-CNPJ/
                 # ENDEREÇO/INSCRIÇÃO/CÓDIGO DO CLIENTE do destinatário; direita:
@@ -12980,6 +12995,48 @@ class SPPdfExtractor:
             import io
 
             pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_identificacao_telecom(page) -> str:
+        """Recorta o bloco de IDENTIFICAÇÃO da NFCom (à direita do QR Code):
+        "NOTA FISCAL Nº ... - SÉRIE: ...", "DATA DE EMISSÃO", "CHAVE DE
+        ACESSO" e "Protocolo de autorização".
+
+        Achado real, pág. 29 do lote "Notas_Fiscais_emitidas_e_recebidas_
+        08.2026_-_PH_Gestao_SEDE" (nota F&F Comunicações nº 34350): esse
+        bloco é impresso em fonte NÍTIDA e alto contraste, mas fica colado ao
+        QR Code — a segmentação automática do Tesseract trata a faixa inteira
+        como imagem e DESCARTA o bloco por completo. Nem a leitura padrão
+        (zoom 3x) nem o re-OCR de página inteira em zoom 6x
+        (`_ocr_recut_telecom_comunicacao`) devolvem UMA única ocorrência de
+        "NOTA FISCAL Nº", "EMISSÃO", "CHAVE" ou "Protocolo". Sem eles a nota
+        saía com número "765" (capturado de "Resolução ANATEL nº 765/2023",
+        no rodapé de avisos regulatórios, pelo padrão genérico de último
+        recurso) e com a data de emissão caindo no `datetime.now()`.
+
+        Recortando a região SEM o QR Code (55%-100% da largura, 11%-29% da
+        altura — calibrado contra a página real), a mesma leitura padrão
+        devolve o bloco inteiro limpo, inclusive a chave de acesso de 44
+        dígitos, da qual o número da nota também é decodificável (modelo 62,
+        posições 25:34). O recorte é PREPENDADO ao texto principal, então os
+        extratores de número/data/chave que já existem para este layout
+        encontram esta versão limpa antes de qualquer ocorrência ambígua."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            r = page.rect
+            clip = pymupdf.Rect(
+                r.x0 + r.width * 0.55, r.y0 + r.height * 0.11,
+                r.x1,                  r.y0 + r.height * 0.29,
+            )
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0), clip=clip)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por')
         except Exception:
