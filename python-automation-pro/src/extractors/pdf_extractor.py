@@ -205,6 +205,32 @@ class SPPdfExtractor:
         # de fotos/scans — reaproveitado por recortes dedicados (ex.: caixa de
         # cabeçalho do SP2) para renderizar a região na mesma orientação.
         self._ocr_rotation = 0
+        # Origem do texto DESTA página, quando conhecida (ver
+        # `_pagina_e_escaneada`). `None` = desconhecida, cai no `from_ocr`
+        # do documento inteiro (comportamento histórico).
+        self._pagina_veio_de_ocr = None
+
+    def _pagina_e_escaneada(self) -> bool:
+        """A página deste bloco veio de OCR (imagem/scan) ou do texto embutido?
+
+        `self.from_ocr` é uma flag do DOCUMENTO inteiro: em PDF misto (algumas
+        páginas digitais, outras escaneadas — o caso comum dos lotes mensais),
+        basta UMA página precisar de OCR para todas as demais serem tratadas
+        como escaneadas. Achado real, PDF "Notas_Fiscais_emitidas_e_recebidas_
+        08.2026_-_PH_Gestao_SEDE", pág. 8 (nota nº 52, RAFFA GLASS): a página
+        é 100% digital (1493 caracteres de texto embutido), mas 30 das 41
+        páginas do lote exigiram OCR — `from_ocr=True` roteava a página para
+        o `LAYOUT_CAMACARI_3` (variante de foto/scan) em vez do
+        `LAYOUT_CAMACARI` digital.
+
+        `parse_multiple()` sabe exatamente quais páginas passaram por OCR e
+        propaga isso em `_pagina_veio_de_ocr`; quando a informação não está
+        disponível (uso via `parse()` direto), mantém o comportamento
+        histórico de olhar o documento inteiro."""
+        flag = getattr(self, '_pagina_veio_de_ocr', None)
+        if flag is None:
+            return bool(getattr(self, 'from_ocr', False))
+        return bool(flag)
 
     def _reconstruir_texto_por_coordenadas(self) -> str:
         """Reconstrói o texto de uma página a partir da posição real de cada
@@ -236,8 +262,15 @@ class SPPdfExtractor:
                 for child in obj:
                     _walk(child)
 
-        for page in extract_pages(self.pdf_path, page_numbers=page_numbers):
-            _walk(page)
+        try:
+            for page in extract_pages(self.pdf_path, page_numbers=page_numbers):
+                _walk(page)
+        except Exception:
+            # Sem PDF legível por trás do texto (ex.: `raw_text` setado na mão
+            # em teste, arquivo truncado/corrompido) não há coordenada nenhuma
+            # para reconstruir — o chamador já trata string vazia mantendo o
+            # `raw_text` atual.
+            return ''
 
         if not chars:
             return ''
@@ -477,7 +510,13 @@ class SPPdfExtractor:
             # COMÉRCIO — ver comentário da constante) — o CAMACARI_2 segue
             # 100% intocado e continua acessível diretamente (ex.: testes que
             # setam `self.layout` na mão).
-            return LAYOUT_CAMACARI_3 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
+            #
+            # A decisão usa a origem DESTA página (`_pagina_e_escaneada`), não
+            # a do documento inteiro: num lote misto, uma página Camaçari
+            # digital ficava classificada como escaneada só porque OUTRAS
+            # páginas do mesmo PDF precisaram de OCR (ver o docstring do
+            # helper — achado real, pág. 8 do lote PH Gestão 08/2026).
+            return LAYOUT_CAMACARI_3 if self._pagina_e_escaneada() else LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR # Ou um layout genérico da BA
         # Localiza ANTES do check de "FEIRA DE SANTANA" abaixo: o emissor
@@ -780,7 +819,13 @@ class SPPdfExtractor:
             # COMÉRCIO — ver comentário da constante) — o CAMACARI_2 segue
             # 100% intocado e continua acessível diretamente (ex.: testes que
             # setam `self.layout` na mão).
-            return LAYOUT_CAMACARI_3 if getattr(self, 'from_ocr', False) else LAYOUT_CAMACARI
+            #
+            # A decisão usa a origem DESTA página (`_pagina_e_escaneada`), não
+            # a do documento inteiro: num lote misto, uma página Camaçari
+            # digital ficava classificada como escaneada só porque OUTRAS
+            # páginas do mesmo PDF precisaram de OCR (ver o docstring do
+            # helper — achado real, pág. 8 do lote PH Gestão 08/2026).
+            return LAYOUT_CAMACARI_3 if self._pagina_e_escaneada() else LAYOUT_CAMACARI
         if re.search(r'PREFEITURA.*SALVADOR|Xique-Xique', t, re.IGNORECASE):
             return LAYOUT_SALVADOR
         # Localiza ANTES do check de "FEIRA DE SANTANA" abaixo: o emissor
@@ -1512,16 +1557,45 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1))
                 if res: return res
 
-        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
+        if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # No Camaçari escaneado a caixa de cabeçalho (recorte dedicado) traz
             # "Data de Emissão : |\n— 28/05/2026 16:22" com hora — preferimos ela
             # à "Data da prestação" (só data). O "—"/"|" são ruído de borda. O "D"
             # inicial pode vir cortado no recorte estreito ("ata de Emissão\n
             # 11/05/2026 12:50", nota nº 9100) — por isso o `[Dd]?` opcional.
+            #
+            # Vale igual no DIGITAL desde que o texto passe pela reconstrução
+            # por coordenadas: ali a caixa também sai como "Data de Emissão\n
+            # 03/08/2026 17:21", com a HORA, enquanto o ramo seguinte
+            # ("Data da prestação do serviço") só tem a data e zerava o horário
+            # (achado real, pág. 8 do lote PH Gestão 08/2026, nota nº 52). Na
+            # ordem de leitura crua do pdfminer o rótulo vem colado no rótulo
+            # seguinte ("Data de EmissãoNúmero da Nota..."), sem data logo
+            # depois, então este padrão simplesmente não casa e o
+            # comportamento anterior fica preservado.
             m = re.search(r'[Dd]?ata\s+de\s+Emiss[ãa]o\s*:?\s*\|?\s*[\n\s—-]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
+
+        if self.layout == LAYOUT_CAMACARI:
+            # No digital, a caixa de cabeçalho é uma grade de DUAS COLUNAS e a
+            # reconstrução por coordenadas (ordem visual, linha a linha)
+            # intercala rótulo e valor com o título institucional da coluna da
+            # esquerda: "Data de Emissão\nSecretaria da Fazenda\n03/08/2026
+            # 17:21". O padrão de adjacência acima não atravessa esse ruído —
+            # aqui buscamos a 1ª data numa janela após o rótulo, igual ao que
+            # `_extrair_numero` já faz para o "Número da Nota" deste mesmo
+            # cabeçalho. Preferido sobre "Data da prestação do serviço"
+            # (ramo abaixo) porque só este traz a HORA (achado real, pág. 8 do
+            # lote PH Gestão 08/2026, nota nº 52: emissão 03/08/2026 17:21
+            # saía zerada em 00:00).
+            for m_lab in re.finditer(r'Data\s+de\s+Emiss[ãa]o', t, re.IGNORECASE):
+                janela = t[m_lab.end(): m_lab.end() + 120]
+                m = re.search(r'(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', janela)
+                if m:
+                    res = _parse_dmy(m.group(1), m.group(2))
+                    if res: return res
 
         if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # Este layout não traz um rótulo "Data de Emissão" — usamos "Data da
@@ -3537,7 +3611,7 @@ class SPPdfExtractor:
                 if len(chave) >= 50:
                     return chave[:50]
 
-        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
+        if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # Código de autenticidade da célula do cabeçalho (recorte dedicado):
             # é alfanumérico MISTURANDO letras e dígitos (ex.: "8075HO406"). No
             # recorte largo, logo abaixo do rótulo, o OCR às vezes lê a Inscrição
@@ -3547,8 +3621,18 @@ class SPPdfExtractor:
             # autenticidade") e exigimos letra+dígito no candidato, o que rejeita
             # a IM puramente numérica. Se nada legível casar, cai no XXXX-XXXX +
             # aviso abaixo (a fonte deste campo é fraca e às vezes sai ilegível).
+            #
+            # Janela maior no layout DIGITAL: ali o texto vem da reconstrução
+            # por coordenadas, que respeita a ordem VISUAL — e visualmente o
+            # título do documento ("NOTA FISCAL DE SERVIÇOS ELETRÔNICA", 34
+            # caracteres) fica na mesma faixa horizontal, entre o rótulo e o
+            # valor. Com os 40 caracteres do recorte escaneado o código real
+            # ficava cortado ao meio (achado real, pág. 8 do lote PH Gestão
+            # 08/2026: "6UTVQW43O" saía "6UTV"). Nenhum efeito sobre o
+            # escaneado, cuja janela continua exatamente a mesma.
+            janela_tam = 100 if self.layout == LAYOUT_CAMACARI else 40
             for m_lab in re.finditer(r'autenticidade', t, re.IGNORECASE):
-                janela = t[m_lab.end(): m_lab.end() + 40]
+                janela = t[m_lab.end(): m_lab.end() + janela_tam]
                 for m_cod in re.finditer(r'\b([A-Z0-9]{6,12})\b', janela, re.IGNORECASE):
                     cand = m_cod.group(1).upper()
                     if re.search(r'[A-Z]', cand) and re.search(r'\d', cand):
@@ -14946,7 +15030,10 @@ class SPPdfExtractor:
             # LAYOUT_DANFE_PRODUTO/`_parse_danfe_produto`.
             return self._parse_danfe_produto()
 
-        if self.layout in (LAYOUT_CAMACARI_SISLOC, LAYOUT_GOIANIA):
+        if self.layout in (LAYOUT_CAMACARI_SISLOC, LAYOUT_GOIANIA) or (
+            self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3)
+            and not self._pagina_e_escaneada()
+        ):
             # A ordem de leitura do `extract_text()` padrão está quebrada
             # nesta plataforma (rótulos e valores em blocos separados no
             # fluxo do PDF) — reconstrói o texto por coordenada de caractere
@@ -14954,6 +15041,18 @@ class SPPdfExtractor:
             # detectado (a marca "SISLOC"/"Benefix" ou "Goiânia"/"ISSNet
             # Online" sobrevive no texto quebrado), então é seguro trocar
             # `raw_text` aqui.
+            #
+            # O Camaçari via CPqD DIGITAL tem exatamente o mesmo defeito de
+            # ordem de leitura (achado real, pág. 8 do lote PH Gestão 08/2026,
+            # nota nº 52/RAFFA GLASS: o `extract_text()` devolve "...Código de
+            # autenticidadeData de EmissãoNúmero da Nota6UTVQW43O...ELETRÔNICA
+            # 5203/08/2026 17:21...", com todos os rótulos antes de todos os
+            # valores — número, código, razões sociais e a grade inteira de
+            # valores saíam errados ou zerados). Restrito a página NÃO
+            # escaneada: em foto/scan não há `LTChar` nenhum para reconstruir
+            # (a função devolveria '' e o guard abaixo já protegeria), mas o
+            # gate explícito evita que uma eventual camada de texto invisível
+            # sobrescreva o OCR, que ali é a fonte boa.
             texto_reconstruido = self._reconstruir_texto_por_coordenadas()
             if texto_reconstruido.strip():
                 self.raw_text = texto_reconstruido
@@ -15852,6 +15951,14 @@ class SPPdfExtractor:
         if n_pages_real > len(pages):
             pages.extend([''] * (n_pages_real - len(pages)))
 
+        # Índices 0-based das páginas cujo texto veio de OCR. Quando o OCR
+        # GLOBAL já rodou acima (documento inteiro sem texto extraível), todas
+        # as páginas são de OCR por definição; caso contrário, só as que caírem
+        # no fallback pontual abaixo. Propagado adiante em `_pagina_veio_de_ocr`
+        # para a detecção de layout não tratar página digital de um lote misto
+        # como escaneada (ver `_pagina_e_escaneada`).
+        paginas_via_ocr = set(range(n_pages_real)) if self.from_ocr else set()
+
         for idx in range(min(n_pages_real, len(pages))):
             if len(pages[idx].strip()) < OCR_MIN_CHARS:
                 ocr_text = self._ocr_page(idx)
@@ -15859,6 +15966,7 @@ class SPPdfExtractor:
                     print(f"[*] Página {idx + 1} sem texto extraível — usando OCR.")
                     pages[idx] = ocr_text
                     self.from_ocr = True
+                    paginas_via_ocr.add(idx)
 
         self.invalid_pages = []
         filtered_pages = []
@@ -16068,6 +16176,9 @@ class SPPdfExtractor:
             # Propaga a origem (OCR vs texto embutido) para a detecção de layout
             # do bloco distinguir SP escaneado (LAYOUT_SAO_PAULO_2) do SP digital.
             sub_ext.from_ocr = self.from_ocr
+            # Origem da PÁGINA deste bloco (não a do documento inteiro) —
+            # consultada por `_pagina_e_escaneada`. `page_idx` é 1-based.
+            sub_ext._pagina_veio_de_ocr = (page_idx - 1) in paginas_via_ocr
             # Propaga a página (1-based) de onde este bloco veio no PDF original
             # -- usado só como último recurso por recortes de recuperação que
             # precisam reabrir e renderizar a página real (ex.:
