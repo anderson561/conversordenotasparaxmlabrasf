@@ -117,6 +117,20 @@ LAYOUT_SP_SKYTEF = 'sp_skytef'  # SKYTEF SOLUÇÕES EM CAPTURA DE TRANSAÇÕES L
 LAYOUT_SP_CAIXA_CARTOES = 'sp_caixa_cartoes'  # CAIXA CARTÕES PRÉ-PAGOS S.A. (CNPJ 39.459.331/0006-34, Vila Olímpia/São Paulo-SP) - fatura de "Taxa de Serviço" (reembolso/adquirência de cartões pré-pagos), emitida pela MESMA plataforma Qive do LAYOUT_SP_SKYTEF (outro emitente, mesmo template nacional NFS-e) - sem colisão com o template oficial da Prefeitura de São Paulo (exige "MUNICÍPIO DE SÃO PAULO", ausente aqui). PDF DIGITAL (pdfminer). Achado real: nota nº 27723844, CAIXA CARTÕES -> RG RESTAURENTE LTDA - EPP (Camaçari/BA), R$6,30. Detectado só pelo CNPJ do emitente (nunca pela marca "Qive" - mesmo critério do SKYTEF, para não colidir com outros emitentes na mesma plataforma). Prestador FIXO (hardcoded do letterhead). Extratores de tomador/valores/data mantidos SEPARADOS dos do SKYTEF (mesma decisão já tomada entre LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR - mesmo template nacional/plataforma, extratores próprios por emitente, para uma mudança futura da Qive numa nota não arrastar a outra), apesar da estrutura quase idêntica. Diferença notada: aqui a Competência SAI LIMPA ("Competência\n\n03/2026", rótulo adjacente ao valor) - ao contrário do SKYTEF, onde o valor da Competência sai órfão antes do rótulo "Numero da NFS-e:". A discriminação cita um valor de IRRF explícito e com base legal própria ("IRRF 1,5%... R$ 0,09... conforme I.N. 153/87 e Lei 7450/85, art. 53") mesmo com o campo estruturado "IR" mostrando só "-" - extraído da discriminação (valor real declarado na nota, não fabricado), diferente do SKYTEF (que mantém IR em 0,00 por não haver nenhum valor real citado ali). Informações IBS/CBS não têm tag no ABRASF 2.01 - descartadas.
 LAYOUT_VINHEDO = 'vinhedo_sp'  # Prefeitura Municipal de Vinhedo/SP (plataforma Balker, vinhedo.balker.com.br). Achado real: nota nº 139, WEDO DECOR LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, R$1.049,79 (fallback genérico saía com valor_servicos zerado, valor_iss fabricado, UF do prestador "BA", município caindo no fallback Salvador/BA - Vinhedo ausente de KNOWN_CITIES -, e a razão social do TOMADOR saindo como "País: BRASIL"). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com rótulo→valor adjacente (label + dois-pontos, mesma linha ou linha seguinte) para quase todo campo - mas o cabeçalho de seção "TOMADOR DE SERVIÇOS" sai DESLOCADO no MEIO do próprio bloco do tomador (entre as Inscrições e o Endereço), mesmo quirk do Santos/SP; fatiamento usa a 2ª ocorrência de "Razão Social/Nome:" como início do bloco tomador. Data de Emissão em formato "DD/MMM/AAAA - HH:MM:SS" com mês abreviado em PT-BR ("28/JUL/2026"), único layout com esse formato - usa o dicionário `_MESES_PT` já existente. Grade de Retenções Federais + Base/Alíquota/ISS (2 linhas x 7 colunas, sem linhas de separação): o pdfminer emite cada VALOR defasado em 1 coluna em relação ao próprio rótulo (mesma família de quirk "labels dumped, values dumped", mas aqui por DESLOCAMENTO DE COLUNA em vez de por blocos separados) - ordem real observada no texto: INSS, IRRF, CSLL, PIS, COFINS, Outras Retenções, Base de Cálculo, Deduções, Alíquota, Vlr ISS, IBS, CBS, Vlr Líquido (mapeado por índice fixo, documentado no código). "Desc. Incondicional" nunca aparece impresso nesta plataforma (nem "0,00" nem placeholder) - mantido em 0,00 (default do model). IBS/CBS (Reforma Tributária) não têm tag no ABRASF 2.01 - descartados após a leitura.
 
+# Marcas do template da PRÓPRIA Prefeitura de Lauro de Freitas/BA (cabeçalho
+# "MUNICIPIO DE LAURO DE FREITAS / Secretaria da Fazenda / Coordenação
+# Tributária" e o endereço de consulta no rodapé). Usado tanto para ROTEAR
+# para o LAYOUT_LAURO_FREITAS quanto para IMPEDIR que um emitente conhecido
+# da plataforma eNotas Gateway (LAYOUT_PASSWORD_ENOTAS) seja roteado pelo
+# próprio CNPJ quando a nota, na verdade, foi emitida pelo sistema da
+# Prefeitura — o MESMO emitente pode usar os dois sistemas em meses
+# diferentes (ver o comentário no portão do eNotas). Constante única para
+# que o portão e a guarda nunca saiam de sincronia.
+_RE_MARCA_PREFEITURA_LAURO_FREITAS = (
+    r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br|'
+    r'PREFEITURA\s+MUNICIPAL\s+DE[\s\S]{0,60}?LAURO\s+DE\s+FREITAS'
+)
+
 
 # Etiquetas para Identificação de Entidades
 _LABELS_PRESTADOR = [
@@ -158,6 +172,28 @@ class SPPdfExtractor:
 
     # Padrão de exclusão (páginas de lixo que acompanham a nota/comprovantes bancários)
     TRASH_PATTERN = r'Recibo\s+de\s+Transfer[êe]ncia|Comprovante\s+de\s+Transa[cç][aã]o\s+Banc[aá]ria|Fatura\s+-\s+C[aâ]mara\s+de\s+Dirigentes\s+Lojistas'
+
+    # Marcas de CANCELAMENTO/desistência impressas na própria nota — não é
+    # específico de nenhum layout (achado real, nota nº 20261893, Lauro de
+    # Freitas/BA, TESSERA HOSPITALITY, pág. 38 do lote Guarajuba Suítes
+    # 08/2026): a nota traz uma marca d'água diagonal "CANCELADA" (que NÃO
+    # sobrevive ao OCR na maioria dos scans - achado confirmado: zero
+    # ocorrências de "CANCELAD" no texto OCR desta própria nota) e a linha
+    # "Motivo: Cliente desistiu do serviço. - Data: 06/08/2026", essa sim
+    # legível. Documento continua fiscalmente válido para leitura (os
+    # valores extraídos são reais, não fabricados), mas booking automático
+    # de uma nota cancelada seria um erro contábil - por isso NÃO descartamos
+    # a nota (comportamento diferente do TRASH_PATTERN acima) nem zeramos
+    # seus valores, só sinalizamos via `Nfse.avisos` para conferência manual
+    # antes de escriturar (ver `_parse_ao_nfse`/`parse`). "Motivo:" sozinho é
+    # comum em campos legítimos (motivo da prestação etc.), por isso exige
+    # um termo de cancelamento/desistência próximo; a linha isolada
+    # "CANCELADA"/"CANCELADO" (típica de marca d'água que sobrevive como
+    # texto embutido em PDF digital) é o 2º sinal, independente do 1º.
+    NOTA_CANCELADA_PATTERN = (
+        r'Motivo\s*:\s*[^\n]{0,80}(?:desisti|cancel|estorn|anulad)|'
+        r'^\s*CANCELAD[AO]\s*$'
+    )
 
     def __init__(self, pdf_path: str):
         self.pdf_path = pdf_path
@@ -421,7 +457,23 @@ class SPPdfExtractor:
         # emitentes que usem o mesmo provedor.
         if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR|'
                      r'29\.?869\.?622[./]?0001-?32|INFOMIX\s+SOLU|'
-                     r'03\.?814\.?827[./]?0001-?27|T[ÉE]SSERA\s+HOSPITALITY', t, re.IGNORECASE):
+                     r'03\.?814\.?827[./]?0001-?27|T[ÉE]SSERA\s+HOSPITALITY', t, re.IGNORECASE) \
+                and not re.search(_RE_MARCA_PREFEITURA_LAURO_FREITAS, t, re.IGNORECASE):
+            # A guarda pelo template da PREFEITURA é o que impede a detecção
+            # por CNPJ de falhar no sentido oposto ao que ela foi criada para
+            # evitar: o mesmo EMITENTE pode emitir por DOIS sistemas
+            # diferentes no mesmo município. Achado real, TÉSSERA HOSPITALITY
+            # (03.814.827/0001-27): a nota RPS 988 de julho saiu pelo eNotas
+            # Gateway, mas as notas nº 20261879 e nº 20261893 de agosto
+            # (págs. 5 e 38 do lote Guarajuba Suítes 08/2026) saíram pelo
+            # sistema da própria Prefeitura de Lauro de Freitas. Roteadas pelo
+            # CNPJ para cá, nenhum extrator do eNotas reconhecia aquele
+            # template e TUDO caía no fallback zerado — valor, base e líquido
+            # em 0,00 (R$2.808,85 e R$1.500,00 reais), código de verificação
+            # "A", prestador e tomador "Não Identificado". Nenhum texto real
+            # já validado deste layout (PASSWORD, INFOMIX e a própria TÉSSERA
+            # de julho) contém as marcas da Prefeitura, então a guarda não
+            # altera o roteamento de nenhuma nota que já funcionava.
             # INFOMIX SOLUÇÕES EM TECNOLOGIA LTDA — 2º emissor (também de Lauro
             # de Freitas/BA) na MESMA plataforma eNotas Gateway do PASSWORD.
             # TÉSSERA HOSPITALITY LTDA — 3º emissor, mesma plataforma, mesma
@@ -552,10 +604,7 @@ class SPPdfExtractor:
         # de outro emissor/plataforma ainda não visto).
         if re.search(r'04\.?811\.?846[/.]?0001-?62|BIO\s+CONTROL\s+DESINSETIZADORA', t, re.IGNORECASE):
             return LAYOUT_BIOCONTROL
-        if re.search(
-            r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br|'
-            r'PREFEITURA\s+MUNICIPAL\s+DE[\s\S]{0,60}?LAURO\s+DE\s+FREITAS',
-            t, re.IGNORECASE):
+        if re.search(_RE_MARCA_PREFEITURA_LAURO_FREITAS, t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
         # Mata de São João/BA (plataforma SAATRI) — específico do município
         # (decidido com o usuário: NÃO casar só por "saatri.com.br" para evitar
@@ -738,7 +787,23 @@ class SPPdfExtractor:
             return LAYOUT_SULSEG_COBRANCA
         if re.search(r'04\.?021\.?023[./]?0001-?33|PASSWORD\s*[-–]\s*SISTEMAS\s+ELETR|'
                      r'29\.?869\.?622[./]?0001-?32|INFOMIX\s+SOLU|'
-                     r'03\.?814\.?827[./]?0001-?27|T[ÉE]SSERA\s+HOSPITALITY', t, re.IGNORECASE):
+                     r'03\.?814\.?827[./]?0001-?27|T[ÉE]SSERA\s+HOSPITALITY', t, re.IGNORECASE) \
+                and not re.search(_RE_MARCA_PREFEITURA_LAURO_FREITAS, t, re.IGNORECASE):
+            # A guarda pelo template da PREFEITURA é o que impede a detecção
+            # por CNPJ de falhar no sentido oposto ao que ela foi criada para
+            # evitar: o mesmo EMITENTE pode emitir por DOIS sistemas
+            # diferentes no mesmo município. Achado real, TÉSSERA HOSPITALITY
+            # (03.814.827/0001-27): a nota RPS 988 de julho saiu pelo eNotas
+            # Gateway, mas as notas nº 20261879 e nº 20261893 de agosto
+            # (págs. 5 e 38 do lote Guarajuba Suítes 08/2026) saíram pelo
+            # sistema da própria Prefeitura de Lauro de Freitas. Roteadas pelo
+            # CNPJ para cá, nenhum extrator do eNotas reconhecia aquele
+            # template e TUDO caía no fallback zerado — valor, base e líquido
+            # em 0,00 (R$2.808,85 e R$1.500,00 reais), código de verificação
+            # "A", prestador e tomador "Não Identificado". Nenhum texto real
+            # já validado deste layout (PASSWORD, INFOMIX e a própria TÉSSERA
+            # de julho) contém as marcas da Prefeitura, então a guarda não
+            # altera o roteamento de nenhuma nota que já funcionava.
             # INFOMIX SOLUÇÕES EM TECNOLOGIA LTDA — 2º emissor (também de Lauro
             # de Freitas/BA) na MESMA plataforma eNotas Gateway do PASSWORD.
             # TÉSSERA HOSPITALITY LTDA — 3º emissor, mesma plataforma, mesma
@@ -862,10 +927,7 @@ class SPPdfExtractor:
         # de outro emissor/plataforma ainda não visto).
         if re.search(r'04\.?811\.?846[/.]?0001-?62|BIO\s+CONTROL\s+DESINSETIZADORA', t, re.IGNORECASE):
             return LAYOUT_BIOCONTROL
-        if re.search(
-            r'MUNIC[IÍ]PIO\s+DE\s+LAURO\s+DE\s+FREITAS|laurodefreitas\.ba\.gov\.br|'
-            r'PREFEITURA\s+MUNICIPAL\s+DE[\s\S]{0,60}?LAURO\s+DE\s+FREITAS',
-            t, re.IGNORECASE):
+        if re.search(_RE_MARCA_PREFEITURA_LAURO_FREITAS, t, re.IGNORECASE):
             return LAYOUT_LAURO_FREITAS
         # Mata de São João/BA (plataforma SAATRI) — específico do município.
         if re.search(r'Mata\s+de\s+S[ãa]o\s+Jo[ãa]o', t, re.IGNORECASE) or re.search(r'matadesaojoao\.saatri', t, re.IGNORECASE):
@@ -10958,10 +11020,25 @@ class SPPdfExtractor:
                 # tratamos Alíquota/ISS ausentes da região intermediária como
                 # 0,00 — fiel à face do documento (campo inutilizado = sem
                 # tributação, não erro de leitura), não fabricação de valor.
+                #
+                # Duas tolerâncias a ruído de OCR entre as células, ambas
+                # vistas na nota real nº 20261893 (pág. 38 do lote Guarajuba
+                # Suítes 08/2026, TÉSSERA HOSPITALITY): a linha sai como
+                # "R$.0,00 A R$ 1.500,00 e * Não" — o "R$" da 1ª célula vem
+                # com PONTO no lugar do espaço, e um caractere solto ("A") se
+                # intromete entre as duas células. Sem elas o padrão não
+                # falha de forma limpa: ele casa ERRADO, capturando dedução
+                # ".0,0" e base "0" (a Base de Cálculo saía 0,00 num XML cujo
+                # Valor dos Serviços era R$1.500,00, lido das linhas "VALOR
+                # TOTAL"/"VALOR LÍQUIDO"). Verificado que os 3 outros
+                # formatos reais deste layout (nota nº 20261879 da pág. 5,
+                # ALFA MEDICAL/MEI e a grade completa com alíquota e ISS)
+                # continuam casando exatamente como antes.
                 m_row_mei = re.search(
                     r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*Base\s+de\s+C[áa]lculo\s*\(R\$\)\s*'
                     r'Al[íi]quota\s*\(%\)\s*Valor\s+do\s+ISS\s*\(R\$\)\s*ISSQN\s+Retido\s*\(R\$\)\s*'
-                    r'(?:R\$\s*)?([\d\.,]+)\s*(?:R\$\s*)?([\d\.,]+)\s*(.{0,20}?)\s*(Sim|N[ãa]o)',
+                    r'(?:R\$[\s.]*)?([\d\.,]+)\s*(?:[A-Za-z]\s+)?(?:R\$[\s.]*)?([\d\.,]+)\s*'
+                    r'(.{0,20}?)\s*(Sim|N[ãa]o)',
                     t, re.IGNORECASE | re.DOTALL
                 )
                 if m_row_mei:
@@ -15255,6 +15332,14 @@ class SPPdfExtractor:
                 "Documento fonte mascara (\"*****\") um ou mais campos de "
                 "Base de Cálculo ISS/ISS/ISS Retido - mantidos zerados por "
                 "não haver valor real impresso para extrair"
+            )
+        if re.search(self.NOTA_CANCELADA_PATTERN, self.raw_text, re.IGNORECASE | re.MULTILINE):
+            avisos.append(
+                "Documento traz indicação de CANCELAMENTO/desistência do "
+                "serviço (marca \"CANCELADA\" e/ou \"Motivo: ...\" impressos "
+                "na própria nota) - valores extraídos normalmente da nota, "
+                "mas confira se ela deve mesmo ser escriturada antes de "
+                "importar no sistema contábil"
             )
 
         municipio_incidencia_override = self._extrair_municipio_incidencia_override()
