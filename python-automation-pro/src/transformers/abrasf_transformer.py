@@ -181,8 +181,11 @@ class Abrasf201Transformer:
         # Código de Tributação do Município (muitas vezes igual ao item da lista ou vazio)
         ET.SubElement(servico, 'CodigoTributacaoMunicipio').text = item_lista
         
-        # O Domínio exige a tag explícita de CodigoCnae
-        ET.SubElement(servico, 'CodigoCnae').text = "0000000"
+        # O Domínio exige a tag explícita de CodigoCnae. Quando a nota imprime
+        # o CNAE e o extrator o recupera (`codigo_cnae`), emitimos o real; caso
+        # contrário fica o "0000000" que todos os layouts sempre emitiram.
+        ET.SubElement(servico, 'CodigoCnae').text = (
+            getattr(nfse, 'codigo_cnae', None) or "0000000")
         
         ET.SubElement(servico, 'Discriminacao').text = nfse.discriminacao
         cod_mun_incidencia = nfse.municipio_incidencia_override or cod_mun_prestador
