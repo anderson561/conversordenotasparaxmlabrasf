@@ -70,3 +70,7 @@ Thumbs.db
 
 # Git worktrees criadas por agentes/ferramentas
 .claude/worktrees/
+
+# Dumps de texto/OCR de diagnostico (pertencem ao scratchpad da sessao,
+# nao ao repositorio) - 3 deles chegaram a ser versionados por acidente
+scratch_*.txt
