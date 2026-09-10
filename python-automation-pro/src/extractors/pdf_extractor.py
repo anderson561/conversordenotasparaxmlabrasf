@@ -238,6 +238,14 @@ class SPPdfExtractor:
         # número sem lastro — usado por `parse()` para gerar um aviso em vez
         # de mascarar o problema.
         self._camacari_aliquota_iss_zerada = False
+        # Sinaliza que a grade de 5 valores do Salvador escaneado (LAYOUT_
+        # SALVADOR, "Deduções/Base de Cálculo/Alíquota/Valor do ISS/Crédito")
+        # não bateu (célula(s) da linha de valores ilegível(is) no scan,
+        # além do rótulo — achado real, nota nº 00000080/UFFICIO: só 4 dos 5
+        # números da linha sobrevivem em formato reconhecível) e zerou
+        # Alíquota/ValorIss em vez de propagar um número sem lastro — usado
+        # por `parse()` para gerar um aviso em vez de mascarar o problema.
+        self._salvador_aliquota_iss_zerada = False
         # Sinaliza que o texto veio de OCR (PDF imagem/escaneado), não de texto
         # embutido (pdfminer). Usado para distinguir layouts que existem em duas
         # origens — ex.: SP digital (LAYOUT_SAO_PAULO) vs SP escaneado
@@ -5084,9 +5092,31 @@ class SPPdfExtractor:
         
         pattern_bloco = rf'(?:{pattern_labels}).*?(?={delimiters})'
         m_bloco = re.search(pattern_bloco, t, re.IGNORECASE | re.DOTALL)
-        
+
         if is_intermediario and not m_bloco:
             return None
+
+        # Quando o rótulo da PRÓPRIA entidade não é encontrado (corrupção de
+        # OCR severa demais para qualquer tolerância já mapeada em
+        # `_LABELS_PRESTADOR`/`_LABELS_TOMADOR`), o fallback logo abaixo
+        # usava o DOCUMENTO INTEIRO como bloco de busca — CNPJ/razão social
+        # da entidade quebrada acabavam vazando do bloco da OUTRA entidade
+        # (rótulo íntegro, mais abaixo/acima no texto). Achado real, nota
+        # Salvador nº 00000080 (UFFICIO): "PRESTADOR DE SERVIÇOS" saiu
+        # "PRESPADOR,DESSERVIÇOS" (T→P, não coberto por nenhuma tolerância
+        # existente) — sem bound, a busca de CNPJ do prestador varria o
+        # documento inteiro e só achava o CNPJ do TOMADOR (o único bem
+        # formado ali), fazendo Prestador e Tomador saírem com os MESMOS
+        # dados. Corrigido delimitando esse fallback pelo rótulo da OUTRA
+        # entidade (quando encontrado) em vez do texto inteiro — só
+        # RESTRINGE o escopo já usado (nunca amplia), então não regride
+        # nenhum caso em que o fallback de texto inteiro já funcionava por
+        # não haver contaminação cruzada real disponível para vazar.
+        bloco_fallback_limitado = None
+        if m_bloco is None and not is_intermediario:
+            m_other = re.search(pattern_other_labels, t, re.IGNORECASE)
+            if m_other:
+                bloco_fallback_limitado = t[:m_other.start()] if is_prestador else t[m_other.end():]
 
         # Cuiabá/ISSNet: quando o bloco do "Intermediário" carrega a assinatura
         # do PRESTADOR (rótulo "CPF/CNPJ", CPF antes do CNPJ), não é um
@@ -5122,8 +5152,23 @@ class SPPdfExtractor:
             bloco = bloco_sv
         elif bloco_cuiaba is not None:
             bloco = bloco_cuiaba
+        elif m_bloco:
+            bloco = m_bloco.group(0)
+        elif bloco_fallback_limitado is not None:
+            bloco = bloco_fallback_limitado
         else:
-            bloco = m_bloco.group(0) if m_bloco else t
+            bloco = t
+
+        # Verdadeiro só quando `bloco` veio do fallback acima (rótulo da
+        # PRÓPRIA entidade não encontrado; delimitado só pelo rótulo da
+        # OUTRA) — usado adiante tanto para não "chutar" um CNPJ de fora
+        # deste bloco quanto para descartar a 1ª linha do bloco (o próprio
+        # rótulo corrompido, ex.: "PRESPADOR,DESSERVIÇOS") antes do
+        # fallback linha-a-linha da razão social.
+        bloco_veio_de_fallback_limitado = (
+            bloco_sv is None and bloco_cuiaba is None and m_bloco is None
+            and bloco_fallback_limitado is not None
+        )
 
         bloco_clean = bloco.replace('|', ' ').replace('!', ' ').replace('\n', ' ').strip()
         bloco_clean = re.sub(r'\s{2,}', ' ', bloco_clean)
@@ -5187,8 +5232,23 @@ class SPPdfExtractor:
                 if c in re.sub(r'\D', '', bloco):
                     cnpj = c
                     break
-            
-            if not cnpj:
+
+            # O "chute" abaixo (1º/2º CNPJ do documento inteiro) assume que a
+            # ordem física prestador-depois-tomador é suficiente pra acertar
+            # mesmo sem bloco isolado — mas quando o bloco já veio de
+            # `bloco_fallback_limitado` (rótulo da PRÓPRIA entidade não
+            # encontrado; bloco delimitado só pelo rótulo da OUTRA entidade,
+            # que ESSE sim foi encontrado), sabemos que qualquer CNPJ fora
+            # desse bloco pertence à outra entidade — "chutar" aqui devolveria
+            # exatamente o CNPJ que acabamos de excluir de propósito. Achado
+            # real, nota Salvador nº 00000080/UFFICIO: rótulo "PRESTADOR DE
+            # SERVIÇOS" saiu "PRESPADOR,DESSERVIÇOS" (T→P) e o próprio CNPJ do
+            # prestador saiu ilegível ("35457.695) 02", sem "/"); sem este
+            # guard, `all_cnpjs[0]` pegava o único CNPJ bem formado do
+            # documento — o do TOMADOR — e o atribuía ao prestador. Preferir o
+            # sentinela (dado ausente, mas não ERRADO) ao dado da entidade
+            # errada.
+            if not cnpj and not bloco_veio_de_fallback_limitado:
                 if is_prestador and len(all_cnpjs) >= 1: cnpj = all_cnpjs[0]
                 elif not is_prestador and not is_intermediario and len(all_cnpjs) >= 2:
                     if "NÃO IDENTIFICADO" not in bloco_clean.upper() and "NAO IDENTIFICADO" not in bloco_clean.upper():
@@ -5491,6 +5551,34 @@ class SPPdfExtractor:
         # regex nesta página específica catastroficamente degradada.
         if not razao:
             bloco_sem_header = re.sub(rf'^(?:{pattern_labels})[:\s\n]*', '', bloco, flags=re.I | re.DOTALL)
+            # Quando `bloco` veio do fallback de rótulo-não-encontrado
+            # (`bloco_veio_de_fallback_limitado`), o `re.sub` acima não
+            # remove nada — é justamente POR o rótulo do prestador não bater
+            # em `pattern_labels` que caímos aqui, e esse `bloco` (delimitado
+            # só pelo fim, no rótulo da OUTRA entidade — ver
+            # `bloco_fallback_limitado` acima) ainda carrega, no início, todo
+            # o cabeçalho/preâmbulo do documento (nº da nota/código de
+            # verificação, às vezes repetidos) seguido do próprio rótulo do
+            # PRESTADOR corrompido além de qualquer tolerância (achado real,
+            # nota Salvador nº 00000080/UFFICIO: "PRESTADOR DE SERVIÇOS" saiu
+            # "PRESPADOR,DESSERVIÇOS", T→P). Sem descartar esse trecho, o
+            # fallback linha-a-linha abaixo pegava a 1ª linha "válida" desse
+            # ruído em vez do nome real da empresa. Usa o título fixo "NOTA
+            # FISCAL DE SERVIÇOS ELETRÔNICA" (sempre presente, raramente
+            # corrompido) pra pular o preâmbulo, e mais 1 linha pra descartar
+            # o próprio rótulo corrompido do prestador — só afeta este
+            # fallback local (`bloco_sem_header`/`linhas`), nunca o `bloco`
+            # usado pra CNPJ (onde um recorte dedicado pode ter prependado um
+            # valor recuperado ANTES do título — ver
+            # `test_salvador_prestador_cnpj_ilegivel.py`).
+            if bloco_veio_de_fallback_limitado and is_prestador and bloco_sem_header == bloco:
+                m_titulo_razao = re.search(
+                    relax("NOTA FISCAL DE SERVIÇOS ELETRÔNICA") + "|" +
+                    relax("NOTA FISCAL DE SERVIÇOS ELETRONICA"),
+                    bloco_sem_header, re.IGNORECASE
+                )
+                apos_titulo = bloco_sem_header[m_titulo_razao.end():] if m_titulo_razao else bloco_sem_header
+                bloco_sem_header = re.sub(r'^[^\n]*\n\s*[^\n]+\n', '', apos_titulo, count=1)
             linhas = [ln.strip() for ln in bloco_sem_header.split('\n') if ln.strip()]
             # Achado real 2026-08-26 (nota nº 00024910/BDP LOGÍSTICA INTEGRADA
             # DE RESÍDUOS): quando o rótulo "Nome/Razão Social" do PRESTADOR
@@ -11011,8 +11099,18 @@ class SPPdfExtractor:
             )
 
         if self.layout == LAYOUT_SALVADOR:
-            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
-            val_serv = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            # O "." de milhar desta linha pode sair como "/" no OCR (achado
+            # real, nota Salvador nº 00000080/UFFICIO: "VALOR TOTAL DA NOTA
+            # = R$18/080,73" em vez de "R$18.080,73") — sem tolerar esse
+            # separador espúrio, a classe de caracteres original `[\d\.,]+`
+            # parava na primeira "/", truncando a captura para "18" (perdendo
+            # os 3 dígitos seguintes e derrubando Valor dos Serviços/Base de
+            # Cálculo para 18,00). "/" nunca aparece de verdade num valor
+            # monetário, então é seguro tratá-lo aqui como equivalente a ".":
+            # normaliza para "." antes de `_parse_valor` (mesma função usada
+            # em todo o resto do arquivo, sem alterá-la).
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d./,]+)', t, re.IGNORECASE)
+            val_serv = self._parse_valor(m_val.group(1).replace('/', '.')) if m_val else 0.0
 
             # Grade "Valor INSS / PIS / COFINS / IR / CSLL / Outras Retenções /
             # Valor Líquido": rótulos numa linha, os 7 valores na linha
@@ -11056,9 +11154,18 @@ class SPPdfExtractor:
                 # acima e no LAYOUT_SAO_PAULO_2 (linhas ~6365-6387) — imune a
                 # ruído dentro do rótulo porque não lê dígito nenhum ali.
                 NUM5 = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+                # O rótulo "Valor do ISS" pode sair corrompido demais pra
+                # reconhecer o prefixo "Valor do" (achado real, nota Salvador
+                # nº 00000080/UFFICIO: "Vajócdo ISS") — a sigla "ISS" em si é
+                # muito mais curta e sobrevive ao OCR com muito mais
+                # confiabilidade que a palavra "Valor". Como este match já é
+                # sequencial (exige "Alíquota" e depois "Crédito" em volta),
+                # ancorar só em "ISS" não arrisca casar em outro lugar do
+                # documento — sem essa tolerância, o cabeçalho inteiro não
+                # batia e Alíquota/Valor do ISS caíam pro fallback 0,00.
                 m_grid5 = re.search(
                     r'Valor\s+Total\s+das\s+Dedu[çc][õo]es.*?Base\s+de\s+C[áa]lculo.*?'
-                    r'Al[íi]quota.*?Valor\s+do\s+ISS.*?Cr[ée]dito.*?\(R\$\)\s*:?\s*\n\s*'
+                    r'Al[íi]quota.*?ISS.*?Cr[ée]dito.*?\(R\$\)\s*:?\s*\n\s*'
                     + NUM5 + r'\s+' + NUM5 + r'\s+' + NUM5 + r'%?\s+' + NUM5 + r'\s+' + NUM5,
                     t, re.IGNORECASE | re.DOTALL
                 )
@@ -11069,6 +11176,16 @@ class SPPdfExtractor:
                     iss = self._parse_valor(m_grid5.group(4))
                 else:
                     deducoes, base, aliq, iss = 0.0, val_serv, 0.0, 0.0
+                    # Achado real, nota nº 00000080/UFFICIO: quando há um
+                    # Valor dos Serviços de verdade (nota emitida, não
+                    # "quota profissional") mas a grade de 5 valores não
+                    # bateu, Alíquota/ISS zerados aqui são FALTA de leitura,
+                    # não um "não se aplica" real — mesmo princípio já usado
+                    # em Camaçari (`_camacari_aliquota_iss_zerada`): preferir
+                    # avisar o usuário a deixar o zero passar em silêncio
+                    # como se fosse um dado confiável.
+                    if val_serv > 0.0:
+                        self._salvador_aliquota_iss_zerada = True
                     # Recorte dedicado da célula "Base de Cálculo" (ver
                     # `_ocr_recut_base_calculo_grade_salvador`, chamado em
                     # `_ocr_page`) — só consultado quando a grade de 5
@@ -15822,6 +15939,13 @@ class SPPdfExtractor:
                     "confira se esse repasse precisa de tratamento contábil à parte"
                 )
         if getattr(self, '_camacari_aliquota_iss_zerada', False):
+            avisos.append(
+                "Alíquota/Valor do ISS não confiáveis nesta grade (célula "
+                "ilegível no scan) - mantidos zerados por não haver valor "
+                "real recuperável; confira manualmente o percentual de ISS "
+                "desta nota"
+            )
+        if getattr(self, '_salvador_aliquota_iss_zerada', False):
             avisos.append(
                 "Alíquota/Valor do ISS não confiáveis nesta grade (célula "
                 "ilegível no scan) - mantidos zerados por não haver valor "
