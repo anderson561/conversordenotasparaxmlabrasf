@@ -6101,31 +6101,71 @@ class SPPdfExtractor:
         """Extrai o destinatário (tomador) de uma NFCom da EBJ.
 
         Bloco do destinatário tem os rótulos "NOME DO DESTINATÁRIO:"/"END.:"
-        em sequência, mas os VALORES vêm em ordem PARCIALMENTE invertida em
-        relação aos rótulos: primeiro o valor do endereço, só depois o nome
-        (achado real, nota nº 624: "END.:\\n\\nR DIREITA DA PIEDADE, 11 -
-        BARRIS - SALVADOR - BA\\n\\nSIND DELEGADOS DE POLICIA DO EST DA
-        BAHIA\\n\\nNOTA FISCAL FATURA Nº"). Âncora nos dois extremos (rótulo
-        "END.:" e o próximo cabeçalho "NOTA FISCAL FATURA") para isolar as
-        2 linhas de conteúdo entre eles, na ordem em que elas de fato aparecem.
+        em sequência, mas no PDF DIGITAL os VALORES vêm em ordem PARCIALMENTE
+        invertida em relação aos rótulos: primeiro o valor do endereço, só
+        depois o nome (achado real, nota nº 624: "END.:\\n\\nR DIREITA DA
+        PIEDADE, 11 - BARRIS - SALVADOR - BA\\n\\nSIND DELEGADOS DE POLICIA
+        DO EST DA BAHIA\\n\\nNOTA FISCAL FATURA Nº"). Âncora nos dois extremos
+        (rótulo "END.:" e o próximo cabeçalho "NOTA FISCAL FATURA") para
+        isolar as 2 linhas de conteúdo entre eles, na ordem em que elas de
+        fato aparecem.
+
+        Numa nota ESCANEADA (achado real 2026-09-09, nota nº 4777, SIND
+        DELEGADOS DE POLICIA DO EST DA BAHIA/ADPEB, R$440,00 - primeira
+        nota escaneada já vista deste layout, até então só digital), o
+        recorte dedicado do bloco do tomador (ver `_ocr_page` e
+        `_ocr_recut_tomador_nfcom_salvador_escaneado`) devolve rótulo e
+        valor na MESMA linha/ordem DIRETA - o oposto do PDF digital acima.
+        Essa variante é tentada PRIMEIRO (o recorte é prependado ao texto
+        principal, então aparece antes de qualquer ocorrência ambígua) e,
+        quando não bate, cai no comportamento digital original abaixo.
         """
         cnpj_tom, nome_tom = "00000000000000", "Tomador Não Identificado"
         logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
         municipio, uf, cep = "Não informado", "BA", "00000000"
 
-        m_bloco = re.search(r'END\.:\s*\n+(.+?)\n+(.+?)\n+NOTA\s+FISCAL\s+FATURA', t, re.IGNORECASE)
-        if m_bloco:
-            endereco_val = m_bloco.group(1).strip()
-            nome_tom = m_bloco.group(2).strip() or nome_tom
-            m_end = re.match(r'^(.*?),\s*(\S+)\s*-\s*(.*?)\s*-\s*(.*?)\s*-\s*([A-Z]{2})$', endereco_val)
-            if m_end:
-                logradouro = m_end.group(1).strip()
-                numero = m_end.group(2).strip() or numero
-                bairro = m_end.group(3).strip()
-                municipio = m_end.group(4).strip()
-                uf = m_end.group(5).strip()
+        m_nome_direto = re.search(
+            r'NOME\s+DO\s+DESTINAT[ÁA]RIO\s*:\s*(.+?)\n(.+?)\n\s*\n', t, re.IGNORECASE)
+        if m_nome_direto:
+            nome_tom = m_nome_direto.group(1).strip() or nome_tom
+            linha2 = m_nome_direto.group(2).strip()
+            # A 2ª linha só é parte do nome (transbordo físico) se não for,
+            # ela mesma, o início de um rótulo conhecido do bloco seguinte -
+            # guarda contra o nome vazar "END.:"/"CPF/CNPJ:" etc. quando o
+            # nome cabe numa única linha e não há branco o bastante antes do
+            # próximo rótulo.
+            if linha2 and not re.match(
+                    r'^(END\.|CPF|INSC\.|C[ÓO]D\.|NOTA\s+FISCAL)', linha2, re.IGNORECASE):
+                nome_tom = f"{nome_tom} {linha2}"
 
-        m_cnpj = re.search(r'CPF\s*/\s*CNPJ\s*:\s*\n+([\d./-]{11,18})', t, re.IGNORECASE)
+            m_end_direto = re.search(r'END\.\s*:\s*(.+?)\n', t, re.IGNORECASE)
+            if m_end_direto:
+                endereco_val = m_end_direto.group(1).strip()
+                m_end = re.match(
+                    r'^(.*?),\s*(\S+)\s*-\s*(.*?)\s*-\s*(.*?)\s*-\s*([A-Z]{2})$', endereco_val)
+                if m_end:
+                    logradouro = m_end.group(1).strip()
+                    numero = m_end.group(2).strip() or numero
+                    bairro = m_end.group(3).strip()
+                    municipio = m_end.group(4).strip()
+                    uf = m_end.group(5).strip()
+        else:
+            m_bloco = re.search(r'END\.:\s*\n+(.+?)\n+(.+?)\n+NOTA\s+FISCAL\s+FATURA', t, re.IGNORECASE)
+            if m_bloco:
+                endereco_val = m_bloco.group(1).strip()
+                nome_tom = m_bloco.group(2).strip() or nome_tom
+                m_end = re.match(r'^(.*?),\s*(\S+)\s*-\s*(.*?)\s*-\s*(.*?)\s*-\s*([A-Z]{2})$', endereco_val)
+                if m_end:
+                    logradouro = m_end.group(1).strip()
+                    numero = m_end.group(2).strip() or numero
+                    bairro = m_end.group(3).strip()
+                    municipio = m_end.group(4).strip()
+                    uf = m_end.group(5).strip()
+
+        # Regex unificado: "\n*" (0 ou mais quebras) aceita tanto rótulo:valor
+        # na mesma linha (escaneado, achado 2026-09-09) quanto em linhas
+        # separadas (digital original, "CPF/CNPJ:\n\n73.393.696/0001-37").
+        m_cnpj = re.search(r'CPF\s*/\s*CNPJ\s*:\s*\n*\s*([\d./-]{11,18})', t, re.IGNORECASE)
         if m_cnpj:
             cnpj_tom = re.sub(r'\D', '', m_cnpj.group(1))
 
@@ -11610,7 +11650,17 @@ class SPPdfExtractor:
             # PUBLICIDADE JORNAL IMPRESSO" sai com BC ICMS/ALÍQ/Valor ICMS
             # todos 0,00 na nota real, provável imunidade da imprensa) - o
             # aviso explicativo é adicionado em `parse_multiple`.
-            m_total = re.search(r'TOTAL\s+A\s+PAGAR\s*\(R\$\)\s*:\s*\n+\s*([\d.,]+)', t, re.IGNORECASE)
+            #
+            # "\n*" (0 ou mais quebras) em vez de "\n+": aceita também o
+            # texto SINTÉTICO devolvido por
+            # `_ocr_recut_total_pagar_nfcom_salvador_escaneado` numa nota
+            # ESCANEADA (achado real 2026-09-09, nota nº 4777, R$440,00) -
+            # "TOTAL A PAGAR (R$): 440,00" na MESMA linha, já que a caixa
+            # cinza "TOTAL A PAGAR" não sobrevive à leitura de página inteira
+            # em nenhuma combinação de zoom/PSM testada. Não muda o
+            # comportamento do PDF digital original (rótulo/valor em linhas
+            # separadas continuam batendo, "\n*" inclui "\n+\n+" também).
+            m_total = re.search(r'TOTAL\s+A\s+PAGAR\s*\(R\$\)\s*:\s*\n*\s*([\d.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_total.group(1)) if m_total else 0.0
 
             pis = cofins = ir = csll = 0.0
@@ -12955,6 +13005,31 @@ class SPPdfExtractor:
                     if recut_total.strip():
                         best_text = f"{recut_total}\n{best_text}"
 
+                # NFCom da EBJ (`nfcom_salvador`) ESCANEADA - achado real,
+                # nota nº 4777 (SIND DELEGADOS DE POLICIA DO EST DA BAHIA,
+                # R$440,00): até agora este layout só tinha sido visto em
+                # PDF DIGITAL; esta é a 1ª nota escaneada. Mesma família de
+                # bug do `nfcom_rlgr` escaneado acima - a leitura de página
+                # inteira funde as 2 colunas do cabeçalho linha a linha, e a
+                # caixa "TOTAL A PAGAR (R$)" não sobrevive em nenhuma
+                # combinação de zoom/PSM testada. Sem estes 2 recortes
+                # dedicados a nota saía com tomador "Não Identificado" e
+                # Valor dos Serviços zerado (ver `_ocr_recut_tomador_
+                # nfcom_salvador_escaneado`/`_ocr_recut_total_pagar_nfcom_
+                # salvador_escaneado`). Gate pelo mesmo marcador (CNPJ da
+                # EBJ + título) já usado em `_detect_layout`/
+                # `_detect_layout_page` - só dispara para notas deste
+                # emitente, sem risco de regressão em nenhum outro layout.
+                if re.search(r'14\.?583\.?041[/.]?0001-?62', best_text) \
+                        and re.search(
+                            r'NOTA\s+FISCAL\s+FATURA\s+DE\s+SERVI[ÇC]OS?\s+DE\s+'
+                            r'COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', best_text, re.IGNORECASE):
+                    recut_tomador_ebj = self._ocr_recut_tomador_nfcom_salvador_escaneado(page)
+                    recut_total_ebj = self._ocr_recut_total_pagar_nfcom_salvador_escaneado(page)
+                    extra_ebj = "\n".join(x for x in (recut_tomador_ebj, recut_total_ebj) if x.strip())
+                    if extra_ebj.strip():
+                        best_text = f"{extra_ebj}\n{best_text}"
+
                 # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): a leitura
                 # padrão (zoom 3x) já lê bem os blocos de entidade e o resumo
                 # em texto livre, mas embaralha a linha "Tributação de
@@ -13151,6 +13226,83 @@ class SPPdfExtractor:
             realcada = ImageOps.autocontrast(faixa, cutoff=1)
             binarizada = realcada.point(lambda p: 0 if p < 230 else 255)
             return pytesseract.image_to_string(binarizada, lang='por', config='--psm 4')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_tomador_nfcom_salvador_escaneado(page) -> str:
+        """Recorta só a caixa do DESTINATÁRIO na NFCom ESCANEADA da EBJ
+        (`nfcom_salvador`).
+
+        Achado real, nota nº 4777 (SIND DELEGADOS DE POLICIA DO EST DA
+        BAHIA, R$440,00) - primeira nota ESCANEADA já vista deste layout
+        (até então só PDF digital). A leitura de página inteira funde as 2
+        colunas do cabeçalho linha a linha (mesma família de bug já vista em
+        `nfcom_rlgr` escaneado): o bloco do tomador ("NOME DO DESTINATÁRIO"/
+        "END."/"CPF/CNPJ") sai intercalado com a coluna da direita ("NOTA
+        FISCAL FATURA Nº"/"SÉRIE"/"DATA DE EMISSÃO"), e o CNPJ do tomador
+        sai com o "-" lido como ":" ("0001:37" em vez de "0001-37").
+
+        Isolando só a caixa esquerda (0%-48% da largura, 19%-28,5% da
+        altura - calibrado contra a página real), zoom 3x + `--psm 4`
+        (assume coluna única) devolve o bloco limpo, com rótulo e valor na
+        MESMA linha/ordem DIRETA - o oposto da ordem parcialmente invertida
+        do PDF digital original (ver `_extrair_tomador_nfcom_salvador`)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            r = page.rect
+            clip = pymupdf.Rect(
+                r.x0,                  r.y0 + r.height * 0.19,
+                r.x0 + r.width * 0.48, r.y0 + r.height * 0.285,
+            )
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 4')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_total_pagar_nfcom_salvador_escaneado(page) -> str:
+        """Recorta só a caixa "TOTAL A PAGAR (R$)" na NFCom ESCANEADA da EBJ
+        (`nfcom_salvador`).
+
+        Achado real, nota nº 4777: essa caixa (cinza, texto em negrito) não
+        aparece em NENHUMA combinação de zoom/PSM testada na leitura de
+        página inteira (3/4/6/11/12) - só "VALOR TOTAL NFF" sobrevive, sem
+        o número ao lado. Isolando só esta caixa (55%-100% da largura,
+        28,3%-31,7% da altura - calibrado contra a página real), o NÚMERO
+        em si ("440,00") sai consistente em zoom 4x/6x/8x/10x com `--psm 6`,
+        mas o RÓTULO ao redor sai instável entre essas mesmas variações
+        ("TOIALA PAGAR [RS]", "TOtALA PAGAR IRS!", "TOTALA PAGAR IRS)" -
+        nunca o mesmo erro 2x). Em vez de depender do rótulo garantir
+        formato de regex, extrai só o número (único valor em formato de
+        moeda dentro do recorte, a caixa vizinha "VENCTO" que pode vazar
+        pela borda esquerda não tem vírgula decimal) e devolve já formatado
+        como "TOTAL A PAGAR (R$): 440,00" - o valor vem 100% do OCR real,
+        só o rótulo ao redor é sintético, pra garantir que o regex de
+        `_extrair_valores` (`LAYOUT_NFCOM_SALVADOR`) sempre bata."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            r = page.rect
+            clip = pymupdf.Rect(
+                r.x0 + r.width * 0.55, r.y0 + r.height * 0.283,
+                r.x1,                  r.y0 + r.height * 0.317,
+            )
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            texto = pytesseract.image_to_string(img, lang='por', config='--psm 6')
+            m = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})', texto)
+            if not m:
+                return ""
+            return f"TOTAL A PAGAR (R$): {m.group(1)}\n"
         except Exception:
             return ""
 
