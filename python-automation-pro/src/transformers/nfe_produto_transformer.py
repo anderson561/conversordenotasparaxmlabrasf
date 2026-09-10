@@ -111,8 +111,17 @@ class NfeProdutoTransformer:
             imposto = ET.SubElement(det, 'imposto')
             icms = ET.SubElement(imposto, 'ICMS')
             icms_grupo = ET.SubElement(icms, 'ICMS00' if item.aliquota_icms > 0 else 'ICMS40')
-            ET.SubElement(icms_grupo, 'orig').text = "0"
-            ET.SubElement(icms_grupo, 'CST').text = item.cst_icms or "00"
+            # O DANFE imprime ORIGEM + CST concatenados numa coluna só
+            # ("000" = origem 0/CST 00; "041" = origem 0/CST 41), enquanto o
+            # XML os separa em `orig` (1 dígito) e `CST` (2). Sem a divisão,
+            # `CST` sairia com 3 dígitos e o arquivo seria rejeitado.
+            cst_impresso = (item.cst_icms or "").strip()
+            if len(cst_impresso) == 3:
+                origem, cst = cst_impresso[0], cst_impresso[1:]
+            else:
+                origem, cst = "0", (cst_impresso or "00")
+            ET.SubElement(icms_grupo, 'orig').text = origem
+            ET.SubElement(icms_grupo, 'CST').text = cst
             if item.aliquota_icms > 0:
                 ET.SubElement(icms_grupo, 'modBC').text = "3"
                 ET.SubElement(icms_grupo, 'vBC').text = f"{item.base_calculo_icms:.2f}"
