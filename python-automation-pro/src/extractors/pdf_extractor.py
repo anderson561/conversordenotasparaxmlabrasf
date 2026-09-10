@@ -6210,7 +6210,34 @@ class SPPdfExtractor:
             linhas_antes = [l.strip() for l in bloco_antes.split('\n') if l.strip()]
             if linhas_antes:
                 for l in reversed(linhas_antes):
+                    # Linha fundida pelo OCR de 2 colunas: o nome do tomador
+                    # sai colado NA MESMA linha do cabeçalho "NOTA FISCAL
+                    # Nº <número> - SÉRIE" (achado real, nota Grupo FeF
+                    # nº 19026: "Guarajuba Shopping Ltda [E] NOTA FISCAL
+                    # Nº 19026 - SÉRIE: 1") — extrai só a parte ANTES desse
+                    # marcador, em vez de descartar a linha inteira por
+                    # conter dígitos (o número da nota, mais adiante nela).
+                    m_fundido = re.search(r'^(.*?)\s*[\[\(]?\w?[\]\)]?\s*NOTA\s+FISCAL\s+N[ºo°]', l, re.IGNORECASE)
+                    if m_fundido:
+                        candidato = m_fundido.group(1).strip()
+                        if re.search(r'[A-Za-zÀ-ú]', candidato) and len(candidato) > 3:
+                            nome_tom = candidato
+                            break
+                        continue
                     if re.search(r'\d', l):
+                        continue
+                    # Ruído de "furniture" fixo do documento (instruções da
+                    # nota, não nome de empresa) que pode sair sem nenhum
+                    # dígito nesta cópia do OCR e escaparia da guarda acima
+                    # — achado real, mesma nota nº 19026: "TT CONSULTE PELA
+                    # CHAVE DE ACESSO EM:" satisfazia a heurística solta
+                    # abaixo e era escolhido antes de a busca alcançar o
+                    # nome real, mais acima no bloco.
+                    if re.search(
+                        r'CONSULTE\s+PELA\s+CHAVE\s+DE\s+ACESSO|CHAVE\s+DE\s+ACESSO|'
+                        r'PROTOCOLO\s+DE\s+AUTORIZA|DATA\s+DE\s+EMISS[ÃA]O|[ÁA]REA\s+CONTRIBUINTE',
+                        l, re.IGNORECASE
+                    ):
                         continue
                     if re.fullmatch(r'.+\s[-–]\s*[A-Z]{2}', l):
                         continue
@@ -11928,7 +11955,19 @@ class SPPdfExtractor:
                 else:
                     v = self._parse_valor(bruto)
             else:
-                v = 0.0
+                # Achado real, nota Grupo FeF nº 19026: nesta nota até o
+                # rótulo "VALOR TOTAL NF" sai ilegível ("VALOR O UNF", a
+                # palavra "TOTAL" comida pelo OCR) — o fallback acima também
+                # falha. Mas cada linha de item da tabela "ITENS DA FATURA"
+                # sobrevive limpa, ancorada em "UN | <qtd> <valor unitário>"
+                # (indicado pelo próprio usuário, comparando com a imagem do
+                # PDF: coluna VALOR UNIT soma exatamente o VALOR TOTAL NF,
+                # 23,98 + 95,92 = 119,90) — soma-se unitário×quantidade de
+                # todas as linhas de item como última camada de fallback.
+                soma_itens = 0.0
+                for m_item in re.finditer(r'\bUN\b\s*\|?\s*(\d+)\s+([\d.,]+)', t, re.IGNORECASE):
+                    soma_itens += int(m_item.group(1)) * self._parse_valor(m_item.group(2))
+                v = soma_itens
 
             # BC ICMS e alíquota (campos presentes no documento, mapeados para base_calculo/aliquota)
             m_bc = re.search(r'BC\s+ICMS\s+([\d\.,]+)', t, re.IGNORECASE)
