@@ -53,6 +53,11 @@ class Nfse(BaseModel):
     intermediario: Optional[Entidade] = None
     discriminacao: str
     servico_codigo: str  # Ex: 03115
+    # CNAE (subclasse) do serviço, 7 dígitos sem pontuação (ex.: "4330405"),
+    # quando a nota o imprime. `None` em todo layout que não o extrai — o
+    # transformer emite o `<CodigoCnae>0000000</CodigoCnae>` de sempre nesse
+    # caso, que é o valor que a Domínio já recebia de todos os layouts.
+    codigo_cnae: Optional[str] = None
     valores: Valores
     optante_simples_nacional: bool = False
     regime_especial_tributacao: Optional[str] = None

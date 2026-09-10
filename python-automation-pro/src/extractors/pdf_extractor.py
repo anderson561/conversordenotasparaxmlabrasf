@@ -3325,6 +3325,27 @@ class SPPdfExtractor:
                     return m_cod.group(1)[:4]
 
         if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá, template PÓS-REFORMA TRIBUTÁRIA: a grade de
+            # atividade do template antigo (tratada logo abaixo) deu lugar à
+            # seção "DADOS DO SERVIÇO PRESTADO", com rótulos próprios:
+            # "Cód. Trib. Nacional: 07.06.02  NES: 07.06.02.00  Atividade
+            # Municipal: 14330-4/05 Aplicação de revestimentos e de resinas".
+            # O padrão da grade antiga (alíquota | item | NBS de 9 dígitos) não
+            # existe mais nesse layout, então o código caía no default genérico
+            # "03115" mesmo com o item da LC 116 impresso e legível.
+            #
+            # Ancoramos no rótulo do código NACIONAL (o item da LC 116 com
+            # desdobro, "XX.XX.XX") e usamos os 2 primeiros pares — 07.06 ->
+            # "0706" —, exatamente a convenção já usada nos ramos
+            # LAYOUT_NACIONAL/LAYOUT_NACIONAL_REFORMA abaixo. Cuidado com o
+            # rótulo vizinho "NES:", que repete o mesmo código com um 4º par
+            # (07.06.02.00): por isso a âncora é o rótulo, não o formato.
+            m_trib = re.search(
+                r'C[óo]d\.?\s*Trib\.?\s*Nacional\s*:?\s*(\d{2})\.(\d{2})\.\d{2}',
+                t, re.IGNORECASE)
+            if m_trib:
+                return m_trib.group(1) + m_trib.group(2)
+
             # ISSNet Cuiabá: na grade de detalhamento a linha da atividade traz
             # "...Serviços de engenharia - 5,00 | 701 114031000 | 7112000" —
             # colunas Atividade / Alíquota / item LC116 / NBS / CNAE. O item da LC
@@ -3381,6 +3402,38 @@ class SPPdfExtractor:
                 return "03115"
         
         return "03115" # Default fallback
+
+    def _extrair_codigo_cnae(self) -> Optional[str]:
+        """CNAE (subclasse) do serviço, 7 dígitos sem pontuação, quando a nota
+        o imprime. `None` quando não há fonte confiável — o transformer mantém
+        nesse caso o `<CodigoCnae>0000000</CodigoCnae>` que todos os layouts já
+        emitiam, então nenhum layout muda de comportamento por este método
+        existir."""
+        t = self.raw_text
+
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá, template PÓS-REFORMA TRIBUTÁRIA: a seção "DADOS DO
+            # SERVIÇO PRESTADO" traz "Atividade Municipal: 14330-4/05 Aplicação
+            # de revestimentos e de resinas" — o CNAE de subclasse no formato
+            # oficial "NNNN-N/NN", seguido da sua descrição.
+            #
+            # O rótulo é "Atividade MUNICIPAL", não "CNAE": o código impresso
+            # carrega um dígito de PREFIXO do município à esquerda da subclasse
+            # ("14330-4/05" — confirmado na imagem em zoom 10x, não é ruído de
+            # OCR). A subclasse CNAE são os 4 dígitos imediatamente ANTES do
+            # "-", e a leitura se autoconfirma pela descrição impressa ao lado:
+            # "Aplicação de revestimentos e de resinas" é exatamente a
+            # descrição oficial da subclasse 4330-4/05. Daí "4330405".
+            #
+            # Pegar os 4 ÚLTIMOS dígitos antes do "-" (em vez dos 4 primeiros)
+            # funciona igual quando o código vem sem prefixo, com 4 dígitos.
+            m_cnae = re.search(
+                r'Atividade\s+Municipal\s*:?\s*(\d{4,6})\s*-\s*(\d)\s*/\s*(\d{2})',
+                t, re.IGNORECASE)
+            if m_cnae:
+                return m_cnae.group(1)[-4:] + m_cnae.group(2) + m_cnae.group(3)
+
+        return None
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
@@ -3748,6 +3801,36 @@ class SPPdfExtractor:
                     return 'XXXX-XXXX'
 
         if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá, template PÓS-REFORMA TRIBUTÁRIA: o "Código de
+            # Autenticidade" mudou de formato. No template antigo é um token
+            # alfanumérico MISTO de 7-10 caracteres (ex.: "3B3DC3576", tratado
+            # no laço abaixo); no novo é uma sequência LONGA de dígitos PUROS
+            # (achado real, nota nº 308: 57 dígitos), que o laço abaixo rejeita
+            # justamente por não ter letra — e o campo caía no sentinela
+            # "XXXX-XXXX" mesmo estando impresso e legível.
+            #
+            # Não é a Chave de Acesso nacional de 50 dígitos (os 7 primeiros
+            # dígitos desta, "5103340", não são o IBGE de Cuiabá, 5103403) — é
+            # um código próprio da plataforma, então nada dele é decodificado
+            # aqui: vai para o `<CodigoVerificacao>` como impresso, mesma
+            # decisão já tomada para a chave do LAYOUT_NACIONAL acima.
+            #
+            # O risco desta leitura é OCR errar a CONTAGEM de uma corrida de
+            # zeros (o código tem várias), o que produziria um código
+            # plausível-porém-errado. Por isso só aceitamos quando TODAS as
+            # ocorrências no texto concordam: `_ocr_page` concatena 2 passes de
+            # OCR da mesma página, então o código aparece 2x, lido de forma
+            # independente. Divergência entre elas -> não devolve nada aqui e o
+            # campo segue para o sentinela + aviso (dado ausente, não errado).
+            #
+            # Uma corrida de dígitos MAIOR que 60 (o OCR colando o código à
+            # data vizinha) não casa — o `\b` final exige que a corrida termine
+            # exatamente ali —, então também cai no sentinela em vez de ser
+            # truncada num valor errado.
+            corridas = re.findall(r'\b(\d{40,60})\b', t)
+            if corridas and len(set(corridas)) == 1:
+                return corridas[0]
+
             # ISSNet Cuiabá: o código de autenticidade (ex.: "3B3DC3576") aparece
             # no cabeçalho, sem rótulo estável no OCR. É o primeiro token de 7-10
             # caracteres que MISTURA letra maiúscula e dígito — CNPJ/CEP/telefone/
@@ -6017,6 +6100,49 @@ class SPPdfExtractor:
                 if m_mun:
                     end_data['municipio'] = m_mun.group(1).strip()
                     end_data['uf'] = 'MT'
+
+        if self.layout == LAYOUT_CUIABA:
+            # ISSNet Cuiabá, template PÓS-REFORMA TRIBUTÁRIA: o endereço deixou
+            # de ter um rótulo por componente e virou UMA linha de texto livre,
+            # com os componentes separados por vírgula e o número marcado por
+            # "nº" — em posição VARIÁVEL:
+            #   prestador: "Endereço: Rua M4, Quadra 155, nº N2"
+            #   tomador:   "Endereço: Av. Praia de Pajussara, nº 554, Quadra 28, Lote 09"
+            # A quebra genérica por vírgula tratava o 2º segmento como número e
+            # o 3º como bairro, então saía `Numero="Quadra 155"` /
+            # `Bairro="nº N2"` no prestador e `Numero="nº 554"` /
+            # `Bairro="Quadra 28"` no tomador — campos trocados, e o "nº" ainda
+            # colado ao número.
+            #
+            # Aqui o número é o segmento MARCADO por "nº" (onde quer que ele
+            # esteja), o 1º segmento é o logradouro e os demais formam o
+            # complemento. O bairro NÃO é impresso neste template: vai para
+            # "Não informado" (o sentinela que o próprio transformer usa) em
+            # vez de receber um pedaço do endereço — dado ausente, não errado.
+            #
+            # Gate: exige a marca "nº" DENTRO da linha de Endereço. O template
+            # antigo rotula os componentes um por um ("Endereço : Avenida Praia
+            # de Pajussara Número: 554" + "Complemento : QD 28, LOTE 9 Bairro :
+            # Vilas do Atlântico"), sem essa marca — nenhuma das 8 notas Cuiabá
+            # já cobertas entra aqui.
+            m_end_cba = re.search(r'Endere[çc]o\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_end_cba and re.search(r',\s*n[ºo°]\s*\S', m_end_cba.group(1), re.IGNORECASE):
+                segs = [s.strip(' .') for s in m_end_cba.group(1).split(',')]
+                segs = [s for s in segs if s]
+                idx_num = next(
+                    (i for i, s in enumerate(segs)
+                     if re.match(r'^n[ºo°]\.?\s*\S', s, re.IGNORECASE)), None)
+                if idx_num is not None and len(segs) >= 2:
+                    end_data['numero'] = re.sub(
+                        r'^n[ºo°]\.?\s*', '', segs[idx_num], flags=re.IGNORECASE).strip()
+                    end_data['logradouro'] = segs[0]
+                    resto = [s for i, s in enumerate(segs) if i not in (0, idx_num)]
+                    # `complemento` não é emitido no bloco <Endereco> deste
+                    # transformer (a tag não existe lá), então "Quadra 155" não
+                    # chega ao XML — mas fica no modelo, e o importante é que
+                    # pare de ocupar o campo de outro componente.
+                    end_data['complemento'] = ', '.join(resto) if resto else None
+                    end_data['bairro'] = 'Não informado'
 
         if self.layout == LAYOUT_NACIONAL and (
                 not end_data.get('municipio') or end_data.get('municipio') in ('Não informado', '')):
@@ -15623,10 +15749,13 @@ class SPPdfExtractor:
         "16" (PSM 6 vem vazio); na nota nº 10 (DR3 Terceirização, PDF
         "ANALISE") só o PSM 6 lê "10" de forma estável (PSM 7 varia entre
         "10"/"1"/vazio conforme o zoom). Por isso vota com AMBOS os PSM em 3
-        zooms (6/8/10 — 6 tentativas) e só aceita quando ao menos 2 concordam
-        no mesmo valor — sem consenso, devolve vazio em vez de arriscar um
-        dígito errado (ex.: nota GMS FLATS pág. 17, sem número recuperável em
-        nenhuma combinação testada). Faixa vertical do recorte calibrada
+        zooms (6/8/10 — 6 tentativas). Cada voto é o PRIMEIRO grupo de dígitos
+        da leitura (não a string inteira: nos zooms altos a borda inferior do
+        recorte pega um dígito de sangria da linha seguinte), e só aceita
+        quando ao menos 2 votos concordam E vêm de ZOOMS DIFERENTES — sem
+        isso, devolve vazio em vez de arriscar um dígito errado (ex.: nota GMS
+        FLATS pág. 17, sem número recuperável em nenhuma combinação testada).
+        Faixa vertical do recorte calibrada
         (0.065-0.098 da altura da página) contra 3 notas reais com números de
         tamanhos diferentes (205, 16, 10) — uma faixa mais estreita (usada
         antes) cortava a linha do dígito ao meio em notas cujo número de 3
@@ -15648,12 +15777,33 @@ class SPPdfExtractor:
                     texto = pytesseract.image_to_string(
                         crop, lang='por', config=f'--psm {psm} -c tessedit_char_whitelist=0123456789'
                     ).strip()
-                    if texto:
-                        votos.append(texto)
+                    # Só o PRIMEIRO grupo de dígitos conta como voto. O recorte
+                    # tem 2 linhas (rótulo + número) e, nos zooms mais altos, a
+                    # borda inferior alcança a linha SEGUINTE da nota e traz um
+                    # dígito solto de sangria numa 2ª linha. Comparando a string
+                    # inteira, esse dígito transformava leituras concordantes em
+                    # votos DISTINTOS e destruía o consenso (achado real, nota
+                    # nº 308/FB PISOS: os 3 zooms leram "308", "308\n2" e
+                    # "308\n5" — 3 votos de 1 voto cada, consenso nunca fechava
+                    # e um número perfeitamente legível caía no sentinela).
+                    m_voto = re.match(r'\s*(\d+)', texto)
+                    if m_voto:
+                        votos.append((m_voto.group(1), zoom))
             if not votos:
                 return ""
-            numero, contagem = Counter(votos).most_common(1)[0]
+            numero, contagem = Counter(n for n, _ in votos).most_common(1)[0]
             if contagem < 2:
+                return ""
+            # Os votos concordantes têm de vir de ZOOMS DIFERENTES. A sangria
+            # descartada acima varia com o zoom (é geometria do recorte); um
+            # dígito real, não. Já dois PSM no MESMO zoom leem o MESMO bitmap,
+            # então concordarem é evidência fraca — e é justamente aí que a
+            # normalização do voto poderia fabricar um consenso falso sobre um
+            # número errado (o caso documentado da nota GMS FLATS pág. 17, cujo
+            # número não é recuperável em nenhuma combinação testada). Sem
+            # zooms distintos, devolve vazio: a extração cai no fallback
+            # honesto (sentinela + aviso) em vez de arriscar dado ERRADO.
+            if len({z for n, z in votos if n == numero}) < 2:
                 return ""
             return f"Número da Nota Fiscal\n{numero}\n"
         except Exception:
@@ -16023,6 +16173,7 @@ class SPPdfExtractor:
             intermediario=intermediario,
             discriminacao=discriminacao,
             servico_codigo=servico_codigo,
+            codigo_cnae=self._extrair_codigo_cnae(),
             valores=valores,
             optante_simples_nacional=optante_simples,
             regime_especial_tributacao=regime_especial,
