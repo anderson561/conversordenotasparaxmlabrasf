@@ -576,7 +576,34 @@ class SPPdfExtractor:
         # específica, não a estrutura genérica compartilhada).
         if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+SIM[OÕ]ES\s+FILHO', t, re.IGNORECASE):
             return LAYOUT_SIMOES_FILHO
-        if re.search(r'Data\s+Fato\s+Gerador', t, re.IGNORECASE):
+        # Barreiras/BA: até aqui a detecção de DOCUMENTO dependia SÓ do rótulo
+        # "Data Fato Gerador", enquanto a detecção por PÁGINA
+        # (`_detect_layout_page`) já aceitava também o cabeçalho "MUNICIPIO DE
+        # BARREIRAS". Essa assimetria roteava a nota inteira para o layout
+        # ERRADO quando o rótulo da data não sobrevivia ao OCR: sem nenhuma
+        # marca municipal casando, a nota caía no check LARGO de DANFSe
+        # Nacional mais adiante (`Chave de Acesso|Competência da NFS-e`) — e
+        # estas notas trazem "Chave de acesso Ambiente de Dados Nacional",
+        # porque o portal de Barreiras é integrado ao ambiente nacional.
+        #
+        # Consequência medida (PDF "NF VERIFICACAO" 08/2026): em 4 das 6 notas
+        # do lote o rótulo "Data Fato Gerador" saía ilegível e as 4 eram
+        # tratadas como DANFSe Nacional. Isso explicava de uma vez os 4
+        # defeitos colaterais reportados: o `<CodigoVerificacao>` recebia a
+        # chave de 50 dígitos (comportamento do LAYOUT_NACIONAL) em algumas
+        # notas e o código curto em outras, o `<Numero>` vinha do slice
+        # `chave[23:36]` genérico, o ramo de valores de Barreiras nunca rodava
+        # e o município do tomador saía pelo caminho do layout errado.
+        #
+        # Aceitar as marcas municipais aqui é seguro: uma DANFSe Nacional
+        # GENUÍNA emitida por Barreiras é capturada ANTES, no check estreito no
+        # topo desta função ("DANFSe v1.0"/"Documento Auxiliar da NFS-e"), que
+        # existe justamente para essa colisão. O rodapé "barreiras.ba.gov.br"
+        # entra como 3ª alternativa por ser o marcador que sobreviveu ao OCR
+        # em 6 de 6 notas do lote. Sem o ".br" final de propósito -- ver o
+        # comentario gemeo em `_detect_layout_page`.
+        if re.search(r'Data\s+Fato\s+Gerador|MUNIC[IÍ]PIO\s+DE\s+BARREIRAS|barreiras\.ba\.gov',
+                     t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
         # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA), emitida
         # pela própria Prefeitura (Série "A"), escaneada. PRECEDE o bloco Camaçari
@@ -907,7 +934,24 @@ class SPPdfExtractor:
         # documentada em `_detect_layout` (ver comentário lá).
         if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+SIM[OÕ]ES\s+FILHO', t, re.IGNORECASE):
             return LAYOUT_SIMOES_FILHO
-        if re.search(r'Data\s+Fato\s+Gerador|MUNICIPIO\s+DE\s+BARREIRAS', t, re.IGNORECASE):
+        # As MESMAS 3 marcas do detector de documento (ver o comentario la).
+        # Manter os dois em sincronia e' o ponto: num lote quem decide e'
+        # ESTE, e a assimetria entre eles ja custou duas vezes. Achado real
+        # 2026-09-11, pag. 4 do lote "nfsss" (nota nº 8965, CHAVES LOCACOES
+        # -> SAO PEDRO CONSTRUTORA, R$196,00): o PDF chega com uma camada de
+        # texto de OCR de TERCEIROS ja embutida, onde "MUNICIPIO" saiu
+        # "IIUNICIPIO" e "Data Fato Gerador" saiu "DIIIFMoGlradlf" -- as duas
+        # marcas daqui falham ao mesmo tempo, a pagina cai no check largo de
+        # "Chave de Acesso" e e' parseada inteira como DANFSe Nacional
+        # (valores zerados, prestador com o CNPJ do tomador). As paginas 2 e
+        # 3 do mesmo lote tem a marca intacta e roteiam certo -- so a 4
+        # quebrou.
+        #
+        # O rodape vai SEM o ".br" final: nesta pagina o OCR leu
+        # "httpsJJwww.barreiras.ba.gov br/", com espaço no lugar do ponto.
+        # O dominio oficial do municipio ja e' marca inequivoca sem ele.
+        if re.search(r'Data\s+Fato\s+Gerador|MUNIC[IÍ]PIO\s+DE\s+BARREIRAS|barreiras\.ba\.gov',
+                     t, re.IGNORECASE):
             return LAYOUT_BARREIRAS
         # Camaçari/BA - NOTA FISCAL DE PRESTAÇÃO DE SERVIÇOS (AVULSA), emitida
         # pela própria Prefeitura (Série "A"), escaneada. PRECEDE o bloco Camaçari
@@ -1362,6 +1406,66 @@ class SPPdfExtractor:
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
+
+        if self.layout == LAYOUT_BARREIRAS:
+            # Antes disto a data desta nota caía em `datetime.now()` quando o
+            # cabeçalho saía ilegível — o XML da nota nº 4059 registrava como
+            # emissão o INSTANTE DA CONVERSÃO (2026-09-10T16:43:27) para uma
+            # nota emitida em 10/08/2026. Data fabricada, e sem aviso.
+            #
+            # ANO e MÊS não dependem de OCR: vêm da Chave de Acesso, cujas
+            # posições 37-40 são AAMM (conferido nas 6 notas do lote, todas
+            # "2608" = 2026-08, coerente com as datas impressas). O DIA é a
+            # única parte que precisa da leitura do cabeçalho — e ela só
+            # sobrevive em parte das notas.
+            #
+            # `BARR_DATA_FG:` é o marcador sintético posto pela fatia do recut
+            # (ver `_fatia_grade_barreiras`); o rótulo real serve de 2ª fonte
+            # para as notas em que ele sai legível na leitura padrão. O dia só
+            # é aceito quando o MÊS lido bate com o da chave — é o que impede
+            # uma leitura solta de outra data do documento (vencimento,
+            # período do serviço) de virar a data de emissão.
+            # Sem chave recuperável (o OCR de terceiros come dígitos dela —
+            # na pág. 4 do lote "nfsss" ela sai com 48 dígitos em vez de 50
+            # e reprova a validação estrutural), a data completa vem do
+            # marcador do recorte do cabeçalho, que só é emitido quando
+            # DUAS leituras independentes concordam em dia e mês (ver
+            # `_marcadores_cabecalho_barreiras`). Sem ele, segue para o
+            # fallback genérico com aviso — nunca uma data inventada.
+            if not self._chave_barreiras():
+                m_só_marcador = re.search(r'BARR_DATA_FG:\s*(\d{2})/(\d{2})/(\d{4})', t)
+                if m_só_marcador:
+                    try:
+                        return datetime(int(m_só_marcador.group(3)),
+                                        int(m_só_marcador.group(2)),
+                                        int(m_só_marcador.group(1)))
+                    except ValueError:
+                        pass
+
+            chave_barr = self._chave_barreiras()
+            if chave_barr:
+                ano = 2000 + int(chave_barr[36:38])
+                mes = int(chave_barr[38:40])
+                if 1 <= mes <= 12:
+                    dia = None
+                    for m_dfg in re.finditer(
+                            r'(?:BARR_DATA_FG:\s*|Data\s+Fato\s+Gerador[^\n]*\n[^\n]*?)'
+                            r'(\d{2})/(\d{2})/(\d{4})', t, re.IGNORECASE):
+                        if int(m_dfg.group(2)) == mes:
+                            dia = int(m_dfg.group(1))
+                            break
+                    if dia and 1 <= dia <= 31:
+                        try:
+                            return datetime(ano, mes, dia)
+                        except ValueError:
+                            pass
+                    # Dia não recuperável: 1º do mês CORRETO, com aviso — a
+                    # competência (que é o que a Domínio usa para o período)
+                    # fica certa, e o usuário é avisado de que o dia não veio
+                    # do documento em vez de receber um dia inventado sem
+                    # nenhuma sinalização.
+                    self._data_emissao_fallback = True
+                    return datetime(ano, mes, 1)
 
         if self.layout == LAYOUT_BARUERI:
             # "Data Emissão\n06/01/2026\nCódigo Autenticidade\n\nHora
@@ -1877,6 +1981,27 @@ class SPPdfExtractor:
                 purged.append(p)
         return list(dict.fromkeys(purged))
 
+    def _chave_barreiras(self) -> Optional[str]:
+        """Chave de Acesso do ambiente nacional impressa nas NFS-e de
+        Barreiras/BA, com validação ESTRUTURAL — 50 dígitos começando pelo
+        código IBGE do município (2903201). Sem a validação, qualquer corrida
+        longa de dígitos do documento passaria por chave.
+
+        Lê primeiro o marcador sintético `BARR_CHAVE:` (posto pela fatia do
+        recut quando a linha da chave cai na faixa que o OCR descarta — ver
+        `_fatia_grade_barreiras`) e depois o rótulo real impresso. O prefixo
+        do IBGE é exigido nos DOIS caminhos: quem escreve o marcador é o
+        recut, que só confere o comprimento da corrida de dígitos."""
+        t = self.raw_text
+        m = re.search(r'BARR_CHAVE:\s*(\d{50})\b', t)
+        if m and m.group(1).startswith('2903201'):
+            return m.group(1)
+        for m_ch in re.finditer(r'(?:\d\s*){50,54}', t):
+            chave = re.sub(r'\D', '', m_ch.group(0))
+            if len(chave) >= 50 and chave.startswith('2903201'):
+                return chave[:50]
+        return None
+
     def _extrair_numero(self) -> str:
         t = self.raw_text
 
@@ -1890,6 +2015,44 @@ class SPPdfExtractor:
             # ISSQN" no texto) — sem impacto nelas.
             m = re.search(r'LFV3_NUMERO:\s*(\d+)', t)
             if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_BARREIRAS:
+            # Marcador sintético do resgate (ver
+            # `_marcadores_cabecalho_barreiras`): só existe quando a
+            # camada embutida e o recorte do cabeçalho LEEM O MESMO
+            # número. Vem antes da chave porque nas páginas em que o
+            # resgate roda a chave costuma estar corrompida (o OCR de
+            # terceiros come dígitos dela).
+            m_barr_num = re.search(r'BARR_NUMERO:\s*(\d+)', t)
+            if m_barr_num:
+                return m_barr_num.group(1)
+            chave_barr = self._chave_barreiras()
+            if chave_barr:
+                # O número impresso vem codificado na Chave de Acesso do
+                # ambiente nacional — fonte de verdade imune ao OCR da célula
+                # impressa, que nestes scans quase nunca é legível (recorte
+                # dedicado com votação multi-zoom só devolveu algo em 2 das 6
+                # notas do lote).
+                #
+                # Estrutura da chave, decodificada e conferida nas 6 notas:
+                #   2903201 (IBGE Barreiras) + 1 + 2 (tipo de inscrição) +
+                #   <CNPJ do prestador, 14> + <nNFSe, 13> + AAMM + <cód+DV, 10>
+                #
+                # O campo nNFSe NÃO é um sequencial zero-preenchido como no
+                # DANFSe Nacional (onde `chave[23:36].lstrip('0')` acerta): esta
+                # prefeitura prefixa o ANO ("26"), então não sobra zero à
+                # esquerda para tirar e o slice genérico devolvia os 13 dígitos
+                # crus ("2600000004059"). O número real fica DEPOIS da corrida
+                # de zeros.
+                #
+                # Conferido contra o valor impresso nas 2 notas cuja célula o
+                # OCR conseguiu ler (pág. 4 -> 882; pág. 3 -> 4059, esta também
+                # confirmada na imagem) e corroborado estruturalmente pelo
+                # lote: prestadores repetidos têm números consecutivos (BETINA
+                # 4059/4060, ATRIO 882/883).
+                m_num = re.search(r'0{2,}(\d+)$', chave_barr[23:36])
+                if m_num:
+                    return m_num.group(1)
 
         if self.layout == LAYOUT_BARUERI:
             # "Número da Nota\n0380578\nSérie da Nota\nNúmero RPS\n..." — ancorado
@@ -3800,6 +3963,62 @@ class SPPdfExtractor:
                     # honesto em vez de deixar cair nesse fallback mais fraco.
                     return 'XXXX-XXXX'
 
+        if self.layout == LAYOUT_BARREIRAS:
+            # O código curto impresso ("Codigo de Verificação para
+            # Autenticação: c6b460a49") NÃO é recuperável por OCR nestes scans:
+            # são 9 caracteres que MISTURAM letras minúsculas e dígitos em
+            # baixo contraste, e as leituras não convergem. Medido na nota nº
+            # 4059, cujo valor real foi confirmado na imagem em zoom 12x —
+            # SEIS tentativas independentes deram SEIS respostas diferentes e
+            # todas erradas: "C6h46049" (página inteira), "c6b480n49" (recut em
+            # zoom 5) e "5480949"/"65b480949"/"6460949"/"cb460949" (recorte
+            # dedicado em zooms 8/10/12/16). Emitir qualquer uma delas é
+            # publicar um código plausível-porém-errado.
+            #
+            # A Chave de Acesso de 50 dígitos, ao contrário, sai estável e é
+            # ESTRUTURALMENTE verificável (prefixo IBGE 2903201 + CNPJ do
+            # prestador + AAMM), além de codificar o número da nota — que
+            # bateu com o valor impresso onde este era legível. É o
+            # identificador de autenticidade que a nota carrega de forma
+            # confiável, então é ele que vai para o `<CodigoVerificacao>`,
+            # mesma decisão já tomada para o LAYOUT_NACIONAL logo abaixo.
+            #
+            # Mas a chave só entra quando o código curto NÃO é confiável — há
+            # notas deste layout em que ele sai perfeitamente legível (nota nº
+            # 1162, "ACC8CDE89", coberta por teste), e trocá-lo pela chave
+            # nesses casos seria descartar o valor certo.
+            #
+            # O critério é CONCORDÂNCIA entre duas leituras independentes: a de
+            # página inteira e a do recut em zoom 5 (`BARR_COD:`, posto pela
+            # fatia). Discordância prova que ao menos uma está errada e não diz
+            # qual — então cai na chave, que é verificável. Uma leitura só
+            # (nota cuja grade já sai completa, sem recut) segue aceita como
+            # antes, e a chave também é usada quando o código curto não aparece
+            # em leitura nenhuma.
+            chave_barr = self._chave_barreiras()
+            if chave_barr:
+                def _cod_valido(m):
+                    """Token do formato deste campo: MISTURA letra e dígito
+                    (ex.: "acc8cde89", "c6b460a49"). Um token de dígitos puros
+                    não é o código — é outro número que o OCR arrastou para o
+                    lado do rótulo (achado real, nota da pág. 1 do lote:
+                    "565734070", que as duas leituras repetiam)."""
+                    if not m:
+                        return None
+                    cod = m.group(1)
+                    return cod if re.search(r'[A-Za-z]', cod) and re.search(r'\d', cod) else None
+
+                cod_txt = _cod_valido(re.search(
+                    r'Autentica[çc][ãa]o\s*:\s*([0-9A-Za-z]{6,12})\b', t, re.IGNORECASE))
+                cod_rec = _cod_valido(re.search(r'BARR_COD:\s*([0-9A-Za-z]{6,12})\b', t))
+                if not cod_txt:
+                    return chave_barr
+                if cod_rec and cod_rec.upper() != cod_txt.upper():
+                    return chave_barr
+                # Normalizado em CAIXA ALTA, como o caminho genérico deste
+                # campo já devolvia (a nota imprime em minúsculas).
+                return cod_txt.upper()
+
         if self.layout == LAYOUT_CUIABA:
             # ISSNet Cuiabá, template PÓS-REFORMA TRIBUTÁRIA: o "Código de
             # Autenticidade" mudou de formato. No template antigo é um token
@@ -3960,6 +4179,15 @@ class SPPdfExtractor:
         t = self.raw_text
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
+
+        if self.layout == LAYOUT_BARREIRAS and not is_intermediario:
+            # Marcadores do resgate da camada de OCR de terceiros (ver
+            # `_marcadores_entidades_barreiras`). Só existem nas páginas
+            # em que os rótulos do texto embutido estão destruídos; nas
+            # demais notas de Barreiras nada muda.
+            ent_marcada = self._entidade_barreiras_por_marcador(is_prestador)
+            if ent_marcada is not None:
+                return ent_marcada
 
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             return self._extrair_entidade_nacional_reforma(is_prestador, is_intermediario)
@@ -5231,8 +5459,35 @@ class SPPdfExtractor:
                 re.search(r'CPF\s*/\s*CNPJ\s*:?\s*(?:-{2,}|[‐-―]+)', m_bloco.group(0), re.IGNORECASE):
             return None
 
+        # Barreiras/BA escaneado: o cabeçalho de seção "TOMADOR" às vezes é
+        # comido inteiro pelo OCR (achado real, PDF "NF VERIFICACAO" 08/2026:
+        # presente na nota da pág. 3, AUSENTE nas das págs. 1 e 5). Sem ele o
+        # rótulo da própria entidade não é encontrado, o bloco do tomador cai
+        # no fallback limitado — que é delimitado pelo rótulo do PRESTADOR e
+        # portanto contém só os dados DELE — e Prestador e Tomador saem com os
+        # MESMOS dados. Mesma família do vazamento já documentado em Cuiabá,
+        # com outra âncora.
+        #
+        # Neste template cada entidade começa por uma linha "Razão Social:", na
+        # ordem prestador -> tomador, e a seção seguinte é sempre "SERVIÇO
+        # NACIONAL" (íntegra nas 6 notas do lote). Então o bloco do tomador é o
+        # trecho da SEGUNDA "Razão Social:" até "SERVIÇO NACIONAL". Só entra em
+        # ação quando o rótulo normal não foi achado — notas cujo cabeçalho
+        # "TOMADOR" sobreviveu seguem exatamente pelo caminho de antes.
+        bloco_barreiras = None
+        if self.layout == LAYOUT_BARREIRAS and not is_prestador and not is_intermediario \
+                and not m_bloco:
+            razoes = list(re.finditer(r'Raz[ãa]o\s+Social\s*:', t, re.IGNORECASE))
+            if len(razoes) >= 2:
+                inicio = razoes[1].start()
+                m_fim = re.search(r'SERVI[ÇC]O\s+NACIONAL', t[inicio:], re.IGNORECASE)
+                fim = inicio + m_fim.start() if m_fim else len(t)
+                bloco_barreiras = t[inicio:fim]
+
         if bloco_sv is not None:
             bloco = bloco_sv
+        elif bloco_barreiras is not None:
+            bloco = bloco_barreiras
         elif bloco_cuiaba is not None:
             bloco = bloco_cuiaba
         elif m_bloco:
@@ -5249,9 +5504,26 @@ class SPPdfExtractor:
         # rótulo corrompido, ex.: "PRESPADOR,DESSERVIÇOS") antes do
         # fallback linha-a-linha da razão social.
         bloco_veio_de_fallback_limitado = (
-            bloco_sv is None and bloco_cuiaba is None and m_bloco is None
-            and bloco_fallback_limitado is not None
+            bloco_sv is None and bloco_cuiaba is None and bloco_barreiras is None
+            and m_bloco is None and bloco_fallback_limitado is not None
         )
+
+        # Barreiras/BA: limite SIMÉTRICO ao `bloco_barreiras` acima. Quando o
+        # cabeçalho "TOMADOR" é comido pelo OCR, não é só o bloco do tomador
+        # que fica sem âncora — o do PRESTADOR (cujo cabeçalho sobreviveu)
+        # perde o delimitador da direita e se estende POR CIMA dos dados do
+        # tomador. Medido na nota da pág. 1 do lote: o município do prestador
+        # saía "LAURO DE FREITAS" (a cidade do TOMADOR), porque a linha de
+        # cidade do tomador estava dentro do bloco do prestador.
+        #
+        # Cada entidade começa por uma linha "Razão Social:", então o bloco do
+        # prestador termina na SEGUNDA. Só corta quando há uma segunda dentro
+        # do próprio bloco — notas com o cabeçalho "TOMADOR" íntegro já param
+        # antes disso e não são afetadas.
+        if self.layout == LAYOUT_BARREIRAS and is_prestador:
+            razoes_bloco = list(re.finditer(r'Raz[ãa]o\s+Social\s*:', bloco, re.IGNORECASE))
+            if len(razoes_bloco) >= 2:
+                bloco = bloco[:razoes_bloco[1].start()]
 
         bloco_clean = bloco.replace('|', ' ').replace('!', ' ').replace('\n', ' ').strip()
         bloco_clean = re.sub(r'\s{2,}', ' ', bloco_clean)
@@ -5406,6 +5678,21 @@ class SPPdfExtractor:
         pattern_razao = rf'(?:{p_extra})[:\s/]*((?:(?!{stop_patterns}).)+)'
         m_razao = re.search(pattern_razao, bloco_clean, re.IGNORECASE)
         razao = m_razao.group(1).strip() if m_razao else ''
+
+        # Barreiras/BA: a razão social ocupa a linha INTEIRA e só ela
+        # ("Razão Social: SAO PEDRO CONSTRUTORA LTDA"). A busca genérica roda
+        # sobre `bloco_clean`, que achata as quebras de linha em espaços, então
+        # quando a linha SEGUINTE é ruído de OCR o ruído entra na razão
+        # (achado real, nota da pág. 1 do lote: a linha de endereço do tomador
+        # saiu como "te 2d ta dd EL" e a razão vinha "SAO PEDRO CONSTRUTORA
+        # LTDA te 2d ta dd EL"). Reler do bloco ORIGINAL, limitado ao fim da
+        # linha, resolve sem tocar em nenhum outro layout. Só sobrepõe quando
+        # de fato encontra a linha rotulada e ela não está vazia.
+        if self.layout == LAYOUT_BARREIRAS:
+            m_razao_linha = re.search(
+                r'Raz[ãa]o\s+Social\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_razao_linha and m_razao_linha.group(1).strip():
+                razao = m_razao_linha.group(1).strip()
 
         # Limpeza de ruídos de labels e pontuação inicial
         labels_limpeza = [
@@ -6084,6 +6371,64 @@ class SPPdfExtractor:
                     end_data['municipio'] = segs[-1]
                     if len(segs) >= 3:
                         end_data['bairro'] = segs[-2]
+
+        if self.layout == LAYOUT_BARREIRAS:
+            # Este template não tem rótulo "Cidade"/"Município": a cidade fica
+            # numa linha própria do bloco da entidade, no formato
+            # "<CIDADE> - <UF> - CEP: <cep>" ("LAURO DE FREITAS - BA - CEP:
+            # 42708720", "Barreiras - BA - CEP: 47810-704"). Sem extrair daí, o
+            # resolver de IBGE não achava município nenhum no bloco e caía no
+            # fallback da capital — o XML saía com o tomador de Lauro de
+            # Freitas registrado em SALVADOR (2927408), o que desloca o
+            # município no cadastro do tomador.
+            #
+            # A âncora é o "- CEP:" à direita, não a posição da linha: é o que
+            # distingue esta linha da linha de endereço logo acima, que também
+            # tem hífens ("Rua Clériston Andrade, 385, ........ - São Miguel").
+            #
+            # NÃO é gated por "município ainda vazio": o caminho genérico
+            # costuma preencher esse campo com LIXO que parece preenchido —
+            # medido nas notas do lote, o bairro sai fundido com a cidade
+            # ("VILAS DO ATLANTICO LAURO DE FREITAS", "São Miguel Barreiras",
+            # "OBRAMAX LOCACAO E SERVICOS Barreiras") —, e um portão de vazio
+            # nunca abriria. Como a âncora aqui é precisa, ela sobrepõe.
+            #
+            # O grupo da cidade proíbe quebra de linha e hífen (`[^\n-]`): sem
+            # isso a captura atravessava a linha de cima e devolvia
+            # "VILAS DO ATLANTICO\nLAURO DE FREITAS" como nome de município.
+            m_cid_barr = re.search(
+                r'([A-Za-zÀ-ú][^\n-]{2,40}?)\s*-\s*([A-Z]{2})\s*-?\s*CEP\s*[:\s]',
+                bloco, re.IGNORECASE)
+            if m_cid_barr:
+                end_data['municipio'] = re.sub(r'\s+', ' ', m_cid_barr.group(1)).strip(' -.,')
+                end_data['uf'] = m_cid_barr.group(2).upper()
+            else:
+                # 2ª chance: o OCR às vezes PARTE essa linha, jogando a UF e o
+                # CEP para depois de outro campo (achado real, nota da pág. 1
+                # do lote: "LAURO DE FREITAS -" / "E-mail:" / "BA-CEP:
+                # 42708720"). A cidade sozinha numa linha, em caixa alta e
+                # terminando em "-", ainda é uma âncora segura — desde que o
+                # bloco realmente tenha um CEP adiante, o que confirma que a
+                # linha é o começo da linha de cidade e não texto solto.
+                m_cid_só = re.search(
+                    r'^\s*([A-ZÀ-Ú][A-ZÀ-Ú\s]{2,40}?)\s*-\s*$', bloco, re.MULTILINE)
+                if m_cid_só and re.search(r'CEP\s*[:\s]*\d', bloco, re.IGNORECASE):
+                    end_data['municipio'] = re.sub(r'\s+', ' ', m_cid_só.group(1)).strip()
+                    m_uf_barr = re.search(r'\b([A-Z]{2})\s*-?\s*CEP', bloco)
+                    if m_uf_barr:
+                        end_data['uf'] = m_uf_barr.group(1).upper()
+
+            # Prestador de nota de Barreiras cujo município ficou ilegível: o
+            # emitente é contribuinte DESTE município (a nota traz "Local de
+            # Prestação"/"Local de Recolhimento: 2903201 - Barreiras - BA" e a
+            # Inscrição Municipal dele), então o default do layout é Barreiras
+            # — não o fallback da capital, que gravava o prestador em SALVADOR.
+            # Mesmo padrão do default de UF já usado por este e outros layouts,
+            # e do "Garante MT no layout Cuiabá para Prestador" logo abaixo.
+            if is_prestador and (not end_data.get('municipio')
+                                 or end_data.get('municipio') in ('Não informado', '')):
+                end_data['municipio'] = 'Barreiras'
+                end_data['uf'] = 'BA'
 
         if self.layout == LAYOUT_CUIABA and (not end_data.get('municipio') or end_data.get('municipio') in ('Não informado', '')):
             # ISSNet Cuiabá: o município do prestador vem como "- Cuiabá! MT" (o
@@ -10530,6 +10875,115 @@ class SPPdfExtractor:
                 valor_liquido_nfse=valor_liquido_nfse,
             )
 
+        if self.layout == LAYOUT_BARREIRAS and self._grade_barreiras_completa(t):
+            # TERCEIRA variante de grade deste mesmo portal municipal, a que o
+            # recut de página inteira (`_ocr_valores_barreiras`) devolve: TODOS
+            # os 6 rótulos numa linha só e TODOS os valores na linha seguinte,
+            # na mesma ordem de coluna:
+            #
+            #   VALOR SERVIÇO (R$)| DEDUÇÕES (R$)| DESCONTO INCONDICIONAL (R$) \
+            #       BASE CÁLCULO (R$) ALÍQUOTA (%) ss (R$)
+            #   480,00 0,00 0,00 480,00 3.33 15,98
+            #
+            # As outras duas variantes NÃO casam este portão e seguem pelos
+            # caminhos que já as atendiam: a da nota nº 23 (digital) traz o
+            # valor colado ao próprio rótulo ("VALOR SERVIÇO (R$)\n16.473,00") e
+            # a da nota nº 1162 (locação) põe cada rótulo e cada valor em sua
+            # PRÓPRIA linha, com "DEMONSTRATIVO DOS TRIBUTOS FEDERAIS" no meio
+            # do caminho entre "DESCONTO INCONDICIONAL" e "BASE CÁLCULO" — em
+            # nenhuma das duas existe uma linha de cabeçalho seguida de 5+
+            # números, que é exatamente o que `_grade_barreiras_completa` exige.
+            m_cab = None
+            linhas = t.split('\n')
+            for i, linha in enumerate(linhas):
+                up = linha.upper()
+                if ('BASE C' in up or 'ALÍQUOTA' in up or 'ALIQUOTA' in up) and \
+                        re.search(r'VALOR\s+SERVI|DEDU[ÇC][ÕO]ES|BASE\s+C', up):
+                    for prox in linhas[i + 1:]:
+                        if not prox.strip():
+                            continue
+                        if len(re.findall(r'\d[\d.]*[.,]\d{2}', prox)) >= 5:
+                            m_cab = prox
+                        break
+                    if m_cab:
+                        break
+
+            if m_cab:
+                # A coluna de percentual é impressa com PONTO decimal ("3.33",
+                # "4.11", "0.00") e as monetárias com vírgula — convenção do
+                # próprio documento, confirmada na imagem em zoom 9x, não ruído
+                # de OCR. `_parse_valor` trata ponto como separador de MILHAR,
+                # então a alíquota precisa da sua própria conversão, senão
+                # "3.33" viraria 333.
+                def _n(tok: str) -> float:
+                    return self._parse_valor(tok) if ',' in tok else float(tok)
+
+                toks = re.findall(r'\d[\d.]*[.,]\d{2}', m_cab)
+                serv = _n(toks[0])
+                base = _n(toks[3])
+                aliq_pct = iss = 0.0
+
+                if len(toks) >= 6:
+                    aliq_pct, iss = _n(toks[4]), _n(toks[5])
+                elif len(toks) == 5:
+                    # O OCR corta a alíquota com alguma frequência (achado real,
+                    # nota nº 4059 do lote, pág. 6: a nota imprime "4.11" e a
+                    # leitura devolve "4", que não casa o padrão de número com
+                    # 2 decimais e desaparece da linha). Sobra um único token
+                    # ambíguo, que pode ser a alíquota OU o ISS.
+                    #
+                    # Desempate pela plausibilidade da ALÍQUOTA resultante: o
+                    # ISS municipal é limitado a 5% pela LC 116/2003 (art. 8º,
+                    # II), e esta própria nota imprime no rodapé "INFORMAR A
+                    # ALÍQUOTA ENTRE 2 A 5%". Lendo o token da pág. 6 (17,26)
+                    # como ISS dá alíquota de 4,11% — exatamente o que está
+                    # impresso; lendo-o como alíquota daria 17,26%, impossível.
+                    cand = _n(toks[4])
+                    if base > 0 and 0 < cand / base * 100 <= 5.0:
+                        iss = cand
+                    else:
+                        aliq_pct = cand
+
+                # Identidade contábil como juíza: ISS = base x alíquota. Fecha
+                # nas 3 notas do lote com ISS devido (480x3,33%=15,98;
+                # 6.000x3,31%=198,60; 2.600x3,31%=86,06) e recupera a alíquota
+                # cortada da 4ª. O ISS é lido da coluna monetária (com vírgula,
+                # mais robusta) e a alíquota é a coluna que o OCR corta, então
+                # em caso de divergência a alíquota é DERIVADA do ISS, nunca o
+                # contrário — mesma escolha já feita no layout de Camaçari.
+                #
+                # Guarda essencial: alíquota 0 COM ISS 0 é dado REAL nas notas
+                # do Simples Nacional deste portal (confirmado na imagem em
+                # zoom 9x nas págs. 1 e 2 do lote, que imprimem "0.00" e "0,00"
+                # nas duas colunas). A derivação só entra quando há DIVERGÊNCIA
+                # — nunca para "preencher" um zero legítimo, o que fabricaria
+                # alíquota onde a nota não tem nenhuma.
+                if base > 0 and abs(base * aliq_pct / 100 - iss) > 0.01:
+                    aliq_pct = iss / base * 100
+
+                # Valor líquido: fica na 2ª faixa da grade (junto ao
+                # DEMONSTRATIVO DOS TRIBUTOS FEDERAIS) e é o ÚLTIMO número da
+                # linha de valores dessa faixa. Quando não sai legível, cai em
+                # serviços - ISS retido, que nestas notas é o próprio serviço.
+                liquido = serv
+                m_liq = re.search(
+                    r'VALOR\s+L[IÍ]QUIDO[^\n]*\n(?:[^\n]*\n){0,2}?([^\n]*\d[\d.]*,\d{2}[^\n]*)',
+                    t, re.IGNORECASE)
+                if m_liq:
+                    nums_liq = re.findall(r'\d[\d.]*,\d{2}', m_liq.group(1))
+                    if nums_liq:
+                        liquido = self._parse_valor(nums_liq[-1])
+
+                return Valores(
+                    valor_servicos=serv,
+                    valor_deducoes=_n(toks[1]),
+                    desconto_incondicionado=_n(toks[2]),
+                    base_calculo=base or serv,
+                    aliquota=aliq_pct / 100,
+                    valor_iss=iss,
+                    valor_liquido_nfse=liquido,
+                )
+
         if self.layout == LAYOUT_BARREIRAS:
             # Grade "rótulos em bloco, depois valores em bloco" - vista em notas
             # de locação de bens móveis NÃO sujeitas a ISS, emitidas pelo mesmo
@@ -13318,6 +13772,59 @@ class SPPdfExtractor:
                         if grade_sp.strip():
                             best_text = f"{grade_sp}\n{best_text}"
 
+                # Barreiras/BA escaneado: a segmentação automática do Tesseract
+                # DESCARTA UMA FAIXA HORIZONTAL INTEIRA desta nota — a faixa que
+                # carrega o texto da discriminação, a OBSERVAÇÃO, a GRADE
+                # PRINCIPAL DE VALORES (Valor Serviço | Deduções | Desconto
+                # Incondicional | Base Cálculo | Alíquota | ISS), o Valor
+                # Líquido e, às vezes, a linha "Chave de acesso". Sem a grade,
+                # `_extrair_valores` cai no fallback ZERO e a nota inteira sai
+                # com valor 0,00 (achado real: PDF "NF VERIFICACAO" 08/2026, as
+                # 6 notas do lote saíram zeradas, nota nº 4059 entre elas).
+                #
+                # É a mesma família de bug já vista nas notas 201 e 160 de
+                # Camaçari, mas numa variante que o portão existente NÃO cobre:
+                # lá a página falhava por COMPLETO (`score_angle_0 == 0`) e o
+                # fallback de PSM 6 disparava; aqui o resto da página lê bem, a
+                # pontuação é alta, e a perda é PARCIAL — só a faixa. Por isso
+                # este portão olha para o conteúdo da grade, não para a
+                # pontuação da página.
+                #
+                # Zoom 5 + PSM 6 (página inteira) recompõe a grade nas 6 notas
+                # do lote. Zoom 5 e não 4 por medição: no zoom 4 a nota da pág.
+                # 1 não devolve o rótulo da grade e a da pág. 6 lê "0,90" no
+                # lugar de "0,00" nas deduções.
+                #
+                # Portão: só reprocessa quando a linha de VALORES da grade não
+                # está recuperável no texto padrão — isto é, quando não existe
+                # um cabeçalho de grade seguido, na próxima linha não vazia, de
+                # ao menos 5 números. Nota cujo grid já sai completo pula o
+                # custo extra e não corre risco de regressão. Cuidado tomado no
+                # portão: o rótulo "Valor Serviço" TAMBÉM aparece na frase de
+                # rodapé "(Valor Líquido = Valor Serviço - INSS - ...)", que
+                # sobrevive ao OCR em todas as notas — usar a presença do
+                # rótulo como sinal daria falso positivo em 6 de 6 casos.
+                # O que é prependado é uma FATIA do recut (linhas da grade +
+                # a linha da "Chave de acesso"), nunca a página inteira. Isso
+                # não é economia: prependar a página toda duplica o letterhead
+                # "MUNICIPIO DE BARREIRAS" DENTRO do texto de uma única página,
+                # e `is_new_invoice` (em `parse_multiple`) trata esse marcador
+                # como início de nota — a página se parte em 2 blocos, o 2º
+                # (o texto degradado, sem grade) vira uma nota zerada e o
+                # resultado do lote muda de 6 notas para 5. Medido: com o
+                # prepend integral, as notas das págs. 4 e 6 saíam zeradas e a
+                # da pág. 3 desaparecia do resultado. A fatia também evita
+                # reintroduzir o rótulo "Nº da Nota Fiscal" do recut, cujo
+                # primeiro número vizinho é a Data Fato Gerador ("10") e não o
+                # número da nota.
+                if re.search(r'MUNIC[IÍ]PIO\s+DE\s+BARREIRAS', best_text, re.IGNORECASE) \
+                        and not self._grade_barreiras_completa(best_text):
+                    valores_barr = self._ocr_valores_barreiras(page)
+                    if self._grade_barreiras_completa(valores_barr):
+                        fatia = self._fatia_grade_barreiras(valores_barr)
+                        if fatia.strip():
+                            best_text = self._insere_grade_barreiras(best_text, fatia)
+
                 # Cuiabá/MT (ISSNet) escaneado: a grade "Detalhamento dos
                 # Tributos" (Vl. Total dos Serviços | ... | Total do ISSQN |
                 # ISSQN Retido | ...) às vezes sai truncada no zoom 3 padrão —
@@ -15810,6 +16317,351 @@ class SPPdfExtractor:
             return ""
 
     @staticmethod
+    def _grade_barreiras_completa(texto: str) -> bool:
+        """A linha de VALORES da grade principal de Barreiras está recuperável
+        neste texto? Verdadeiro quando existe uma linha de CABEÇALHO da grade
+        (em caixa alta, com "BASE CÁLCULO" e/ou "ALÍQUOTA") seguida, na próxima
+        linha não vazia, de ao menos 5 números.
+
+        Usado como portão do recut (`_ocr_valores_barreiras`) e, do outro lado,
+        para só aceitar o recut quando ele de fato trouxe a grade.
+
+        Deliberadamente NÃO usa a presença do rótulo "Valor Serviço" como
+        sinal: essa expressão também aparece na frase de rodapé "(Valor Líquido
+        = Valor Serviço - INSS - IR - ...)", que sobrevive ao OCR mesmo quando
+        a grade inteira foi descartada — nas 6 notas do lote de achado ela
+        estava presente e a grade não."""
+        linhas = texto.split('\n')
+        for i, linha in enumerate(linhas):
+            up = linha.upper()
+            if 'BASE C' not in up and 'ALÍQUOTA' not in up and 'ALIQUOTA' not in up:
+                continue
+            if not re.search(r'VALOR\s+SERVI|DEDU[ÇC][ÕO]ES|BASE\s+C', up):
+                continue
+            for prox in linhas[i + 1:]:
+                if not prox.strip():
+                    continue
+                # Aceita vírgula OU ponto decimal: a coluna de percentual desta
+                # nota é impressa com PONTO ("3.33", "4.11", "0.00") enquanto as
+                # colunas monetárias usam vírgula — convenção do próprio
+                # documento, confirmada na imagem, não ruído de OCR.
+                if len(re.findall(r'\d[\d.]*[.,]\d{2}', prox)) >= 5:
+                    return True
+                break
+        return False
+
+    @staticmethod
+    def _insere_grade_barreiras(texto: str, fatia: str) -> str:
+        """Costura a fatia da grade DENTRO do corpo da nota, não na frente dele.
+
+        `parse_multiple` faz um "processamento granular": além de fatiar o
+        documento por página, ele subdivide cada página em blocos e trata cada
+        bloco como candidato a nota. Uma fatia colada ANTES do letterhead cai
+        num bloco separado do corpo da nota — o bloco com os valores fica sem
+        entidades e o bloco com as entidades fica sem valores. Medido: com o
+        prepend na frente, só 2 das 6 notas do lote saíam com valor, embora o
+        texto de cada página estivesse correto quando lido isoladamente.
+
+        Ancoramos no rótulo "DEMONSTRATIVO DOS TRIBUTOS FEDERAIS", que
+        sobrevive ao OCR degradado em todas as notas do lote (é a 2ª faixa da
+        grade, logo abaixo da faixa descartada) e está no MESMO bloco das
+        entidades. Sem a âncora, anexa no fim do texto — ainda dentro do
+        último bloco, que é onde a grade original ficaria."""
+        m = re.search(r'^.*DEMONSTRATIVO\s+DOS\s+TRIBUTOS\s+FEDERAIS.*$',
+                      texto, re.IGNORECASE | re.MULTILINE)
+        if m:
+            return f"{texto[:m.start()]}{fatia}\n{texto[m.start():]}"
+        return f"{texto}\n{fatia}"
+
+    def _marcadores_entidades_barreiras(self, ocr: str) -> str:
+        """Prestador e tomador do NOSSO OCR da página, como marcadores
+        SINTÉTICOS (`BARR_PREST_*` / `BARR_TOM_*`).
+
+        Existe para o caso em que o PDF chega com uma camada de texto de OCR de
+        TERCEIROS já embutida: ela é longa o bastante para o portão de OCR de
+        `parse_multiple` concluir que há texto utilizável, então o nosso
+        Tesseract nunca roda — e nela os rótulos das entidades saem destruídos
+        ("Razio Soclal:", "~ Social.", achado real na pág. 4 do lote "nfsss",
+        nota nº 8965). Medido nessa página: a camada embutida pontua 44 em
+        `_score_ocr_text` e o nosso OCR de página inteira pontua 18, ou seja,
+        TROCAR uma pela outra piora a página — a camada tem a grade de valores
+        que o nosso OCR perde, e o nosso OCR tem as entidades limpas que a
+        camada perde. As duas são complementares.
+
+        Por que MARCADOR e não costurar as linhas no lugar delas: essa mesma
+        camada embaralha os cabeçalhos de seção — nesta página o rótulo
+        "TOMADOR" aparece DEPOIS dos dados do tomador —, então nenhuma âncora
+        posicional do texto original é confiável. O marcador não depende de
+        ordem nenhuma e não colide com `is_new_invoice` (mesma técnica de
+        `LFV3_NUMERO:` e `BARR_CHAVE:`).
+
+        A ordem prestador→tomador vem do próprio template (o prestador é sempre
+        o 1º bloco "Razão Social:"), e cada CNPJ é validado pelo dígito
+        verificador antes de virar marcador — sem isso, um dígito comido pelo
+        OCR viraria um CNPJ plausível e errado."""
+        blocos = list(re.finditer(r'Raz[ãa]o\s+Social\s*:\s*([^\n]+)', ocr, re.IGNORECASE))
+        if len(blocos) < 2:
+            return ''
+
+        saida = []
+        for prefixo, i in (('PREST', 0), ('TOM', 1)):
+            ini_b = blocos[i].start()
+            fim_b = blocos[i + 1].start() if i + 1 < len(blocos) else len(ocr)
+            bloco = ocr[ini_b:fim_b]
+
+            razao = re.sub(r'\s+', ' ', blocos[i].group(1)).strip(' .-')
+            if len(razao) < 5:
+                continue
+            saida.append(f'BARR_{prefixo}_RS: {razao}')
+
+            for m_doc in re.finditer(r'(\d{2}[.\s]?\d{3}[.\s]?\d{3}[/\s]?\d{4}-?\d{2})', bloco):
+                doc = re.sub(r'\D', '', m_doc.group(1))
+                if len(doc) == 14 and self._validate_cnpj_cpf(doc):
+                    saida.append(f'BARR_{prefixo}_CNPJ: {doc}')
+                    break
+
+            m_cid = re.search(r'^\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s]{2,40}?)\s*-\s*([A-Z]{2})\s*-\s*CEP\s*:?\s*([\d-]*)',
+                              bloco, re.IGNORECASE | re.MULTILINE)
+            if m_cid:
+                cep = re.sub(r'\D', '', m_cid.group(3))
+                saida.append(f'BARR_{prefixo}_CIDADE: {m_cid.group(1).strip()} - '
+                             f'{m_cid.group(2).upper()} - CEP: {cep}')
+
+        return '\n'.join(saida)
+
+    def _entidade_barreiras_por_marcador(self, is_prestador: bool):
+        """Monta a entidade a partir dos marcadores do resgate, quando eles
+        existem. Devolve None quando não há marcador — a extração normal
+        segue."""
+        prefixo = 'PREST' if is_prestador else 'TOM'
+        t = self.raw_text
+        m_rs = re.search(rf'BARR_{prefixo}_RS:\s*([^\n]+)', t)
+        if not m_rs:
+            return None
+        m_cnpj = re.search(rf'BARR_{prefixo}_CNPJ:\s*(\d{{14}})', t)
+        m_cid = re.search(rf'BARR_{prefixo}_CIDADE:\s*([^\n-]+?)\s*-\s*([A-Z]{{2}})\s*-\s*CEP:\s*(\d*)', t)
+
+        cidade = m_cid.group(1).strip() if m_cid else ('Barreiras' if is_prestador else 'Não informado')
+        uf = m_cid.group(2) if m_cid else 'BA'
+        cep = (m_cid.group(3) if m_cid else '') or '00000000'
+        cod_mun = _ibge_resolver.extract_and_validate(
+            f'{cidade} - {uf}', detected_uf=uf, city_hint=cidade)
+
+        return Entidade(
+            cnpj_cpf=m_cnpj.group(1) if m_cnpj else '00000000000000',
+            razao_social=m_rs.group(1).strip(),
+            endereco=Endereco(
+                logradouro='Não informado', numero='S/N', bairro='Não informado',
+                codigo_municipio=cod_mun, municipio=cidade, uf=uf,
+                cep=cep.zfill(8)[:8],
+            ),
+        )
+
+    @classmethod
+    def _marcadores_cabecalho_barreiras(cls, camada: str, recut: str) -> str:
+        """Número e Data Fato Gerador como marcadores SINTÉTICOS, cada um só
+        quando DUAS leituras independentes concordam — a camada embutida e o
+        recorte do cabeçalho são passagens distintas sobre a mesma tinta, então
+        concordarem é evidência de verdade; uma leitura só não é.
+
+        Número: ancorado no rótulo da camada, que sobrevive corrompido mas
+        reconhecível ("WuNotaFJscal\n\n8965"), e só aceito se o mesmo token
+        aparecer também no recorte. Data: os `dd/mm/aaaa` do recorte, aceito o
+        dia/mês que aparece ao menos DUAS vezes (na pág. 4 o recorte lê
+        "Emitido em 24/08/2026" e "Data Fato Gerador 24/08/7026" — o dia e o
+        mês batem, o ano de uma das leituras não), com o ano tomado da leitura
+        plausível. Sem concordância, nada é emitido e o campo segue para o
+        sentinela + aviso."""
+        saida = []
+
+        m_num = re.search(r'Nota\s*F\w?scal\s*\n+\s*(\d{3,6})\b', camada, re.IGNORECASE)
+        if m_num and re.search(r'\b' + m_num.group(1) + r'\b', recut):
+            saida.append(f'BARR_NUMERO: {m_num.group(1)}')
+
+        datas = re.findall(r'\b(\d{2})/(\d{2})/(\d{4})\b', recut)
+        for dia, mes, ano in datas:
+            if sum(1 for d, m, _ in datas if (d, m) == (dia, mes)) < 2:
+                continue
+            anos_ok = [a for d, m, a in datas
+                       if (d, m) == (dia, mes) and 2000 <= int(a) <= 2099]
+            if not anos_ok:
+                continue
+            if 1 <= int(mes) <= 12 and 1 <= int(dia) <= 31:
+                saida.append(f'BARR_DATA_FG: {dia}/{mes}/{anos_ok[0]}')
+                break
+
+        return '\n'.join(saida)
+
+    def _ocr_recut_cabecalho_barreiras(self, page_num: int) -> str:
+        """Recorte dedicado da faixa do cabeçalho (número, Data Fato Gerador,
+        "Emitido em"). Faixa e parâmetros escolhidos por medição na pág. 4 do
+        lote "nfsss": y=[0,08–0,25] em zoom 5 com `--psm 6` é a única
+        combinação testada (2 faixas × 2 zooms × 3 PSMs) que devolve ao mesmo
+        tempo o número e a data. O Tesseract descarta essa faixa inteira na
+        leitura de página cheia (o nosso OCR da pág. 4 começa direto em "Local
+        de Prestação"), mesma família de perda parcial de faixa já tratada em
+        `_ocr_valores_barreiras`."""
+        try:
+            import io as _io
+            import os
+
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+
+            tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            if os.path.exists(tess_path):
+                pytesseract.pytesseract.tesseract_cmd = tess_path
+
+            doc = pymupdf.open(self.pdf_path)
+            try:
+                if page_num >= len(doc):
+                    return ''
+                page = doc.load_page(page_num)
+                r = page.rect
+                clip = pymupdf.Rect(0, r.height * 0.08, r.width, r.height * 0.25)
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(5, 5), clip=clip)
+                img = Image.open(_io.BytesIO(pix.tobytes('png')))
+                return pytesseract.image_to_string(img, lang='por', config='--psm 6')
+            finally:
+                doc.close()
+        except Exception as e:  # noqa: BLE001
+            print(f"[!] Recorte do cabeçalho de Barreiras falhou: {e}")
+            return ''
+
+    def _resgate_barreiras_ocr_terceiros(self, page_num: int, texto: str) -> str:
+        """Enriquece uma página de Barreiras cuja camada de texto embutida veio
+        de um OCR de terceiros degradado, costurando o que o NOSSO OCR e um
+        recorte do cabeçalho recuperam. Devolve o texto original quando não há
+        o que acrescentar.
+
+        Portão por CONTEÚDO: só entra quando faltam as duas linhas "Razão
+        Social:" que toda nota deste template imprime. Medido no lote "nfsss":
+        dispara nas págs. 3 e 4 (rótulos destruídos) e não nas 1 e 2.
+
+        A camada embutida continua sendo a BASE — é dela que sai a grade de
+        valores, que o nosso OCR perde nesta página."""
+        if len(re.findall(r'Raz[ãa]o\s+Social\s*:', texto, re.IGNORECASE)) >= 2:
+            return texto
+
+        try:
+            ocr = self._ocr_page(page_num)
+        except Exception:  # noqa: BLE001
+            ocr = ''
+        fatia = self._marcadores_entidades_barreiras(ocr) if ocr else ''
+        marcadores = self._marcadores_cabecalho_barreiras(
+            texto, self._ocr_recut_cabecalho_barreiras(page_num))
+
+        extra = '\n'.join(p for p in (fatia, marcadores) if p.strip())
+        if not extra.strip():
+            return texto
+        return f"{texto}\n{extra}"
+
+    @classmethod
+    def _fatia_grade_barreiras(cls, recut: str) -> str:
+        """Isola, do re-OCR de página inteira, apenas as linhas que interessam:
+        a grade de valores (cabeçalho + linha de valores + a 2ª faixa, com o
+        DEMONSTRATIVO DOS TRIBUTOS FEDERAIS e o VALOR LÍQUIDO) e a linha da
+        "Chave de acesso".
+
+        Prependar a página inteira quebraria o fatiamento em notas — ver o
+        comentário no portão em `_ocr_page`.
+
+        A chave entra porque em algumas notas ela também cai na faixa
+        descartada (achado real, nota nº 4059) e é a fonte de verdade do NÚMERO
+        desta prefeitura, imune ao OCR do valor impresso. Mas entra sob o
+        marcador SINTÉTICO `BARR_CHAVE:`, nunca com o rótulo real "Chave de
+        acesso": esse rótulo é ao mesmo tempo um separador de bloco em
+        `parse_multiple` e a marca de detecção do LAYOUT_NACIONAL, então
+        reintroduzi-lo aqui fazia a própria fatia virar um bloco órfão,
+        detectado como DANFSe Nacional — com isso o ramo de valores de
+        Barreiras nunca rodava e a nota saía zerada de novo. Mesma técnica de
+        marcador sintético já usada em `LFV3_NUMERO:` (Lauro de Freitas)."""
+        linhas = recut.split('\n')
+        saida = []
+
+        for i, linha in enumerate(linhas):
+            up = linha.upper()
+            if ('BASE C' in up or 'ALÍQUOTA' in up or 'ALIQUOTA' in up) and \
+                    re.search(r'VALOR\s+SERVI|DEDU[ÇC][ÕO]ES|BASE\s+C', up):
+                # Cabeçalho + as ~6 linhas não vazias seguintes: cobrem a linha
+                # de valores da grade principal e a 2ª faixa inteira (rótulos
+                # federais + seus valores + o VALOR LÍQUIDO no fim da linha).
+                saida.append(linha)
+                restantes = 6
+                for prox in linhas[i + 1:]:
+                    if not prox.strip():
+                        continue
+                    if re.search(r'Chave\s+de\s+acesso', prox, re.IGNORECASE):
+                        # A linha da chave é reemitida abaixo sob o marcador
+                        # sintético; o rótulo REAL não pode entrar na fatia
+                        # nem de carona nesta janela (ver o docstring), o que
+                        # aconteceria numa nota em que ela caísse a menos de
+                        # 6 linhas da grade. Não consome uma das 6.
+                        continue
+                    saida.append(prox)
+                    restantes -= 1
+                    if restantes == 0:
+                        break
+                break
+
+        m_chave = re.search(r'Chave\s+de\s+acesso[^\n]*?((?:\d\s*){50,54})', recut, re.IGNORECASE)
+        if m_chave:
+            chave = re.sub(r'\D', '', m_chave.group(1))[:50]
+            if len(chave) == 50:
+                saida.append(f'BARR_CHAVE: {chave}')
+
+        # Data Fato Gerador: na leitura padrão a linha de VALORES do cabeçalho
+        # sai ilegível em todas as notas do lote ("CEE ema oa"), e o recut em
+        # zoom 5 a recupera em parte delas ("10/08/2026 Exigivel Tributação
+        # Normat", logo abaixo da linha de rótulos). Vai também como marcador
+        # sintético, e não como a linha real: a linha de rótulos vizinha
+        # contém "Nº da Nota Fiscal", e reintroduzi-la faria a extração
+        # genérica de número pegar o primeiro dígito ao lado do rótulo — que é
+        # o "10" do próprio dia, não o número da nota.
+        m_dfg = re.search(
+            r'Data\s+Fato\s+Gerador[^\n]*\n[^\n]*?(\d{2}/\d{2}/\d{4})', recut, re.IGNORECASE)
+        if m_dfg:
+            saida.append(f'BARR_DATA_FG: {m_dfg.group(1)}')
+
+        # 2ª leitura, INDEPENDENTE, do código curto de autenticação — em outro
+        # zoom que a leitura padrão. Serve só para CONFERIR a leitura padrão
+        # (ver `_extrair_codigo_verificacao`): são 9 caracteres misturando
+        # letras minúsculas e dígitos, o tipo de campo em que o OCR erra sem
+        # dar nenhum sinal.
+        m_cod = re.search(
+            r'Autentica[çc][ãa]o\s*:\s*([0-9A-Za-z]{6,12})\b', recut, re.IGNORECASE)
+        if m_cod:
+            saida.append(f'BARR_COD: {m_cod.group(1)}')
+
+        return '\n'.join(saida)
+
+    @staticmethod
+    def _ocr_valores_barreiras(page) -> str:
+        """Reprocessa a página inteira da NFS-e de Barreiras/BA escaneada em
+        zoom 5x com PSM 6 (bloco único). A segmentação automática do Tesseract
+        descarta a faixa horizontal que contém a grade principal de valores
+        (ver o portão em `_ocr_page` para o histórico completo) — sem ela a nota
+        sai com valor 0,00.
+
+        Zoom 5 + PSM 6 recompõe a grade nas 6 notas do lote de achado (PDF "NF
+        VERIFICACAO" 08/2026). Zoom 5 e não 4 por medição: no zoom 4 a nota da
+        pág. 1 não devolve o rótulo da grade e a da pág. 6 lê "0,90" no lugar
+        de "0,00" nas deduções. Mesma técnica do `_ocr_valores_cuiaba`, que
+        resolve a mesma classe de problema no layout de Cuiabá."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
     def _ocr_valores_cuiaba(page) -> str:
         """Reprocessa a página inteira da NFS-e de Cuiabá/MT (ISSNet) escaneada
         em zoom alto (5x) com PSM 6 (bloco único). No zoom 3 padrão a grade
@@ -17267,6 +18119,13 @@ class SPPdfExtractor:
                 self.invalid_pages.append({"page": idx, "reason": "Lixo/Recibo detectado"})
                 continue
             layout = self._detect_layout_page(page)
+            if layout == LAYOUT_BARREIRAS and not self.from_ocr:
+                # PDF escaneado que chega com camada de texto de OCR de
+                # TERCEIROS: longa o bastante para o portão de OCR acima
+                # concluir que há texto utilizável, degradada o bastante
+                # para destruir os rótulos das entidades.
+                page = self._resgate_barreiras_ocr_terceiros(idx - 1, page)
+                pages[idx - 1] = page
             if layout == LAYOUT_GENERICO and len(page.strip()) > 50:
                 self.invalid_pages.append({"page": idx, "reason": "Layout não reconhecido"})
                 continue
