@@ -90,6 +90,7 @@ LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretari
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # NFS-e eNotas Gateway (Lauro de Freitas/BA) - nome do layout mantido por retrocompatibilidade, mas cobre MÚLTIPLOS emitentes na mesma plataforma: PASSWORD Sistemas Eletronicos (CNPJ 04.021.023/0001-33) e INFOMIX Soluções em Tecnologia (CNPJ 29.869.622/0001-32) - cada um detectado pelo próprio CNPJ, nunca pela marca genérica "eNotas", para não colidir com futuros emitentes do mesmo provedor. Extração de entidades/valores é genérica o bastante para servir ambos sem ramos dedicados, exceto 2 diferenças pontuais na estrutura de texto (código do serviço com nº de dígitos variável após a barra; rótulos "NOME/RAZÃO SOCIAL"+"E-MAIL" do tomador podem vir despejados juntos antes dos 2 valores)
+LAYOUT_NEOTAGUS_LOCACAO = 'fatura_neotagus'  # NEO-TAGUS INDUSTRIAL LTDA (CNPJ raiz 61.092.565, Extrema/MG) - "FATURA DE LOCAÇÃO DE MAQUINAS/EQUIPAMENTOS", PDF DIGITAL (pdfminer limpo, sem OCR). Achado real: nº 5135 (controle "000005135/LOC") -> CONDOMINIO EDIFICIO TK TOWER, R$1.190,34. Precisa vir ANTES de LAYOUT_FATURA_LOCACAO_GENERICA, que é detectado só pela frase "FATURA DE LOCAÇÃO" e cujos extratores são calibrados no template da LOC BAHIA (blocos "LOCADORA"/"LOCATÁRIO", tabela "QTDE - DESCRIÇÃO", rótulos "Cidade:"/"Estado:", número em "NÚMERO:", total em "TOTAL: R$") - NENHUM deles existe aqui, e a nota saía com valor 0,00, entidades vazias e discriminação "354 - EXTREMA - MG" (um pedaço do CEP do próprio prestador, pescado pelo regex de item da tabela da LOC BAHIA). Mesma decisão já tomada para a ARMAC: cada locadora com template próprio ganha layout próprio, detectado pelo CNPJ RAIZ do emitente (casa qualquer filial - esta nota é da 0022). pdfminer despeja "rótulos todos, depois valores todos" no bloco do prestador (mesma família de Guarulhos/Campinas/Monte Santo) e FORA DE ORDEM no do cliente (endereço e CEP antes do CNPJ) - por isso o prestador é lido por ÍNDICE e o cliente por FORMA DO CONTEÚDO. Município do prestador é Extrema/MG (IBGE 3125101), ausente de `IBGEResolver.KNOWN_CITIES` - código explícito, mesma decisão de Santa Terezinha/BA e Vinhedo/SP, para não cair no fallback silencioso de Salvador. Locação de bens móveis: base/alíquota/ISS zerados e ItemListaServico "0601", convenção de toda a família de faturas de locação deste projeto (a própria nota declara substituir a NFS-e pela LC 116/2003)
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
 LAYOUT_PJB_LOCACAO = 'pjb_locacao'  # PJB Construção Aluguel de Máq. e Ser. (CNPJ 08.885.357, Simões Filho/BA) - Fatura de Locação de bens móveis escaneada, sem incidência de ISS; prestador fixo, tomador do bloco DESTINATÁRIO
@@ -808,6 +809,15 @@ class SPPdfExtractor:
         # um desses ganha por marca própria; só cai aqui uma fatura de locação de
         # locadora ainda não catalogada (ex.: LOC BAHIA). Ver gotcha Forma A
         # (ordem da cadeia de detecção).
+        # NEO-TAGUS ANTES da Fatura de Locação genérica: o título desta nota
+        # ("FATURA DE LOCAÇÃO DE MAQUINAS/EQUIPAMENTOS") casa a marca genérica,
+        # mas o template é outro por inteiro. Detecção pelo CNPJ RAIZ do
+        # emitente (sem o sufixo de filial) ou pelo nome junto do título -
+        # mesmo critério da ARMAC logo acima.
+        if re.search(r'61\.?092\.?565', t) or (
+                re.search(r'NEO\s*-?\s*TAGUS', t, re.IGNORECASE)
+                and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
+            return LAYOUT_NEOTAGUS_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
             return LAYOUT_FATURA_LOCACAO_GENERICA
         return LAYOUT_GENERICO
@@ -1133,6 +1143,15 @@ class SPPdfExtractor:
             return LAYOUT_GUARULHOS
         if re.search(r'00\.?242\.?184', t) or (re.search(r'\bARMAC\b', t, re.IGNORECASE) and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
             return LAYOUT_ARMAC_LOCACAO
+        # NEO-TAGUS ANTES da Fatura de Locação genérica: o título desta nota
+        # ("FATURA DE LOCAÇÃO DE MAQUINAS/EQUIPAMENTOS") casa a marca genérica,
+        # mas o template é outro por inteiro. Detecção pelo CNPJ RAIZ do
+        # emitente (sem o sufixo de filial) ou pelo nome junto do título -
+        # mesmo critério da ARMAC logo acima.
+        if re.search(r'61\.?092\.?565', t) or (
+                re.search(r'NEO\s*-?\s*TAGUS', t, re.IGNORECASE)
+                and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
+            return LAYOUT_NEOTAGUS_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
             return LAYOUT_FATURA_LOCACAO_GENERICA
         return LAYOUT_GENERICO
@@ -2123,6 +2142,17 @@ class SPPdfExtractor:
             m = re.search(r'N[úu]mero\s+da\s+nota\s*:\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
+        if self.layout == LAYOUT_NEOTAGUS_LOCACAO:
+            # "Nº do Controle:" ... "000005135/LOC" - rótulos e valores em
+            # blocos separados, com o sufixo de série da locadora ("/LOC") e
+            # zeros à esquerda. Sem esta âncora o número vinha do NOME DO
+            # ARQUIVO ("NOTA 5135.pdf"): renomeando o arquivo, a nota saía
+            # com `00000000` - o campo parecia certo por acidente.
+            m = re.search(r'N[º°o]\s*do\s+Controle\s*:[\s\S]{0,80}?(\d{4,})\s*/\s*[A-Z]{2,4}',
+                          t, re.IGNORECASE)
+            if m:
+                return m.group(1).lstrip('0') or m.group(1)
+
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
             # "NÚMERO:\n\n788" — ancorado no rótulo próprio, evitando casar com
             # "CONTRATO: 702" (número do contrato, não da fatura).
@@ -3001,6 +3031,16 @@ class SPPdfExtractor:
                 if texto:
                     return texto
 
+        if self.layout == LAYOUT_NEOTAGUS_LOCACAO:
+            # A própria nota resume o serviço numa linha própria. Sem ela, o
+            # regex de item da LOC BAHIA pescava "354 - EXTREMA - MG" - um
+            # pedaço do CEP do prestador, que casa o mesmo formato
+            # "<números> - <TEXTO>".
+            m = re.search(r'Descri[çc][ãa]o\s*-\s*Servi[çc]os\s+prestados\s*:\s*([^\n]+)',
+                          t, re.IGNORECASE)
+            if m and m.group(1).strip():
+                return re.sub(r'\s+', ' ', m.group(1)).strip()
+
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
             # "1 - CGB-0001   CORTADOR DE GRAMA A BATERIA" — nº do item, código
             # interno do produto e descrição colados na mesma linha, logo após
@@ -3346,7 +3386,7 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).zfill(2) + m.group(2)
 
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_NEOTAGUS_LOCACAO, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA):
             # LAYOUT_LOCALIZA faltava aqui (achado real, fatura ACFSA-237512):
             # caía no default genérico "03115" em vez do item de locação de
             # bens móveis, mesma convenção das demais faturas de locação.
@@ -3656,7 +3696,7 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).upper()
 
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA, LAYOUT_FF_LOCACAO):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_NEOTAGUS_LOCACAO, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA, LAYOUT_FF_LOCACAO):
             return "FATURA"
 
         if self.layout == LAYOUT_SIMOES_FILHO:
@@ -4319,6 +4359,11 @@ class SPPdfExtractor:
             if re.search(r'CPF\s*/?\s*CNPJ\s*/?\s*NIF[ \t]+(?:Inscri|Telefone)', t, re.IGNORECASE):
                 return self._extrair_entidade_campinas(is_prestador)
             return self._extrair_entidade_campinas_digital(is_prestador)
+
+        if self.layout == LAYOUT_NEOTAGUS_LOCACAO:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_neotagus(is_prestador)
 
         if self.layout == LAYOUT_FATURA_LOCACAO_GENERICA:
             if is_intermediario:
@@ -8698,6 +8743,134 @@ class SPPdfExtractor:
             telefone=telefone,
         )
 
+    def _extrair_entidade_neotagus(self, is_prestador: bool) -> Entidade:
+        """Prestador e cliente da Fatura de Locação da NEO-TAGUS.
+
+        Os dois blocos usam quirks DIFERENTES do pdfminer e por isso são lidos
+        de formas diferentes:
+
+        - **Prestador**: "rótulos todos, depois valores todos", em ordem —
+          Razão Social | CNPJ | Inscrição Estadual | Endereço | CEP | Fone.
+          Lido por ÍNDICE (mesma convenção de Guarulhos/Campinas/Monte Santo),
+          com o CNPJ conferido pelo dígito verificador e a linha de CEP pelo
+          formato; se qualquer um dos dois não bater na posição esperada, cai
+          para a busca por forma dentro do mesmo bloco, em vez de gravar o
+          vizinho.
+        - **Cliente**: os valores saem FORA da ordem dos rótulos (endereço e
+          CEP aparecem ANTES do CNPJ), então aqui não há índice confiável —
+          cada campo é achado pela FORMA do conteúdo.
+
+        O município do prestador é Extrema/MG, ausente de
+        `IBGEResolver.KNOWN_CITIES`: sem o código explícito (3125101,
+        confirmado contra o IBGE e contra a faixa de CEP 37640-000/37649-999
+        impressa na nota) ele cairia no fallback silencioso de Salvador/BA,
+        mesma classe de bug já vista com Vinhedo/SP e Santa Terezinha/BA — e
+        aqui isso desloca também `OrgaoGerador` e `MunicipioIncidencia`, ou
+        seja, o município de incidência do ISS.
+        """
+        t = self.raw_text
+
+        def _linhas_valores(bloco: str, depois_de: str) -> list:
+            m = re.search(depois_de, bloco, re.IGNORECASE)
+            if not m:
+                return []
+            return [ln.strip() for ln in bloco[m.end():].split('\n') if ln.strip()]
+
+        def _cidade_uf_cep(linhas):
+            for ln in linhas:
+                m = re.match(r'^(\d{5}-?\d{3})\s*-\s*(.+?)\s*-\s*([A-Z]{2})\s*$', ln)
+                if m:
+                    return (re.sub(r'\D', '', m.group(1)),
+                            m.group(2).strip(), m.group(3).upper())
+            return '', 'Não informado', ''
+
+        def _cnpj(linhas):
+            for ln in linhas:
+                for m in re.finditer(r'(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})', ln):
+                    doc = re.sub(r'\D', '', m.group(1))
+                    if len(doc) == 14 and self._validate_cnpj_cpf(doc):
+                        return doc
+            return '00000000000000'
+
+        m_controle = re.search(r'N[º°o]\s*do\s+Controle', t, re.IGNORECASE)
+        m_cliente = re.search(r'Dados\s+do\s+Cliente\s*:\s*([^\n]*)', t, re.IGNORECASE)
+        m_tabela = re.search(r'\bItem\b\s*\n|Descri[çc][ãa]o\s*-\s*Servi[çc]os', t, re.IGNORECASE)
+
+        if is_prestador:
+            bloco = t[:m_controle.start()] if m_controle else t
+            linhas = _linhas_valores(bloco, r'Fone\s*:')
+            razao = linhas[0] if linhas else 'Prestador Não Identificado'
+            cnpj = _cnpj(linhas)
+            # Índice 3 é o Endereço na ordem dos rótulos; validado por não ser
+            # a linha de CEP nem a do CNPJ.
+            endereco_raw = ''
+            for ln in linhas[1:]:
+                if re.match(r'^\d{5}-?\d{3}\s*-', ln) or re.search(r'\d{2}\.\d{3}\.\d{3}/', ln):
+                    continue
+                if re.fullmatch(r'[\d\s.\-/]+', ln):
+                    continue
+                endereco_raw = ln
+                break
+            cep, cidade, uf = _cidade_uf_cep(linhas)
+        else:
+            ini = m_cliente.end() if m_cliente else 0
+            fim = m_tabela.start() if m_tabela else len(t)
+            bloco = t[ini:fim]
+            razao = (m_cliente.group(1).strip() if m_cliente and m_cliente.group(1).strip()
+                     else 'Tomador Não Identificado')
+            linhas = [ln.strip() for ln in bloco.split('\n') if ln.strip()]
+            cnpj = _cnpj(linhas)
+            cep, cidade, uf = _cidade_uf_cep(linhas)
+            endereco_raw = ''
+            for ln in linhas:
+                if re.search(r'^\d{5}-?\d{3}\s*-|\d{2}\.\d{3}\.\d{3}/|:\s*$', ln):
+                    continue
+                if re.fullmatch(r'[\d\s.\-/]+', ln) or ln.endswith(':'):
+                    continue
+                endereco_raw = ln
+                break
+
+        # "AV PROFESSOR MAGALHAES NETO1856" - o número sai COLADO no fim do
+        # logradouro nesta nota; "Estrada da Represa, 917 (Rod. Fernão Dias
+        # KM933)" usa vírgula e traz complemento entre parênteses.
+        logradouro, numero, complemento = endereco_raw or 'Não informado', 'S/N', None
+        partes = [p.strip() for p in endereco_raw.split(',')] if endereco_raw else []
+        if len(partes) > 1:
+            logradouro = partes[0]
+            m_n = re.match(r'^(\d+)\s*(.*)$', partes[1])
+            if m_n:
+                numero = m_n.group(1)
+                resto = [p for p in ([m_n.group(2)] + partes[2:]) if p]
+            else:
+                resto = partes[1:]
+            complemento = ', '.join(resto).strip(' ()') or None
+        elif endereco_raw:
+            m_col = re.match(r'^(.*?[A-Za-zÀ-ú])\s*(\d+)\s*$', endereco_raw)
+            if m_col:
+                logradouro, numero = m_col.group(1).strip(), m_col.group(2)
+
+        if cidade.upper().startswith('EXTREMA') and uf == 'MG':
+            # Ausente de KNOWN_CITIES - ver o docstring.
+            mun_cod = '3125101'
+        else:
+            mun_cod = _ibge_resolver.extract_and_validate(
+                cidade, uf or 'MG', city_hint=cidade, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=numero,
+                complemento=complemento,
+                bairro='Não informado',
+                codigo_municipio=mun_cod,
+                municipio=cidade,
+                uf=uf or 'MG',
+                cep=(cep or '00000000').zfill(8)[:8],
+            ),
+        )
+
     def _extrair_entidade_armac(self, is_prestador: bool) -> Entidade:
         """Extrai locador/tomador da Fatura de Locação da ARMAC (OCR zoom4/PSM6).
 
@@ -12395,6 +12568,23 @@ class SPPdfExtractor:
             # alíquota zerados, como nos demais layouts de locação).
             m_val = re.search(r'VALOR\s+L[IÍ]QUIDO\s+DA\s+NOTA\s+DE\s+COBRAN[ÇC]A\s*[\n\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_NEOTAGUS_LOCACAO:
+            # A tabela de itens sai com o rótulo "Total:" ANTES dos números
+            # (variante "rótulos-depois-valores" do pdfminer), então não há
+            # valor colado ao rótulo para ancorar. O total geral é o ÚLTIMO
+            # valor monetário antes da linha "Descrição - Serviços
+            # prestados", que fecha a tabela.
+            fim = re.search(r'Descri[çc][ãa]o\s*-\s*Servi[çc]os\s+prestados', t, re.IGNORECASE)
+            regiao = t[:fim.start()] if fim else t
+            valores_tab = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', regiao)
+            v = self._parse_valor(valores_tab[-1]) if valores_tab else 0.0
+            # Locação de bens móveis: mesmo tratamento da família (base,
+            # alíquota e ISS zerados).
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
