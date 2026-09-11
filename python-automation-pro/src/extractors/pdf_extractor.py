@@ -11311,10 +11311,121 @@ class SPPdfExtractor:
             cofins = _num_apos_sem_rs(r'\bCOFINS\s*\(R\$\)')
             csll = _num_apos_sem_rs(r'\bCSLL\s*\(R\$\)')
             outras_ret = _num_apos_sem_rs(r'Outras\s+Reten[çc][õo]es\s*\(R\$\)')
+            deducoes_grade = desc_cond_grade = desc_incond_grade = 0.0
+
+            # WebISS PÓS-REFORMA, grade despejada como "rótulos todos, depois
+            # valores todos" (achado real: Extrema/MG, nota nº 2026000130650,
+            # D-SAAS TECNOLOGIA -> CONDOMINIO EDIFICIO TK TOWER, R$335,00).
+            # Esta variante tem uma 2ª linha de grade que a v1.0 não tinha
+            # (B.C. do IBS/CBS | Alíquota IBS/CBS | Redução | IBS | CBS | Valor
+            # Líquido | Valor Total), e aí a busca por PROXIMIDADE acima --
+            # calibrada na variante de Aracaju, onde o pdfminer intercala
+            # rótulo e valor -- casa o vizinho ERRADO: o rótulo "Valor Líquido
+            # (R$)" fica colado ao 1º valor da 2ª linha (a B.C. do IBS/CBS,
+            # 328,30 = 335,00 - 6,70 de ISS) e "ISS (R$)" ao 1º valor da 1ª
+            # linha (335,00). A nota saía com ValorServicos=328,30 (base de
+            # OUTRO tributo) e ValorIss=335,00 -- um ISS MAIOR que o próprio
+            # serviço, impossível.
+            #
+            # Mapeamento por ÍNDICE, mesma convenção de Guarulhos/Campinas/
+            # Monte Santo/Goiânia. O portão é a sequência CONTÍGUA dos 8
+            # rótulos da 1ª linha: na variante de Aracaju eles saem separados
+            # pelos próprios valores, então lá esta leitura não dispara e o
+            # caminho por proximidade segue intacto (idem as outras ~8
+            # cidades deste layout compartilhado).
+            def _celulas_apos(rotulos, quantas):
+                """Linhas não vazias logo após uma sequência contígua de
+                rótulos. Devolve [] se a sequência não aparecer inteira."""
+                # O ÚLTIMO rótulo de cada linha sai SEM o ")" de fechamento
+                # ("ISS Retido (R$", "Valor Total (R$"), então os rótulos são
+                # escritos sem ele e o separador tolera o ")" onde existe.
+                m_seq = re.search(r'\)?\s*'.join(rotulos), t, re.IGNORECASE)
+                if not m_seq:
+                    return []
+                celulas = []
+                for linha in t[m_seq.end():].split('\n'):
+                    linha = linha.strip()
+                    if not linha:
+                        continue
+                    celulas.append(linha)
+                    if len(celulas) == quantas:
+                        break
+                return celulas
+
+            def _celula_num(celula):
+                """Número da célula, ou None quando a própria nota imprime o
+                campo MASCARADO ("****") ou vazio ("-") -- aí não há valor
+                real para extrair e o campo fica como estava (ver o aviso
+                dedicado em `parse()`), nunca fabricado."""
+                if celula is None or re.fullmatch(r'[-*\s]+', celula):
+                    return None
+                m_c = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*,\d{2,4})', celula)
+                return self._parse_valor(m_c.group(1)) if m_c else None
+
+            linha1 = _celulas_apos([
+                r'Valor\s+dos\s+Servi[çc]os\s*\(R\$',
+                r'Dedu[çc][õo]es\s*\(R\$',
+                r'Desc\.\s*Cond\.\s*\(R\$',
+                r'Desc\.\s*Incond\.\s*\(R\$',
+                r'B\.C\.\s*do\s+ISS\s*\(R\$',
+                r'Al[íi]quota\s+ISS\s*\(%',
+                r'ISS\s*\(R\$',
+                r'ISS\s+Retido\s*\(R\$',
+            ], 8)
+            if len(linha1) == 8:
+                # Ordem impressa: Serviços | Deduções | Desc. Cond. | Desc.
+                # Incond. | B.C. do ISS | Alíquota ISS (%) | ISS | ISS Retido.
+                v_serv = _celula_num(linha1[0])
+                if v_serv is not None:
+                    # Sempre o VALOR DOS SERVIÇOS, antes de retenções e
+                    # descontos (regra do usuário, 2026-09-11) -- nunca o
+                    # Valor Líquido, que é o que a busca por proximidade
+                    # acabava trazendo.
+                    serv = v_serv
+                for destino, celula in (('ded', linha1[1]), ('dcond', linha1[2]),
+                                        ('dincond', linha1[3]), ('base', linha1[4]),
+                                        ('iss', linha1[6])):
+                    valor_celula = _celula_num(celula)
+                    if valor_celula is None:
+                        continue
+                    if destino == 'ded':
+                        deducoes_grade = valor_celula
+                    elif destino == 'dcond':
+                        desc_cond_grade = valor_celula
+                    elif destino == 'dincond':
+                        desc_incond_grade = valor_celula
+                    elif destino == 'base':
+                        base = valor_celula
+                    else:
+                        iss = valor_celula
+                aliq_celula = _celula_num(linha1[5])
+                if aliq_celula is not None:
+                    aliquota = aliq_celula / 100
+
+                # 2ª linha: só o Valor Líquido interessa ao ABRASF 2.01 -- IBS
+                # e CBS não têm campo equivalente no schema (mesma decisão já
+                # tomada em LAYOUT_NACIONAL_REFORMA). "0,10/0,90" e
+                # "0,00/0,00" (alíquota e redução IBS/CBS no mesmo campo) não
+                # casam `_celula_num` e ficam de fora por construção.
+                linha2 = _celulas_apos([
+                    r'B\.C\.\s*do\s+IBS\s*/\s*CBS\s*\(R\$',
+                    r'Al[íi]quota\s+IBS\s*/\s*CBS\s*\(%',
+                    r'Redu[çc][ãa]o\s+IBS\s*/\s*CBS\s*\(%',
+                    r'IBS\s*\(R\$',
+                    r'CBS\s*\(R\$',
+                    r'Valor\s+L[íi]quido\s*\(R\$',
+                    r'Valor\s+Total\s*\(R\$',
+                ], 7)
+                if len(linha2) == 7:
+                    v_liq = _celula_num(linha2[5])
+                    if v_liq is not None:
+                        liquido = v_liq
 
             return Valores(
                 valor_servicos=serv,
-                valor_deducoes=0.0,
+                valor_deducoes=deducoes_grade,
+                desconto_condicionado=desc_cond_grade,
+                desconto_incondicionado=desc_incond_grade,
                 valor_pis=pis,
                 valor_cofins=cofins,
                 valor_csll=csll,
