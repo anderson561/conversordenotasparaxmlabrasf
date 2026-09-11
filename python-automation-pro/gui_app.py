@@ -43,20 +43,20 @@ def main(page: ft.Page):
 
         def run():
             try:
-                asset = auto_updater.find_exe_asset(release)
+                # O asset depende do formato desta instalação: pasta (onedir)
+                # baixa o .zip, executável único (onefile) baixa o .exe.
+                asset, tipo = auto_updater.find_update_asset(release)
                 if not asset:
                     progress_dialog.open = False
+                    esperado = (".zip" if auto_updater.is_onedir() else ".exe")
                     page.snack_bar = ft.SnackBar(ft.Text(
-                        "Release encontrado, mas sem o .exe anexado como asset."))
+                        f"Release encontrado, mas sem o {esperado} anexado como asset."))
                     page.snack_bar.open = True
                     page.update()
                     return
 
-                dest = os.path.join(
-                    os.environ.get("TEMP", "."),
-                    f"nfse_converter_gui_new_{os.getpid()}.exe",
-                )
-                auto_updater.download_asset(asset, dest, progress_callback=on_progress)
+                dest, tipo = auto_updater.download_update_to_temp(
+                    release, progress_callback=on_progress)
 
                 if not auto_updater.is_frozen():
                     progress_dialog.open = False
@@ -69,7 +69,7 @@ def main(page: ft.Page):
 
                 progress_dialog_text.value = "Reiniciando com a nova versão..."
                 page.update()
-                auto_updater.apply_update_and_restart(dest)
+                auto_updater.apply_update_and_restart(dest, tipo)
             except Exception as ex:
                 progress_dialog.open = False
                 page.snack_bar = ft.SnackBar(ft.Text(f"Falha ao atualizar: {ex}"))
@@ -126,6 +126,33 @@ def main(page: ft.Page):
         icon=ft.icons.SYSTEM_UPDATE,
         on_click=lambda e: verificar_atualizacoes(e, silencioso=False),
     )
+
+    def avisar_se_update_falhou():
+        """Uma atualização que não conseguiu se instalar relançava a versão
+        ANTIGA sem dizer nada — o usuário ficava achando que tinha atualizado
+        (achado real 2026-09-11: o app estava aberto em outra janela, o
+        `move` do executável falhou e a v1.7.0 nunca entrou). Agora o script
+        de troca deixa o motivo registrado e ele é mostrado aqui."""
+        motivo = auto_updater.ler_falha_pendente()
+        if not motivo:
+            return
+        page.snack_bar = ft.SnackBar(
+            ft.Text("A última atualização não foi instalada. " + motivo.replace("\n", " ")),
+            duration=15000,
+        )
+        page.snack_bar.open = True
+        page.update()
+
+    def faxina_de_updates():
+        """Restos de atualizações antigas em %TEMP% (um .exe baixado e não
+        instalado ocupa mais de 100 MB). Em segundo plano, sem incomodar."""
+        try:
+            auto_updater.limpar_restos_de_updates()
+        except Exception:
+            pass
+
+    avisar_se_update_falhou()
+    threading.Thread(target=faxina_de_updates, daemon=True).start()
 
     # Checagem automática ao abrir, sem bloquear a UI nem incomodar se
     # o GitHub estiver fora do ar / sem Release publicado ainda.

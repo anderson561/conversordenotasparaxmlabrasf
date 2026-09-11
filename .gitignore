@@ -16,7 +16,18 @@ downloads/
 .eggs-info/
 *.egg-info/
 *.egg
+
+# Specs do PyInstaller: por padrao sao artefato gerado e ficam de fora...
 *.spec
+# ...mas os tres do python-automation-pro passaram a ser mantidos A MAO e
+# versionados (2026-09-11). Eles carregam a lista de `excludes` e a escolha
+# onedir/onefile, e sao o que permite o PyInstaller reaproveitar cache entre
+# builds -- antes o `flet pack` os regerava a cada execucao apontando para um
+# diretorio temporario de nome aleatorio, o que impedia qualquer cache e ainda
+# deixava o arquivo eternamente "modificado" no git status.
+!python-automation-pro/nfse_converter_gui.spec
+!python-automation-pro/nfse_converter_gui_onefile.spec
+!python-automation-pro/nfse_converter_cli.spec
 
 # Installer logs
 pip-log.txt
