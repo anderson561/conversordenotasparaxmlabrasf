@@ -1,8 +1,8 @@
 # Gerado por tools/gen_version_info.py — NÃO editar à mão.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 7, 0, 0),
-    prodvers=(1, 7, 0, 0),
+    filevers=(1, 8, 0, 0),
+    prodvers=(1, 8, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,11 +17,11 @@ VSVersionInfo(
         '041604B0',
         [StringStruct('CompanyName', 'Norte Contabil'),
         StringStruct('FileDescription', 'Conversor NFS-e / Contratos para XML ABRASF 2.01'),
-        StringStruct('FileVersion', '1.7.0'),
+        StringStruct('FileVersion', '1.8.0'),
         StringStruct('InternalName', 'nfse_converter_gui'),
         StringStruct('OriginalFilename', 'nfse_converter_gui.exe'),
         StringStruct('ProductName', 'Conversor NFS-e para ABRASF XML'),
-        StringStruct('ProductVersion', '1.7.0')])
+        StringStruct('ProductVersion', '1.8.0')])
       ]),
     VarFileInfo([VarStruct('Translation', [1046, 1200])])
   ]
