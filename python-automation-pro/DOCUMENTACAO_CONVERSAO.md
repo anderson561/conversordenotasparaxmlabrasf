@@ -695,6 +695,31 @@ técnico/scriptado, sem UI para mostrar avisos).
   "Processo de Release" abaixo, é um passo manual novo.
 - **Comparação de versão**: SemVer simples (`(major, minor, patch)`), tolera
   prefixo `v` (`v1.4.0` vs `1.3.0`).
+- **Dois formatos de instalação, dois assets** (desde a v1.8.0): a instalação
+  em **pasta** (onedir) se atualiza pelo `nfse_converter_gui.zip`; a de
+  **executável único** (onefile), pelo `nfse_converter_gui.exe`.
+  `is_onedir()` distingue os dois comparando `sys._MEIPASS` com a pasta do
+  executável — em onedir o `_MEIPASS` é o `_internal/` ao lado do `.exe`; em
+  onefile é o `_MEIxxxxx` sorteado no `%TEMP%`. **Não há migração automática
+  de um formato para o outro**: são instalações de formato diferente, e trocar
+  isso por baixo do usuário mexeria na pasta dele sem aviso. Quem está em
+  onefile migra baixando o `.zip` uma vez, quando quiser.
+- **A troca insiste e, se não der, avisa**: o `.bat` auxiliar tenta o `move`
+  10 vezes, espaçadas de 2 s (o Windows trava o que está em execução — basta
+  uma segunda janela do app aberta). Esgotadas as tentativas, escreve o motivo
+  em `%TEMP%\nfse_update_falhou.log`, que o app lê e mostra na abertura
+  seguinte. Antes, uma única tentativa: quando falhava, o `start` relançava o
+  binário **antigo** e nada indicava que a atualização não tinha acontecido —
+  foi o que houve com a v1.7.0 nesta máquina. Na variante onedir, a pasta
+  atual é renomeada antes e restaurada se a instalação da nova falhar no meio.
+- **Os processos filhos são encerrados antes da saída**: o `flet.exe` que
+  desenha a interface roda de dentro do `%TEMP%\_MEIxxxxx` (em onefile) e o
+  mantinha travado depois do `os._exit(0)`, fazendo a limpeza do bootloader
+  falhar com "Failed to remove temporary directory" — 32 dessas pastas, 428 MB,
+  tinham se acumulado. São enumerados pelo snapshot Toolhelp32 via `ctypes`
+  (`psutil` não está instalado, `wmic` saiu do Windows 11) e encerrados **um a
+  um, nunca pela árvore**: o próprio `.bat` de troca é filho deste processo, e
+  um `taskkill /T` no próprio PID levaria ele junto.
 - **Aplicação**: quando há versão nova, mostra um diálogo
   ("Nova versão disponível: vX.Y.Z" / "Atualizar agora" / "Depois") — a
   checagem é automática, mas a substituição do arquivo **pede confirmação
@@ -711,25 +736,68 @@ técnico/scriptado, sem UI para mostrar avisos).
   abortado com um aviso — não há `.exe` para substituir num ambiente de
   desenvolvimento.
 
-### Processo de Release (passo manual novo)
+### Build dos executáveis
 
-Antes desta funcionalidade, o processo de release parava na tag git
-(`git tag vX.Y.Z && git push --tags`) — tag sem Release publicado é
-invisível para `/releases/latest`, então o auto-update nunca vai encontrar
-nada até esse passo ser adotado:
+`build.bat` tem três modos:
 
-1. Rodar `build.bat` normalmente (gera `dist/nfse_converter_gui.exe`).
-2. Criar a tag e dar push (fluxo já existente).
-3. No GitHub, ir em **Releases → Draft a new release**, selecionar a tag
-   recém-criada, e **anexar `dist/nfse_converter_gui.exe` como asset**
-   (nome do arquivo precisa continuar `nfse_converter_gui.exe` — é o nome
-   que `find_exe_asset` procura primeiro).
-4. Publicar o Release (não deixar como Draft/Pre-release — `/releases/latest`
-   ignora os dois).
+| comando | o que faz |
+| --- | --- |
+| `build.bat` | GUI em pasta (onedir) + CLI — o do dia a dia |
+| `build.bat release` | o acima + `nfse_converter_gui.zip` + `nfse_converter_gui.exe` (onefile), que são os dois assets do Release |
+| `build.bat limpo` | descarta o cache em `build\` e refaz do zero |
 
-Sem esse passo 3-4, o botão/checagem de atualização simplesmente não acha
-nada de novo (comportamento idêntico a "já está atualizado"), mesmo com
-tags mais novas no repositório.
+Três coisas que parecem detalhe e não são:
+
+- **Sempre o python do `.venv`, nunca o do PATH.** As duas instalações têm
+  versões diferentes do flet (`.venv` → 0.21.2, PATH → 0.82.2, onde os ícones
+  migraram para `flet.controls.material.icons`). Construir com o do PATH gera
+  um executável que abre e morre com `has no attribute 'SYSTEM_UPDATE'`. O
+  `build.bat` verifica e se recusa a rodar sem o `.venv`. O interpretador é
+  parte da configuração da build: é dele que o PyInstaller empacota tudo.
+- **Os `.spec` são fixos e versionados** (`nfse_converter_gui.spec`,
+  `nfse_converter_gui_onefile.spec`, `nfse_converter_cli.spec`), não gerados
+  a cada build. Era o `flet pack` que os regerava, apontando o recurso de
+  versão para um diretório temporário de nome aleatório — o que impedia
+  qualquer cache e fazia o arquivo aparecer sempre modificado no `git status`.
+  O recurso de versão agora sai de `tools/gen_version_info.py`, em caminho
+  estável e com a versão do aplicativo (antes trazia a do flet).
+- **Nada de `--clean`** nos comandos: é a opção que apaga o cache em `build\`
+  e transforma toda build numa build completa. Use `build.bat limpo` quando
+  quiser isso de propósito.
+
+A lista de módulos que NÃO entram nos executáveis fica em
+`tools/build_excludes.py`, compartilhada pelos três `.spec`. Ela existe porque
+o `.venv` deste projeto é compartilhado com outros trabalhos: sem `excludes`,
+scipy, pandas, matplotlib, opencv, camelot, tabula, llama-index e companhia
+iam para dentro do executável. Três exceções estão comentadas lá e não devem
+ser "otimizadas": `numpy` é usado de verdade, `cryptography` é exigida pelo
+pdfminer.six para PDF criptografado, e `libmpv-2.dll` é dependência de link do
+`flet.exe` mesmo sem o app usar mídia.
+
+### Processo de Release
+
+`/releases/latest` só enxerga Release **publicado** — tag solta não aparece,
+e sem Release o auto-update se comporta exatamente como "já está atualizado".
+
+1. Atualizar `APP_VERSION` em `src/version.py` **antes** de construir, para o
+   executável já sair com a versão certa.
+2. `build.bat release` — gera em `dist\`:
+   - `nfse_converter_gui.zip` — a pasta onedir compactada (**asset principal**);
+   - `nfse_converter_gui.exe` — onefile, para quem ainda tem instalação nesse
+     formato se atualizar;
+   - `nfse_converter_cli.exe` — não entra no Release.
+3. Criar a tag e dar push.
+4. Publicar o Release com **os dois** assets anexados, sem alterar os nomes:
+   são exatamente os que `find_zip_asset`/`find_exe_asset` procuram.
+   `gh release create vX.Y.Z dist\nfse_converter_gui.zip dist\nfse_converter_gui.exe --title vX.Y.Z --notes-file <arquivo>`
+   já publica direto (não fica draft nem pre-release, que `/releases/latest`
+   ignora).
+5. Conferir no ar, sem confiar na saída do `gh`: bater em `/releases/latest` e
+   rodar `auto_updater.is_newer(tag, versao_antiga)`.
+
+⚠️ Publicar só o `.zip` deixaria sem caminho de atualização toda instalação
+onefile anterior à v1.8.0 — o `auto_updater` delas procura um asset chamado
+`nfse_converter_gui.exe` e não saberia o que fazer com um zip.
 
 ## Processamento de Múltiplas Páginas (PDFs)
 
