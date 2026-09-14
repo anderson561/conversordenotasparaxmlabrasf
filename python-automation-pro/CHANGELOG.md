@@ -11,6 +11,17 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
+## [Não lançado]
+
+### Adicionado
+
+- **Layout `fatura_rotaexata` — RotaExata Software Ltda (Joinville/SC)**: fatura de locação de rastreadores veiculares e aparelhos de recepção, PDF digital, detectada pelo **CNPJ raiz** do emitente (`13.661.448`, casa qualquer filial futura) ou pelo nome junto do rótulo `FATURA:`. Nota real de referência: fatura nº **233530** → NEMUS - GESTAO E REQUALIFICACAO AMBIENTAL LTDA (Salvador/BA), **R$ 82,60**.
+  - **Antes desta entrada o PDF não gerava nota nenhuma.** Esta é a única fatura da família de locação que **não imprime a frase "FATURA DE LOCAÇÃO"** — o título é só `FATURA:  Nº  233530`. Sem casar nem essa frase nem um CNPJ já cadastrado, caía em `generico`, e aí `parse_multiple` descarta a página como "Layout não reconhecido": o conversor terminava com *"O PDF ... parece ser baseado em imagem/scan ou vazio. Nenhuma nota pôde ser lida"*. Modo de falha silencioso — não havia XML errado para conferir, não havia XML.
+  - Prestador **e** tomador extraídos dinamicamente (sem prestador hardcoded): neste template o pdfminer não embaralha rótulo e valor, cada campo sai na mesma linha do próprio rótulo. A única faceta "rótulos-depois-valores" é a grade do cabeçalho (`RF FATURA Nº`/`VALOR DA FATURA`/`EMISSÃO`, depois os três valores).
+  - **Joinville/SC (IBGE `4209102`) acrescentada a `IBGEResolver.KNOWN_CITIES`** — sem isso o prestador cairia no fallback silencioso de Salvador/BA, erro que nesta nota passaria especialmente despercebido porque o **tomador** é de Salvador de verdade; isso desloca `OrgaoGerador` e `MunicipioIncidencia`, ou seja, o município de incidência do ISS.
+  - Locação de bens móveis: base/alíquota/ISS zerados e item `0601`, convenção de toda a família (a própria nota invoca a LC 116/2003). **Retenções federais impressas só em percentual** (IRRF 4.80%, CSLL 1%, PIS 0.65%, COFINS 3%), sem nenhum valor em R$ — mantidas zeradas e sinalizadas em `avisos`, nunca calculadas a partir do percentual.
+  - 28 testes novos em `tests/test_rotaexata_locacao_layout.py`, construídos sobre o texto real do PDF; **26 deles falham** com a detecção do layout desligada. Suíte: 575 → **603 testes**, todos verdes.
+
 ## [1.8.0] - 2026-09-11
 
 ### Adicionado
