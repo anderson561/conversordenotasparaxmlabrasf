@@ -91,6 +91,7 @@ LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # NFS-e eNotas Gateway (Lauro de Freitas/BA) - nome do layout mantido por retrocompatibilidade, mas cobre MÚLTIPLOS emitentes na mesma plataforma: PASSWORD Sistemas Eletronicos (CNPJ 04.021.023/0001-33) e INFOMIX Soluções em Tecnologia (CNPJ 29.869.622/0001-32) - cada um detectado pelo próprio CNPJ, nunca pela marca genérica "eNotas", para não colidir com futuros emitentes do mesmo provedor. Extração de entidades/valores é genérica o bastante para servir ambos sem ramos dedicados, exceto 2 diferenças pontuais na estrutura de texto (código do serviço com nº de dígitos variável após a barra; rótulos "NOME/RAZÃO SOCIAL"+"E-MAIL" do tomador podem vir despejados juntos antes dos 2 valores)
 LAYOUT_NEOTAGUS_LOCACAO = 'fatura_neotagus'  # NEO-TAGUS INDUSTRIAL LTDA (CNPJ raiz 61.092.565, Extrema/MG) - "FATURA DE LOCAÇÃO DE MAQUINAS/EQUIPAMENTOS", PDF DIGITAL (pdfminer limpo, sem OCR). Achado real: nº 5135 (controle "000005135/LOC") -> CONDOMINIO EDIFICIO TK TOWER, R$1.190,34. Precisa vir ANTES de LAYOUT_FATURA_LOCACAO_GENERICA, que é detectado só pela frase "FATURA DE LOCAÇÃO" e cujos extratores são calibrados no template da LOC BAHIA (blocos "LOCADORA"/"LOCATÁRIO", tabela "QTDE - DESCRIÇÃO", rótulos "Cidade:"/"Estado:", número em "NÚMERO:", total em "TOTAL: R$") - NENHUM deles existe aqui, e a nota saía com valor 0,00, entidades vazias e discriminação "354 - EXTREMA - MG" (um pedaço do CEP do próprio prestador, pescado pelo regex de item da tabela da LOC BAHIA). Mesma decisão já tomada para a ARMAC: cada locadora com template próprio ganha layout próprio, detectado pelo CNPJ RAIZ do emitente (casa qualquer filial - esta nota é da 0022). pdfminer despeja "rótulos todos, depois valores todos" no bloco do prestador (mesma família de Guarulhos/Campinas/Monte Santo) e FORA DE ORDEM no do cliente (endereço e CEP antes do CNPJ) - por isso o prestador é lido por ÍNDICE e o cliente por FORMA DO CONTEÚDO. Município do prestador é Extrema/MG (IBGE 3125101), ausente de `IBGEResolver.KNOWN_CITIES` - código explícito, mesma decisão de Santa Terezinha/BA e Vinhedo/SP, para não cair no fallback silencioso de Salvador. Locação de bens móveis: base/alíquota/ISS zerados e ItemListaServico "0601", convenção de toda a família de faturas de locação deste projeto (a própria nota declara substituir a NFS-e pela LC 116/2003)
+LAYOUT_ROTAEXATA_LOCACAO = 'fatura_rotaexata'  # RotaExata Software Ltda (CNPJ raiz 13.661.448, Joinville/SC) - "FATURA" de locação de rastreadores veiculares e aparelhos de recepção, PDF DIGITAL (pdfminer limpo, sem OCR). Achado real: fatura nº 233530 -> NEMUS - GESTAO E REQUALIFICACAO AMBIENTAL LTDA (Salvador/BA), R$82,60. Ao contrário de toda a família de faturas de locação já catalogada, esta nota NÃO imprime a frase "FATURA DE LOCAÇÃO" em lugar nenhum (o título é só "FATURA: Nº 233530") - não casava NENHUM padrão da cadeia de detecção e caía em LAYOUT_GENERICO, o que em `parse_multiple` não gera XML errado: descarta a página inteira como "Layout não reconhecido" e o PDF sai com ZERO notas ("parece ser baseado em imagem/scan ou vazio"). Por isso a detecção é pelo CNPJ RAIZ do emitente (casa qualquer filial futura) ou pelo nome "RotaExata" junto do rótulo "FATURA:", mesmo critério da ARMAC/NEO-TAGUS. Template próprio, quase todo rótulo→valor na MESMA linha ("CNPJ: ... | IE: ... | IM: ...", "NOME DO SACADO: ...", "MUNICÍPIO: SALVADOR/BA | CEP: ..."), o que permite extração DINÂMICA das duas entidades (não o "prestador fixo hardcoded" de PJB/F&F/NFCom). A ÚNICA faceta "rótulos-depois-valores" é a grade do cabeçalho (RF FATURA Nº / VALOR DA FATURA / EMISSÃO, depois 233530 / R$ 82,60 / 01/08/2026) - mesma família de Guarulhos/Campinas/Monte Santo, aqui em escala pequena. Valores monetários vêm com ESPAÇO INQUEBRÁVEL depois do "R$" ("R$\xa0 82,60"). Município do prestador é Joinville/SC (IBGE 4209102), que estava ausente de `IBGEResolver.KNOWN_CITIES` - incluído lá explicitamente, mesma decisão de Extrema/MG, Santa Terezinha/BA e Vinhedo/SP, para não cair no fallback silencioso de Salvador (que aqui seria especialmente traiçoeiro: o TOMADOR é de Salvador de verdade, então o erro passaria despercebido). Locação de bens móveis: base/alíquota/ISS zerados e ItemListaServico "0601", convenção de toda a família (a própria nota declara "Locação de bens móveis não incidente da cobrança de imposto ISSQN conforme lei federal complementar n° 116"). As retenções federais saem impressas SÓ EM PERCENTUAL (IRRF 4.80%, CSLL 1%, PIS 0.65%, COFINS 3%), sem nenhum valor em R$ - mantidas ZERADAS e sinalizadas em `Nfse.avisos`, nunca calculadas a partir do percentual (seria fabricar dado fiscal que a nota não declara)
 LAYOUT_FATURA_LOCACAO_GENERICA = 'fatura_locacao_generica'  # Fatura de Locação genérica (locação de bens móveis, não sujeita a ISS) — locadora/locatário parseados do texto
 LAYOUT_ARMAC_LOCACAO = 'armac_locacao'  # ARMAC Locação (CNPJ 00.242.184) - Fatura de Locação escaneada, tabela multi-item, OCR zoom4/PSM6
 LAYOUT_PJB_LOCACAO = 'pjb_locacao'  # PJB Construção Aluguel de Máq. e Ser. (CNPJ 08.885.357, Simões Filho/BA) - Fatura de Locação de bens móveis escaneada, sem incidência de ISS; prestador fixo, tomador do bloco DESTINATÁRIO
@@ -818,6 +819,17 @@ class SPPdfExtractor:
                 re.search(r'NEO\s*-?\s*TAGUS', t, re.IGNORECASE)
                 and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
             return LAYOUT_NEOTAGUS_LOCACAO
+        # RotaExata: locação de rastreadores veiculares. Esta fatura NÃO traz a
+        # frase "FATURA DE LOCAÇÃO" (o título é só "FATURA: Nº 233530"), então
+        # não casava nenhum dos padrões acima e caía em LAYOUT_GENERICO - o que
+        # faz `parse_multiple` DESCARTAR a página ("Layout não reconhecido") e o
+        # PDF inteiro sair sem nota nenhuma. Detecção pelo CNPJ RAIZ do emitente
+        # (casa qualquer filial futura) ou pelo nome junto do rótulo "FATURA:" -
+        # mesmo critério da ARMAC/NEO-TAGUS.
+        if re.search(r'13\.?661\.?448', t) or (
+                re.search(r'ROTA\s*-?\s*EXATA', t, re.IGNORECASE)
+                and re.search(r'FATURA\s*:', t, re.IGNORECASE)):
+            return LAYOUT_ROTAEXATA_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
             return LAYOUT_FATURA_LOCACAO_GENERICA
         return LAYOUT_GENERICO
@@ -1152,6 +1164,17 @@ class SPPdfExtractor:
                 re.search(r'NEO\s*-?\s*TAGUS', t, re.IGNORECASE)
                 and re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE)):
             return LAYOUT_NEOTAGUS_LOCACAO
+        # RotaExata: locação de rastreadores veiculares. Esta fatura NÃO traz a
+        # frase "FATURA DE LOCAÇÃO" (o título é só "FATURA: Nº 233530"), então
+        # não casava nenhum dos padrões acima e caía em LAYOUT_GENERICO - o que
+        # faz `parse_multiple` DESCARTAR a página ("Layout não reconhecido") e o
+        # PDF inteiro sair sem nota nenhuma. Detecção pelo CNPJ RAIZ do emitente
+        # (casa qualquer filial futura) ou pelo nome junto do rótulo "FATURA:" -
+        # mesmo critério da ARMAC/NEO-TAGUS.
+        if re.search(r'13\.?661\.?448', t) or (
+                re.search(r'ROTA\s*-?\s*EXATA', t, re.IGNORECASE)
+                and re.search(r'FATURA\s*:', t, re.IGNORECASE)):
+            return LAYOUT_ROTAEXATA_LOCACAO
         if re.search(r'FATURA\s+DE\s+LOCA[ÇC][ÃA]O', t, re.IGNORECASE):
             return LAYOUT_FATURA_LOCACAO_GENERICA
         return LAYOUT_GENERICO
@@ -1525,6 +1548,18 @@ class SPPdfExtractor:
             m = re.search(r'Data\s+de\s+Gera[çc][ãa]o\s+da\s+NFS-e\s*\n[^\n]*\n\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
+        if self.layout == LAYOUT_ROTAEXATA_LOCACAO:
+            # Grade do cabeçalho no padrão "rótulos todos, depois valores
+            # todos": "RF FATURA Nº / VALOR DA FATURA / EMISSÃO" e só então
+            # "233530 / R$ 82,60 / 01/08/2026". Não há data colada ao rótulo
+            # "EMISSÃO" para ancorar - a data de emissão é a PRIMEIRA data do
+            # documento (as demais, quando existem, ficam no recibo do rodapé,
+            # que vem em branco para preenchimento manual).
+            m = re.search(r'EMISS[ÃA]O[\s\S]{0,120}?(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1))
                 if res: return res
 
         if self.layout == LAYOUT_ARMAC_LOCACAO:
@@ -2141,6 +2176,15 @@ class SPPdfExtractor:
             # campo, colado ao QR Code).
             m = re.search(r'N[úu]mero\s+da\s+nota\s*:\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_ROTAEXATA_LOCACAO:
+            # "FATURA:  Nº  233530" - rótulo e valor na mesma linha, no topo da
+            # nota. O mesmo número se repete depois na grade do cabeçalho ("RF
+            # FATURA Nº" ... "233530"), mas ali o rótulo está separado do valor
+            # por outros dois rótulos, então a âncora confiável é a do título.
+            m = re.search(r'FATURA\s*:\s*N[º°o]\s*(\d+)', t, re.IGNORECASE)
+            if m:
+                return m.group(1).lstrip('0') or m.group(1)
 
         if self.layout == LAYOUT_NEOTAGUS_LOCACAO:
             # "Nº do Controle:" ... "000005135/LOC" - rótulos e valores em
@@ -3031,6 +3075,32 @@ class SPPdfExtractor:
                 if texto:
                     return texto
 
+        if self.layout == LAYOUT_ROTAEXATA_LOCACAO:
+            # Tabela "QUANT. UNIDADE | DESCRIÇÃO DOS EQUIPAMENTOS LOCADOS":
+            # depois do cabeçalho vêm, em linhas próprias, a quantidade ("1"),
+            # a unidade ("UN") e só então a descrição, que QUEBRA EM VÁRIAS
+            # LINHAS ("LOCAÇÃO DE BENS MÓVEIS - RASTREADORES E APARELHOS DE" +
+            # "RECEPÇÃO."). Pegar só a primeira linha truncaria a descrição no
+            # meio, então acumulamos até bater no cabeçalho da coluna de
+            # valores ("VALOR"/"UNITÁRIO"/"TOTAL") ou no bloco "IMPOSTOS:".
+            m_cab = re.search(r'DESCRI[ÇC][ÃA]O\s+DOS\s+EQUIPAMENTOS\s+LOCADOS', t, re.IGNORECASE)
+            if m_cab:
+                partes: List[str] = []
+                for linha in t[m_cab.end():].split('\n'):
+                    linha = linha.strip()
+                    if not linha:
+                        continue
+                    if re.match(r'^(VALOR|UNIT[ÁA]RIO|TOTAL|IMPOSTOS|R\$)', linha, re.IGNORECASE):
+                        break
+                    # Quantidade ("1") e unidade ("UN") da própria grade, que
+                    # vêm antes da descrição - não fazem parte dela.
+                    if not partes and re.match(r'^(\d+([.,]\d+)?|[A-Z]{1,3})$', linha, re.IGNORECASE):
+                        continue
+                    partes.append(linha)
+                texto = re.sub(r'\s+', ' ', ' '.join(partes)).strip()
+                if texto:
+                    return texto
+
         if self.layout == LAYOUT_NEOTAGUS_LOCACAO:
             # A própria nota resume o serviço numa linha própria. Sem ela, o
             # regex de item da LOC BAHIA pescava "354 - EXTREMA - MG" - um
@@ -3386,7 +3456,7 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).zfill(2) + m.group(2)
 
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_NEOTAGUS_LOCACAO, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_TELECOM_COMUNICACAO, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_NEOTAGUS_LOCACAO, LAYOUT_ROTAEXATA_LOCACAO, LAYOUT_ARMAC_LOCACAO, LAYOUT_FF_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA):
             # LAYOUT_LOCALIZA faltava aqui (achado real, fatura ACFSA-237512):
             # caía no default genérico "03115" em vez do item de locação de
             # bens móveis, mesma convenção das demais faturas de locação.
@@ -3696,7 +3766,7 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).upper()
 
-        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_NEOTAGUS_LOCACAO, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA, LAYOUT_FF_LOCACAO):
+        if self.layout in (LAYOUT_CPE_LOCACAO, LAYOUT_GUINCHO_CIDADE, LAYOUT_BF_AMBIENTAIS, LAYOUT_LMR_ENGENHARIA, LAYOUT_GERACAO_ENERGIA, LAYOUT_LOCONTAINERS, LAYOUT_SULSEG_COBRANCA, LAYOUT_FATURA_LOCACAO_GENERICA, LAYOUT_NEOTAGUS_LOCACAO, LAYOUT_ROTAEXATA_LOCACAO, LAYOUT_ARMAC_LOCACAO, LAYOUT_LOCALIZA, LAYOUT_LOCALIZA_PETROLINA, LAYOUT_FF_LOCACAO):
             return "FATURA"
 
         if self.layout == LAYOUT_SIMOES_FILHO:
@@ -4359,6 +4429,11 @@ class SPPdfExtractor:
             if re.search(r'CPF\s*/?\s*CNPJ\s*/?\s*NIF[ \t]+(?:Inscri|Telefone)', t, re.IGNORECASE):
                 return self._extrair_entidade_campinas(is_prestador)
             return self._extrair_entidade_campinas_digital(is_prestador)
+
+        if self.layout == LAYOUT_ROTAEXATA_LOCACAO:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_rotaexata(is_prestador)
 
         if self.layout == LAYOUT_NEOTAGUS_LOCACAO:
             if is_intermediario:
@@ -8743,6 +8818,133 @@ class SPPdfExtractor:
             telefone=telefone,
         )
 
+    def _extrair_entidade_rotaexata(self, is_prestador: bool) -> Entidade:
+        """Prestador e sacado (tomador) da Fatura de Locação da RotaExata.
+
+        Ao contrário da NEO-TAGUS e da maioria das faturas de locação digitais
+        deste projeto, aqui o pdfminer NÃO embaralha rótulo e valor: cada campo
+        sai na mesma linha do próprio rótulo, com os campos agrupados por "|"
+        ("CNPJ:  13.661.448/0001-06  |  IE:  256832196  |  IM:  34571"). Por
+        isso as DUAS entidades são extraídas dinamicamente por rótulo, sem
+        prestador hardcoded (o que também cobre uma filial futura, já que a
+        detecção do layout é pelo CNPJ raiz).
+
+        - **Prestador**: letterhead do topo, antes do título "FATURA:". Razão
+          social é a 1ª linha; endereço no formato "Rua Cuiabá, 32 - Costa e
+          Silva - Joinville/SC | CEP: 89220-110" (logradouro, número, bairro,
+          município/UF e CEP numa linha só).
+        - **Sacado**: bloco "NOME DO SACADO:" / "ENDEREÇO:" / "MUNICÍPIO:" /
+          "CNPJ:", com o município no formato "SALVADOR/BA" e o CNPJ SEM
+          máscara ("19886820000150"). O campo "IE: xxxxx" vem preenchido com um
+          placeholder literal do próprio gerador do PDF - ignorado.
+
+        Joinville/SC (IBGE 4209102) foi acrescentada a
+        `IBGEResolver.KNOWN_CITIES`; sem isso o município do prestador cairia no
+        fallback silencioso de Salvador/BA - erro que aqui passaria
+        especialmente despercebido, porque o TOMADOR é de Salvador de verdade.
+        """
+        t = self.raw_text
+
+        def _cnpj_de(linha: str) -> str:
+            for m in re.finditer(r'(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})', linha):
+                doc = re.sub(r'\D', '', m.group(1))
+                if len(doc) == 14 and self._validate_cnpj_cpf(doc):
+                    return doc
+            return '00000000000000'
+
+        def _im_de(linha: str) -> Optional[str]:
+            m = re.search(r'\bIM\s*:\s*([\w.\-/]+)', linha, re.IGNORECASE)
+            if m and re.search(r'\d', m.group(1)):
+                return re.sub(r'\D', '', m.group(1))
+            return None
+
+        def _endereco_partes(bruto: str):
+            """"Rua Cuiabá, 32 - Costa e Silva - Joinville/SC" ->
+            (logradouro, número, bairro). O bairro é o trecho entre o número e
+            o município; quando a nota não o imprime, fica 'Não informado'."""
+            bruto = re.sub(r'\s+', ' ', bruto).strip()
+            # Remove a cauda "- Cidade/UF", que é lida à parte.
+            bruto = re.sub(r'\s*-\s*[^-]+/[A-Z]{2}\s*$', '', bruto)
+            partes = [p.strip() for p in bruto.split(',')]
+            logradouro = partes[0] if partes else 'Não informado'
+            numero, bairro = 'S/N', 'Não informado'
+            if len(partes) > 1:
+                resto = [p.strip() for p in partes[1].split('-')]
+                m_n = re.match(r'^(\d+)$', resto[0])
+                if m_n:
+                    numero = m_n.group(1)
+                    resto = resto[1:]
+                if resto and resto[0]:
+                    bairro = resto[0]
+            return logradouro or 'Não informado', numero, bairro
+
+        if is_prestador:
+            m_fim = re.search(r'FATURA\s*:', t, re.IGNORECASE)
+            bloco = t[:m_fim.start()] if m_fim else t
+            linhas = [ln.strip() for ln in bloco.split('\n') if ln.strip()]
+            razao = re.sub(r'\s+', ' ', linhas[0]) if linhas else 'Prestador Não Identificado'
+            linha_doc = next((ln for ln in linhas if re.search(r'CNPJ\s*:', ln, re.IGNORECASE)), '')
+            linha_end = next((ln for ln in linhas
+                              if re.search(r'CEP\s*:', ln, re.IGNORECASE)
+                              and not re.search(r'CNPJ\s*:', ln, re.IGNORECASE)), '')
+        else:
+            m_nome = re.search(r'NOME\s+DO\s+SACADO\s*:\s*([^\n]+)', t, re.IGNORECASE)
+            razao = (re.sub(r'\s+', ' ', m_nome.group(1)).strip() if m_nome
+                     else 'Tomador Não Identificado')
+            ini = m_nome.end() if m_nome else 0
+            m_fim = re.search(r'VALOR\s+POR\s+EXTENSO', t[ini:], re.IGNORECASE)
+            bloco = t[ini: ini + m_fim.start()] if m_fim else t[ini:]
+            linhas = [ln.strip() for ln in bloco.split('\n') if ln.strip()]
+            linha_doc = next((ln for ln in linhas if re.search(r'CNPJ\s*:', ln, re.IGNORECASE)), '')
+            linha_end = next((ln for ln in linhas if re.search(r'ENDERE[ÇC]O\s*:', ln, re.IGNORECASE)), '')
+
+        cnpj = _cnpj_de(linha_doc)
+        im = _im_de(linha_doc)
+
+        # CEP: "CEP: 89220-110" na própria linha do endereço (prestador) ou na
+        # linha "MUNICÍPIO: SALVADOR/BA | CEP: 41830-540" (sacado).
+        cep = ''
+        m_cep = re.search(r'CEP\s*:\s*(\d{5}-?\d{3})', bloco, re.IGNORECASE)
+        if m_cep:
+            cep = re.sub(r'\D', '', m_cep.group(1))
+
+        # Município/UF: "Joinville/SC" no fim do endereço do prestador,
+        # "MUNICÍPIO: SALVADOR/BA" no bloco do sacado.
+        cidade, uf = 'Não informado', ''
+        m_mun = re.search(r'MUNIC[ÍI]PIO\s*:\s*([^|\n/]+?)\s*/\s*([A-Z]{2})', bloco, re.IGNORECASE)
+        if not m_mun:
+            m_mun = re.search(r'-\s*([A-Za-zÀ-ú][^|\n/\-]*?)\s*/\s*([A-Z]{2})', linha_end)
+        if m_mun:
+            cidade = re.sub(r'\s+', ' ', m_mun.group(1)).strip()
+            uf = m_mun.group(2).upper()
+
+        bruto = re.sub(r'^\s*ENDERE[ÇC]O\s*:\s*', '', linha_end, flags=re.IGNORECASE)
+        bruto = re.sub(r'\s*\|\s*CEP\s*:.*$', '', bruto, flags=re.IGNORECASE)
+        logradouro, numero, bairro = _endereco_partes(bruto)
+
+        if cidade.upper().startswith('JOINVILLE') and uf == 'SC':
+            # Ausente de KNOWN_CITIES até esta nota - ver o docstring.
+            mun_cod = '4209102'
+        else:
+            mun_cod = _ibge_resolver.extract_and_validate(
+                cidade, uf or 'SC', city_hint=cidade, raw_doc_text=t)
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=im,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=None,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=cidade,
+                uf=uf or 'SC',
+                cep=(cep or '00000000').zfill(8)[:8],
+            ),
+        )
+
     def _extrair_entidade_neotagus(self, is_prestador: bool) -> Entidade:
         """Prestador e cliente da Fatura de Locação da NEO-TAGUS.
 
@@ -12568,6 +12770,28 @@ class SPPdfExtractor:
             # alíquota zerados, como nos demais layouts de locação).
             m_val = re.search(r'VALOR\s+L[IÍ]QUIDO\s+DA\s+NOTA\s+DE\s+COBRAN[ÇC]A\s*[\n\s]*R?\$?\s*([\d\.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_ROTAEXATA_LOCACAO:
+            # "VALOR TOTAL DA FATURA" ... "R$\xa0 82,60" - rótulo próprio do
+            # rodapé, com o valor na linha seguinte. Preferido sobre o "VALOR
+            # DA FATURA" da grade do cabeçalho (que sai no padrão
+            # rótulos-depois-valores, sem valor colado) e sobre os "R$" da
+            # tabela de itens (valor unitário x valor total, iguais só porque
+            # esta nota tem 1 item - com 2+ itens o último da tabela seria o
+            # total do ÚLTIMO item, não o da fatura).
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+FATURA\s*[\s\S]{0,40}?R?\$?\s*([\d.]+,\d{2})',
+                              t, re.IGNORECASE)
+            v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            # Locação de bens móveis: a própria nota declara a não-incidência
+            # de ISS pela LC 116/2003 - base, alíquota e ISS zerados, mesmo
+            # tratamento de toda a família de faturas de locação. As retenções
+            # federais (IRRF/CSLL/PIS/COFINS) só aparecem em PERCENTUAL, sem
+            # nenhum valor em R$ - ficam zeradas e são sinalizadas em
+            # `Nfse.avisos`, nunca calculadas a partir do percentual.
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
@@ -17268,6 +17492,23 @@ class SPPdfExtractor:
                 "Eletrônica), não sujeito a ISS - campos de Base de Cálculo/"
                 "Alíquota/Valor do ISS mantidos zerados propositalmente"
             )
+        if self.layout == LAYOUT_ROTAEXATA_LOCACAO:
+            retencoes = re.findall(r'\b(IRRF|CSLL|PIS|COFINS)\s*:\s*([\d.,]+\s*%)',
+                                   self.raw_text, re.IGNORECASE)
+            if retencoes:
+                citadas = ', '.join(f"{nome.upper()} {pct.strip()}" for nome, pct in retencoes)
+                avisos.append(
+                    f"Retenções federais impressas apenas em percentual ({citadas}), "
+                    "sem nenhum valor em R$ na nota - mantidas ZERADAS no XML em vez "
+                    "de calculadas a partir do percentual; confira manualmente se "
+                    "esta fatura exige o recolhimento dessas retenções"
+                )
+            avisos.append(
+                "Locação de bens móveis não sujeita a ISS (a própria nota invoca a "
+                "LC 116/2003) - Base de Cálculo/Alíquota/Valor do ISS mantidos "
+                "zerados propositalmente"
+            )
+
         if self.layout == LAYOUT_BARUERI:
             m_repasse = re.search(
                 r'VALORES\s+DE\s+REPASSE\s+A\s+TERCEIROS\s*\n+(?:Observa[çc][õo]es\s*\n+)?\s*R\$\s*([\d.,]+)',

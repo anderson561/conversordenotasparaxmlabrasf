@@ -71,6 +71,11 @@ class IBGEResolver:
         "VINHEDO": "3556701",
         "GOIANIA": "5208707", "GOIÂNIA": "5208707",
         "BARUERI": "3505708",
+        # Joinville/SC - município do prestador do LAYOUT_ROTAEXATA_LOCACAO.
+        # Sem esta entrada a cidade caía no fallback silencioso de Salvador/BA,
+        # que ali seria especialmente difícil de notar (o TOMADOR da nota é de
+        # Salvador de verdade).
+        "JOINVILLE": "4209102",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
