@@ -2117,6 +2117,29 @@ class SPPdfExtractor:
             resultado = _parse_dmy(data_str, hora_str)
             if resultado: return resultado
 
+        # Timestamp de cabeçalho do LAYOUT_SALVADOR, sem rótulo nenhum,
+        # impresso logo ANTES do título "NOTA FISCAL DE SERVIÇOS
+        # ELETRÔNICA" — nenhum dos rótulos genéricos acima o alcança
+        # (não tem "Emitido em"/"Data de Emissão" na frente). Achado real,
+        # nota nº 46345/33908 (VALOR COMÉRCIO E SERVIÇOS DE INFORMÁTICA
+        # LTDA): o único outro candidato de data no documento é "Emitidoem:
+        # 03/08/2028 12:02:24" (rótulo "Emitido em" colado sem espaço, e o
+        # ANO já sai corrompido — "2028" em vez de "2026") — sem nenhum
+        # candidato batendo a lista de rótulos, a extração caía direto no
+        # fallback `datetime.now()` (o INSTANTE DA CONVERSÃO, não da nota),
+        # que em cascata também corrompia a Competência derivada dele.
+        # Este timestamp de cabeçalho sai limpo e sem rótulo pra confundir
+        # — só tentado como ÚLTIMO recurso, depois de toda a lista de
+        # rótulos genéricos, pra nunca competir com uma leitura rotulada já
+        # confiável de outra nota Salvador.
+        if self.layout == LAYOUT_SALVADOR:
+            m_sv_header = re.search(
+                r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})\s*\n+\s*'
+                r'NOTA\s+FISCAL\s+DE\s+SERVI[ÇC]OS\s+ELETR[ÔO]NICA',
+                t, re.IGNORECASE)
+            if m_sv_header:
+                resultado = _parse_dmy(m_sv_header.group(1), m_sv_header.group(2))
+                if resultado: return resultado
 
         # Fallback usando a Chave de Acesso Nacional (Mês/Ano) para casos de OCR severo
         m_chave = re.search(r'\b(?:\d\s*){44,52}\b', t)
@@ -6564,8 +6587,48 @@ class SPPdfExtractor:
         # extraído já reprova o checksum E a razão social bate com esta
         # contraparte recorrente, para não mascarar CNPJs genuinamente
         # diferentes de outras empresas com nome parecido.
+        # Achado real 2026-09-15 (nota nº 2436/LUNITECK): esta empresa é
+        # tomadora recorrente com PELO MENOS 2 filiais reais confirmadas
+        # neste corpus — "0001-99" (nota CONEX4, acima) e "0003-50"
+        # (confirmada de forma independente e cruzada em 3 notas desta MESMA
+        # sessão — INSTITUIÇÃO ASSISTENCIAL, VALOR COMÉRCIO, SBS SOLUÇÕES —
+        # sempre com o mesmo endereço "RUA MARIA QUITERIA ... Lauro de
+        # Freitas"). Substituir sempre pela "0001-99" ignorava qual filial
+        # esta nota específica realmente imprime. Nesta nota o candidato
+        # perto do próprio rótulo do tomador sai sem a barra ("04.555
+        # 28310003-50", não bate o padrão formatado de CNPJ), mas esta nota
+        # tem a página inteira reimpressa DUAS vezes (2 passadas de OCR
+        # concatenadas) e a 2ª cópia traz "04.555.293/0003-50" com a barra
+        # intacta (só o "8"→"9" de ".283" corrompido — 1 dígito de distância
+        # de "0003-50", contra quase todos os dígitos finais diferentes de
+        # "0001-99"). Por isso a busca do candidato não fica restrita a
+        # `bloco` (a 1ª ocorrência do bloco do tomador, que aqui é
+        # justamente a cópia sem a barra) — varre o TEXTO INTEIRO por
+        # qualquer CNPJ formatado, exclui o do prestador (já extraído) e usa
+        # o mais próximo de uma das 2 filiais conhecidas, com uma distância
+        # máxima (evita "adotar" por acaso um CNPJ de outra empresa
+        # legítima do documento só por ser o menos distante disponível). Só
+        # cai no default "0001-99" (comportamento antigo) quando nada disso
+        # se aplica, replicando o caso original da nota CONEX4.
         if not self._validate_cnpj_cpf(cnpj) and 'BONI TRANSPORTES' in razao.upper():
-            cnpj = '04555283000199'
+            _boni_filiais_conhecidas = ('04555283000199', '04555283000350')
+            _candidatos_doc = {
+                re.sub(r'\D', '', m) for m in re.findall(
+                    # Separador do meio tolerante a espaço puro, sem "." nem
+                    # "," (achado real: "04,555 293/0003-50" - o 2º separador
+                    # nunca sobrou, só o espaço).
+                    r'\d{2}[ \t]*[.,][ \t]*\d{3}[ \t.,]+\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', t)
+            }
+            _candidatos_doc.discard(getattr(self, '_cnpj_prestador_extraido', None))
+            _melhor, _melhor_dist = None, None
+            for _cand in _candidatos_doc:
+                if len(_cand) != 14:
+                    continue
+                for _filial in _boni_filiais_conhecidas:
+                    _dist = sum(1 for x, y in zip(_cand, _filial) if x != y)
+                    if _melhor_dist is None or _dist < _melhor_dist:
+                        _melhor, _melhor_dist = _filial, _dist
+            cnpj = _melhor if (_melhor and _melhor_dist <= 3) else '04555283000199'
 
         # GUARAJUBA SHOPPING LTDA (CNPJ real 24.890.395/0001-03, confirmado
         # pelo usuário) — contraparte recorrente num lote de 30 notas onde
@@ -10219,9 +10282,36 @@ class SPPdfExtractor:
         t = self.raw_text
 
         m_prest = re.search(r'PRESTADOR\s*/\s*FORNECEDOR', t, re.IGNORECASE)
-        m_tom = re.search(r'TOMADOR\s*/\s*ADQUIRENTE', t, re.IGNORECASE)
+        # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES INTEGRADAS DE SEGURANÇA
+        # ELETRÔNICA -> BONI TRANSPORTES): o OCR lê a barra de "TOMADOR /
+        # ADQUIRENTE" como "TOMADOR |! ADQUIRENTE" (o "/" vira dois caracteres de
+        # ruído). Como o rótulo exigia a barra literal, `m_tom` nunca casava —
+        # e, sem ele, TANTO `bloco` do prestador (que usa `m_tom.start()` como
+        # limite) QUANTO o do tomador (que usa `m_tom.end()` como início) saíam
+        # vazios, zerando as DUAS entidades de uma vez (sintoma real: "Prestador
+        # Não Identificado" E "Tomador Não Identificado" no mesmo XML, apesar de
+        # o CNPJ/razão de ambos estarem perfeitamente legíveis no texto). O
+        # separador passa a tolerar qualquer sequência curta de pontuação/ruído
+        # entre as duas palavras, não só a barra.
+        m_tom = re.search(r'TOMADOR\s*\W{0,4}\s*ADQUIRENTE', t, re.IGNORECASE)
+        # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES): a palavra
+        # "OPERAÇÃO" sai tão degradada pelo OCR ("O) ÃO", "OPERA O" — sem os
+        # caracteres "PER"/sem a cedilha+til contíguos) que nem
+        # "DESTINATÁRIO DA OPERAÇÃO" nem "INTERMEDIÁRIO DA OPERAÇÃO" batem
+        # o padrão original, mesmo os dois aparecerem no texto. Sem um fim
+        # de bloco reconhecido, `fim` virava `len(t)` (fim do documento
+        # inteiro) — o CNPJ do tomador (também corrompido, "D4.555.283/..."
+        # em vez de "04.555.283/...") não casava o padrão de CNPJ formatado,
+        # e a busca "vazava" para o resto do documento, encontrando um
+        # trecho de 11 dígitos da própria Chave de Acesso (impressa de novo
+        # no rodapé) e o aceitando como se fosse o CPF/CNPJ do tomador — um
+        # valor plausível-porém-ERRADO, pior que o sentinela. "IDENTIFICADO
+        # NA NFS" sobrevive INTEGRALMENTE em ambas as linhas garbladas (é a
+        # frase de status do checkbox, não o rótulo em si) — usado como
+        # marcador de fim mais resiliente, adicional aos já existentes.
         m_fim = re.search(
-            r'(?:DESTINAT[ÁA]RIO|INTERMEDI[ÁA]RIO)\s+DA\s+OPERA[ÇC][ÃA]O|SERVI[ÇC]O\s+PRESTADO',
+            r'(?:DESTINAT[ÁA]RIO|INTERMEDI[ÁA]RIO)\s+DA\s+OPERA[ÇC][ÃA]O|SERVI[ÇC]O\s+PRESTADO|'
+            r'IDENTIFICADO\s+NA\s+NFS',
             t[m_tom.end():] if m_tom else t, re.IGNORECASE)
         fim = (m_tom.end() + m_fim.start()) if (m_tom and m_fim) else len(t)
 
@@ -10331,10 +10421,93 @@ class SPPdfExtractor:
                 municipio, uf, city_hint=municipio, raw_doc_text=t) or ''
 
         m_doc = re.search(r'(\d{2}\.?\d{3}\.?\d{3}/\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})', bloco)
-        cnpj = re.sub(r'\D', '', m_doc.group(1)) if m_doc else '00000000000000'
+        if m_doc:
+            cnpj = re.sub(r'\D', '', m_doc.group(1))
+        else:
+            # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES, tomador BONI
+            # TRANSPORTES): o OCR troca o PRIMEIRO dígito do CNPJ, "0", pela
+            # letra "D" ("D4.555.283/0003-50" em vez de "04.555.283/0003-50")
+            # — só na posição inicial (é onde a confusão 0/D é mais comum
+            # neste corpus, ver `_ocr_recut_...`); no meio/fim do número a
+            # ambiguidade letra/dígito é maior e não é tolerada aqui, pra não
+            # aceitar lixo. Corrige e só aceita se o checksum bater — um
+            # candidato corrigido que reprova o checksum não é mais confiável
+            # que o sentinela.
+            m_doc_tol = re.search(r'\b[DO](\d\.?\d{3}\.?\d{3}/\d{4}-?\d{2})\b', bloco, re.IGNORECASE)
+            candidato = ('0' + re.sub(r'\D', '', m_doc_tol.group(1))) if m_doc_tol else ''
+            cnpj = candidato if (candidato and self._validate_cnpj_cpf(candidato)) else '00000000000000'
 
         m_nome = re.search(r'Nome\s*/\s*Nome\s+Empresarial\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
         razao = m_nome.group(1).strip() if m_nome else ''
+
+        # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES INTEGRADAS DE
+        # SEGURANÇA ELETRÔNICA -> BONI TRANSPORTES): em vez das colunas "Nome
+        # / Nome Empresarial", "Município / Sigla UF" e "Código IBGE / CEP"
+        # caírem em linhas separadas (padrão de uma nota já validada, nº 11),
+        # o OCR desta nota funde TUDO numa única linha de rótulos ("Nome /
+        # Nome Empresarial Município / Sigla UF Código IBGE | CEP") seguida
+        # de uma única linha de valores ("<razão> <município> / <UF> <IBGE>
+        # <sep> <CEP>") — nem `m_nome` (exige a razão isolada na própria
+        # linha) nem `_colher("Município/Sigla UF", ...)` (exige o valor
+        # isolado numa linha própria) reconhecem essa forma, e as DUAS
+        # entidades saíam "Não Identificado" ao mesmo tempo, mesmo com CNPJ,
+        # razão e município perfeitamente legíveis na imagem.
+        #
+        # Fallback: quando falta razão OU município, procura (linha a linha,
+        # não com MULTILINE/`.` — um `\s` "solto" nos grupos cruzaria linhas
+        # em branco e engoliria a linha de valores inteira) uma linha que
+        # termine em "<algo> / <UF>" (+ IBGE!CEP opcional). Onde exatamente a
+        # razão termina e o município começa dentro de "<algo>" é ambíguo por
+        # regex puro (nomes de município têm de 1 a 4+ palavras, às vezes com
+        # conectivos minúsculos — "Lauro de Freitas"); em vez de adivinhar,
+        # usa o próprio código IBGE já impresso NA MESMA linha como prova:
+        # tenta sufixos de 1 a 4 palavras de trás pra frente e aceita o
+        # primeiro cujo código resolvido bate EXATAMENTE com o IBGE já lido
+        # (rejeita sufixos mais curtos que "resolvem" por coincidência para
+        # OUTRO município - achado real: "Freitas" e "de Freitas" sozinhos
+        # resolvem para Salvador; só "Lauro de Freitas" completo bate o
+        # "29.19207" impresso na nota).
+        if not razao or not municipio:
+            for linha in bloco.split('\n'):
+                linha = linha.strip()
+                m_fundido = re.match(
+                    r'^(.+?)\s*/\s*([A-Za-z]{2})'
+                    r'(?:\s+([\d.]{5,12})\s*[|!/]\s*([\d.\-]{8,12}))?\s*$',
+                    linha, re.IGNORECASE)
+                if not m_fundido:
+                    continue
+                antes = m_fundido.group(1).strip()
+                uf_fundido = m_fundido.group(2).upper()
+                ibge_fundido = re.sub(r'\D', '', m_fundido.group(3) or '')
+                if len(ibge_fundido) != 7:
+                    ibge_fundido = ''
+                cep_fundido = re.sub(r'\D', '', m_fundido.group(4) or '')
+                if len(cep_fundido) != 8:
+                    cep_fundido = ''
+
+                municipio_f = ''
+                palavras = antes.split(' ')
+                if ibge_fundido:
+                    for n in (4, 3, 2, 1):
+                        if n >= len(palavras):
+                            continue
+                        candidato = ' '.join(palavras[-n:])
+                        if _ibge_resolver.extract_and_validate(
+                                candidato, uf_fundido, city_hint=candidato) == ibge_fundido:
+                            municipio_f = candidato
+                            antes = ' '.join(palavras[:-n])
+                            break
+
+                if not razao:
+                    razao = antes.strip()
+                if not municipio and municipio_f:
+                    municipio = municipio_f
+                    uf = uf_fundido
+                    if not cod_mun:
+                        cod_mun = ibge_fundido
+                    if not cep and cep_fundido:
+                        cep = cep_fundido
+                break
 
         # Endereço em linha única: "logradouro, número, [complemento,] bairro"
         # (mesma convenção da v1.0 — o bairro é sempre o ÚLTIMO segmento e o
@@ -14937,7 +15110,38 @@ class SPPdfExtractor:
                 # pelo OCR. Prependemos ao texto principal para que os regexes
                 # encontrem esta versão limpa antes de qualquer ocorrência
                 # ambígua no restante do documento.
-                if re.search(r'PREFEITURA\s+MUNICIPAL\s+DO\s+SALVADOR|Nota\s+Salvador', best_text, re.IGNORECASE):
+                #
+                # Achado real 2026-09-15 (nota nº 33908/VALOR COMÉRCIO E SERVIÇOS
+                # DE INFORMÁTICA): o OCR desta nota lê o título como "PREFEITURA
+                # MUNICIPAL DE SALVADOR" (preposição "DE", não "DO") — o gate
+                # exigia "DO" literal e, como "Nota Salvador" também não aparece
+                # nesta nota, TODO o bloco de recuts Salvador-específicos (caixa
+                # de cabeçalho, votação do Número da Nota, recut do tomador) era
+                # pulado por completo, mesmo a página já tendo sido roteada para
+                # `LAYOUT_SALVADOR` pela detecção de layout (que usa o padrão bem
+                # mais tolerante `PREFEITURA.*SALVADOR`, sem exigir "DO"). Isso
+                # fazia o Número da Nota cair no fallback genérico, que casava
+                # "Pedido Numero: 46345" (um campo interno do prestador, dentro da
+                # discriminação do serviço) em vez do "Número da Nota" real
+                # ("33908", só recuperável pelos recuts abaixo). O gate deste
+                # bloco todo foi alinhado à mesma tolerância "DE"/"DO" da
+                # detecção de layout — MAS a troca de `best_text` inteiro por
+                # PSM 6 logo abaixo (`_gate_salvador_estrito`) continua restrita
+                # à condição original ("DO"/"Nota Salvador"): testado contra
+                # esta mesma nota, o PSM 6 de página inteira introduz ruído de
+                # uma marca d'água/carimbo de fundo na célula "Nome/Razão
+                # Social" ("q 5 VALOR COMERCIO ... bo, ARE", achado real) e
+                # acrescenta uma 5ª coluna à grade de Alíquota/ISS que nenhum
+                # dos parsers (`m_grid4`/`m_grid5`) reconhece — zerando valores
+                # que a leitura padrão já extraía certos. Os demais recortes
+                # deste bloco (caixa de cabeçalho, votação do número, recuts de
+                # tomador/prestador/CNPJ) têm validação própria (checksum,
+                # ausência de rótulo) e não têm esse risco.
+                _gate_salvador_amplo = re.search(
+                    r'PREFEITURA\s+MUNICIPAL\s+D[EO]\s+SALVADOR|Nota\s+Salvador', best_text, re.IGNORECASE)
+                _gate_salvador_estrito = re.search(
+                    r'PREFEITURA\s+MUNICIPAL\s+DO\s+SALVADOR|Nota\s+Salvador', best_text, re.IGNORECASE)
+                if _gate_salvador_amplo:
                     # PSM padrão (automático) pode derrubar POR COMPLETO o
                     # bloco do PRESTADOR (rótulo "PRESTADOR DE SERVIÇOS",
                     # CPF/CNPJ, Razão Social, CEP) e a grade inteira de
@@ -14956,14 +15160,16 @@ class SPPdfExtractor:
                     # fiscais + números em formato de moeda) realmente
                     # pontuar melhor que a leitura padrão já usada como
                     # `best_text` — preserva o comportamento validado nas
-                    # notas onde o PSM padrão já é suficiente.
-                    try:
-                        img_psm6 = img.rotate(-best_angle, expand=True) if best_angle else img
-                        texto_psm6 = pytesseract.image_to_string(img_psm6, lang='por', config='--psm 6')
-                        if self._score_ocr_text(texto_psm6) > self._score_ocr_text(best_text):
-                            best_text = texto_psm6
-                    except Exception:
-                        pass
+                    # notas onde o PSM padrão já é suficiente. Restrito ao
+                    # gate ESTRITO (ver achado 2026-09-15 acima).
+                    if _gate_salvador_estrito:
+                        try:
+                            img_psm6 = img.rotate(-best_angle, expand=True) if best_angle else img
+                            texto_psm6 = pytesseract.image_to_string(img_psm6, lang='por', config='--psm 6')
+                            if self._score_ocr_text(texto_psm6) > self._score_ocr_text(best_text):
+                                best_text = texto_psm6
+                        except Exception:
+                            pass
 
                     # Cópia do texto ANTES de qualquer recorte Salvador-específico
                     # prepender algo — usada só pelo gatilho da marca d'água mais
@@ -16250,16 +16456,35 @@ class SPPdfExtractor:
                 m = re.search(r'erifica[çc][aã]o\s*:?\s*(?:S?ALVADOR\s*)?([A-Z0-9]{3,5}-?[A-Z0-9]{2,6})', texto_ocr, re.IGNORECASE)
                 return bool(m and m.group(1).upper() not in ('PRESTADOR', 'TOMADOR', 'PREFEITURA', 'SECRETARIA'))
 
-            texto_original = _tentativa(4.5, 0.11, 6)
-            if _tem_codigo_valido(texto_original):
-                return texto_original
+            # Achado real, nota nº 33908/VALOR COMÉRCIO E SERVIÇOS DE
+            # INFORMÁTICA: a 1ª tentativa (PSM 6) recupera um Código de
+            # Verificação válido, mas PERDE por completo o valor de "Número
+            # da Nota" (a coluna "33908" nem aparece no texto — só o
+            # rótulo). Como a validação só olhava o código, a função aceitava
+            # essa leitura de cara e nunca chegava nas tentativas seguintes,
+            # que em PSM 4 recuperam "33908" de forma consistente (testado em
+            # zoom 4/4.5/6/8, todos com PSM 4). Passa a exigir os DOIS campos
+            # pra aceitar uma tentativa de cara; se nenhuma tiver os dois,
+            # prefere a que tenha ao menos o Número (campo obrigatório do
+            # XML — perder o código de verificação, só informativo, custa
+            # bem menos que perder o número da nota).
+            def _tem_numero_valido(texto_ocr):
+                return bool(re.search(r'N[uú]mero\s+da\s+Nota\D{0,15}?(\d{3,10})', texto_ocr, re.IGNORECASE | re.DOTALL))
 
+            tentativas = [_tentativa(4.5, 0.11, 6)]
             for zoom, hfrac, psm in ((4.5, 0.16, 6), (8.0, 0.16, 4)):
-                tentativa = _tentativa(zoom, hfrac, psm)
-                if _tem_codigo_valido(tentativa):
-                    return tentativa
+                tentativas.append(_tentativa(zoom, hfrac, psm))
 
-            return texto_original
+            for t in tentativas:
+                if _tem_codigo_valido(t) and _tem_numero_valido(t):
+                    return t
+            for t in tentativas:
+                if _tem_numero_valido(t):
+                    return t
+            for t in tentativas:
+                if _tem_codigo_valido(t):
+                    return t
+            return tentativas[0]
         except Exception:
             return ""
 
