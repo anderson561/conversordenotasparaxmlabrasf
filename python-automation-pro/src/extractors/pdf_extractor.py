@@ -76,7 +76,7 @@ LAYOUT_SAO_PAULO = 'sao_paulo_sp'     # São Paulo/SP
 LAYOUT_JOINVILLE = 'joinville_sc'     # Joinville/SC
 LAYOUT_FORTALEZA = 'fortaleza_ce'     # Fortaleza/CE
 LAYOUT_BRASILIA  = 'brasilia_df'      # Brasília/DF (Governo do DF)
-LAYOUT_ISBET     = 'isbet_recibo'     # ISBET (Nota de Contribuição)
+LAYOUT_ISBET     = 'isbet_recibo'     # Instituto Brasileiro Pró Educação, Trabalho e Desenvolvimento (ISBET, CNPJ 43.126.366/0001-14, Rio de Janeiro/RJ, certificação CNAS/CEBAS) - "NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" (não uma NFS-e municipal clássica), documento de repasse do programa Jovem Aprendiz: o ISBET intermedia a contratação de aprendizes e cobra da empresa contratante ("USUÁRIO DOS SERVIÇOS") uma "receita institucional" mensal, com os valores individuais de cada aprendiz listados numa tabela anexa ("Relação de Jovens Aprendizes") só para referência - o valor tributável da nota é o da grade "Discriminação dos serviços"/"Valor total da Nota", não a soma da tabela de aprendizes. PDF ESCANEADO (OCR). Detecção pré-existente (título do documento "NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" ou a marca "ISBET"), mas até 2026-09-15 (a) essa detecção era, na prática, MORTA: vinha DEPOIS do check bare `RIO DE JANEIRO|NOTA CARIOCA` na cadeia, e o próprio letterhead do ISBET imprime "Rio de Janeiro" (cidade do emitente) - toda nota real caía em LAYOUT_RIO (Nota Carioca, estrutura totalmente diferente) antes mesmo de chegar no check do ISBET; corrigido subindo o check do ISBET para ANTES do de Rio de Janeiro (mesma família de "marca compartilhada colide" de `reference-ocr-layout-patterns`); e (b) só tinha stub de Número/Competência - SEM extração de prestador/tomador/valores, o que fazia toda nota cair no fallback genérico compartilhado. Achado real, nota nº SAL-2026-01799 -> BONI TRANSPORTES: o CNPJ do ISBET falha o dígito verificador nesta nota (a leitura de página inteira lê "43.125.366/0001-14", que reprova o checksum - o real é "43.126.366/0001-14", confirmado por crop em zoom 4x), então o fallback genérico de prestador ("nenhum CNPJ válido no bloco -> usa o 1º CNPJ válido do documento inteiro") pegava o único CNPJ válido do documento - o da BONI, o TOMADOR - e o atribuía também ao PRESTADOR (mesma família de bug documentada em `reference-ocr-layout-patterns`). Prestador agora é FIXO (mesmo emitente sempre - mesmo racional de LAYOUT_PJB_LOCACAO/LAYOUT_FF_LOCACAO), usando o CNPJ CORRETO (validado por checksum), não o que a página inteira lê. MAS SEM CEP hardcoded: o letterhead do ISBET não imprime CEP nenhum (confirmado no mesmo crop, não é falha de OCR) - diferente do padrão desta família (PJB/F&F têm endereço fixo COMPLETO), aqui o CEP fica sentinela + aviso em vez de inventado. Tomador é DINÂMICO, extraído do bloco "USUÁRIO DOS SERVIÇOS" (rótulos "Nome:"/"End.:"/"CEP:"/"Bairro:"/"Município:"/"UF:"/"CNPJ:"/"IE:"/"IM:", todos rótulo→valor na mesma linha). **Número da nota**: por decisão EXPLÍCITA do usuário (2026-09-15), NÃO usa o "Nº:SAL-2026-XXXXX" impresso duas vezes no documento (era o que o stub original extraía) - usa o "Boleto Nº" (ex. "656956"), o identificador que o usuário efetivamente concilia. Competência: nenhum branch dedicado - o fallback genérico compartilhado de `_extrair_competencia` (1º dia do mês/ano da Data de Emissão, quando nenhum branch de layout resolve nada) já produz o valor correto para este documento, então um branch próprio seria código morto (medido por mutação, removido); o stub original tinha um branch que extraía a DATA completa da emissão em vez do 1º dia do mês - também removido. Documento não tributa ISS de forma convencional (valores apresentados como dedutíveis do IR, art. 13 da Lei 9.249/95, não como serviço da LC116) - Base de Cálculo/Alíquota/Valor do ISS mantidos zerados propositalmente e ItemListaServico/CodigoTributacaoMunicipio = "0000" (mesma convenção de não-incidência já usada em LAYOUT_PJB_LOCACAO/Barreiras), sinalizado em `Nfse.avisos`. A linha de valor da grade ("Referente a receita institucional do mês MM/AAAA | Unitário R$ | Total R$") sai como puro lixo no OCR de página inteira ("DT" / "fessmrmsensncmadmnits") - recuperada por um recorte dedicado em zoom 10x (`_ocr_recut_instituto_valor`, mesma técnica de outras faixas problemáticas desta base, mas medido empiricamente que só zoom>=8 recupera o valor de forma consistente aqui).
 LAYOUT_SIMOES_FILHO = 'simoes_filho_ba'  # Simões Filho/BA
 LAYOUT_RIBEIRAO_PIRES = 'ribeirao_pires_sp' # Ribeirão Pires/SP
 LAYOUT_CPE_LOCACAO = 'cpe_locacao'    # CPE Tecnologia (Fatura de Locação)
@@ -715,6 +715,18 @@ class SPPdfExtractor:
         # outras prefeituras da mesma plataforma ainda não testadas).
         if re.search(r'ROS[ÁA]RIO\s+DA\s+LIMEIRA', t, re.IGNORECASE):
             return LAYOUT_ROSARIO_LIMEIRA
+        # ISBET: checado ANTES do "RIO DE JANEIRO" bare abaixo - achado real
+        # 2026-09-15, o marcador do ISBET (título "NOTA DE CONTRIBUIÇÃO
+        # SOLIDÁRIA") existia no código mas NUNCA disparava, porque o
+        # letterhead do próprio ISBET imprime "Rio de Janeiro" como cidade
+        # do emitente, e o check bare de RIO (mais específico só em nome,
+        # não em posição) sempre casava primeiro - toda nota ISBET real caía
+        # em LAYOUT_RIO (Nota Carioca, estrutura totalmente diferente) e daí
+        # no fallback genérico compartilhado. O marcador do ISBET é bem mais
+        # específico ("NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" só aparece neste
+        # documento) do que o nome de uma cidade, então sobe na cadeia.
+        if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
+            return LAYOUT_ISBET
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
         if re.search(r'(?:PREFEITURA\s+DO\s+)?MUNIC[IÍ]PIO\s+DE\s+S[AÃ]O\s+PAULO', t, re.IGNORECASE):
@@ -748,8 +760,6 @@ class SPPdfExtractor:
             return LAYOUT_BARUERI
         if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
             return LAYOUT_BRASILIA
-        if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
-            return LAYOUT_ISBET
         # Rede de segurança do Simões Filho, para notas cujo cabeçalho
         # "PREFEITURA MUNICIPAL DE SIMÕES FILHO" (checado bem acima) não
         # sobreviveu ao OCR. Exige o nome da cidade **E** um marcador
@@ -1130,6 +1140,18 @@ class SPPdfExtractor:
         # outras prefeituras da mesma plataforma ainda não testadas).
         if re.search(r'ROS[ÁA]RIO\s+DA\s+LIMEIRA', t, re.IGNORECASE):
             return LAYOUT_ROSARIO_LIMEIRA
+        # ISBET: checado ANTES do "RIO DE JANEIRO" bare abaixo - achado real
+        # 2026-09-15, o marcador do ISBET (título "NOTA DE CONTRIBUIÇÃO
+        # SOLIDÁRIA") existia no código mas NUNCA disparava, porque o
+        # letterhead do próprio ISBET imprime "Rio de Janeiro" como cidade
+        # do emitente, e o check bare de RIO (mais específico só em nome,
+        # não em posição) sempre casava primeiro - toda nota ISBET real caía
+        # em LAYOUT_RIO (Nota Carioca, estrutura totalmente diferente) e daí
+        # no fallback genérico compartilhado. O marcador do ISBET é bem mais
+        # específico ("NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" só aparece neste
+        # documento) do que o nome de uma cidade, então sobe na cadeia.
+        if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
+            return LAYOUT_ISBET
         if re.search(r'RIO DE JANEIRO|NOTA CARIOCA', t, re.IGNORECASE):
             return LAYOUT_RIO
         if re.search(r'(?:PREFEITURA\s+DO\s+)?MUNIC[IÍ]PIO\s+DE\s+S[AÃ]O\s+PAULO', t, re.IGNORECASE):
@@ -1163,8 +1185,6 @@ class SPPdfExtractor:
             return LAYOUT_BARUERI
         if re.search(r'Governo do Distrito Federal|Secretária de Estado de Economia do Distrito Federal|Coordenação do ISS', t, re.IGNORECASE):
             return LAYOUT_BRASILIA
-        if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
-            return LAYOUT_ISBET
         # Rede de segurança do Simões Filho, para notas cujo cabeçalho
         # "PREFEITURA MUNICIPAL DE SIMÕES FILHO" (checado bem acima) não
         # sobreviveu ao OCR. Exige o nome da cidade **E** um marcador
@@ -1483,9 +1503,6 @@ class SPPdfExtractor:
                     mes, ano = m.group(1).split('/')
                     result = datetime(int(ano), int(mes), 1)
                 except: pass
-        elif layout == LAYOUT_ISBET:
-            m = re.search(r'Data\s+de\s+Emiss[aã]o:\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
-            if m: result = _parse_dmy(m.group(1)) or None
         elif layout == LAYOUT_JOINVILLE:
             m = re.search(r'Compet[eê]ncia[\s\n]*(\d{1,2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -2514,10 +2531,6 @@ class SPPdfExtractor:
             m = re.search(r'N[uú]mero\s+da\s+NFS-e[\s\n]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
             
-        if self.layout == LAYOUT_ISBET:
-            m = re.search(r'N[ºo]:\s*([A-Z0-9-]+)', t, re.IGNORECASE)
-            if m: return m.group(1).strip()
-            
         if self.layout == LAYOUT_RIBEIRAO_PIRES:
             m = re.search(r'NFS-e[\s\n]+(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
@@ -2560,6 +2573,16 @@ class SPPdfExtractor:
             # "FATURA DE LOCAÇÃO ... Nº: 520366" - rótulo próprio do cabeçalho
             # (também repetido no rodapé de assinatura, mesmo valor).
             m = re.search(r'N[º°o]\s*:?\s*(\d{4,})', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_ISBET:
+            # Decisão EXPLÍCITA do usuário (2026-09-15): para este layout,
+            # usar o "Boleto Nº" como Número da Nota - NÃO o "Nº:SAL-2026-XXXXX"
+            # impresso duas vezes no documento (esse é um identificador
+            # interno do ISBET, não o que o usuário concilia - e era o que o
+            # stub original extraía). "Boleto Nº:.656956" - pontuação solta
+            # entre o rótulo e o valor.
+            m = re.search(r'Boleto\s*N[º°o]?\s*[:.]*\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_PJB_LOCACAO:
@@ -2833,6 +2856,16 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_ISBET:
+            # A discriminação real é só a linha do item ("Referente a receita
+            # institucional do mês MM/AAAA") - o fallback genérico, sem esta
+            # âncora, varria o resto do documento inteiro e despejava a
+            # "Relação de Jovens Aprendizes" (tabela de referência, não é a
+            # descrição do serviço) dentro do campo.
+            m = re.search(r'(Referente\s+a\s+receita\s+institucional\s+do\s+m[êe]s\s+\d{2}/\d{4})', t, re.IGNORECASE)
+            if m:
+                return m.group(1).strip()
+
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             # DANFSe v2.0: o rótulo "Descrição do Serviço" fica na coluna da
             # ESQUERDA da grade da seção "SERVIÇO PRESTADO", enquanto o texto
@@ -3457,6 +3490,14 @@ class SPPdfExtractor:
             # Locação de bens móveis sem incidência de ISS (LC 116/2003, item
             # não tributável) - mesmo critério do Barreiras para esse tipo de
             # operação: código "0000" (não é serviço da lista da LC116).
+            return "0000"
+
+        if self.layout == LAYOUT_ISBET:
+            # "Nota de Contribuição Solidária": a própria nota apresenta os
+            # valores como dedutíveis do IR (art. 13, Lei 9.249/95), não como
+            # um serviço listado na LC116 - nenhum item/código de tributação
+            # municipal é impresso em lugar nenhum do documento. Mesma
+            # convenção de não-incidência de PJB/Barreiras.
             return "0000"
 
         if self.layout == LAYOUT_SP_SKYTEF:
@@ -5130,6 +5171,106 @@ class SPPdfExtractor:
                         cep=cep
                     )
                 )
+
+        if self.layout == LAYOUT_ISBET:
+            if is_intermediario:
+                return None
+            if is_prestador:
+                # Emitente FIXO (ISBET, sempre o mesmo) - CNPJ confirmado por
+                # crop em zoom 4x (a leitura de página inteira errava um
+                # dígito: "43.125.366" em vez do real "43.126.366"). O
+                # letterhead NÃO imprime CEP nenhum (confirmado no mesmo
+                # crop) - diferente do padrão desta família (PJB/F&F têm
+                # endereço fixo COMPLETO), aqui o CEP fica sentinela + aviso
+                # em vez de inventado.
+                mun_cod = _ibge_resolver.extract_and_validate("Rio de Janeiro", "RJ", city_hint="Rio de Janeiro")
+                return Entidade(
+                    cnpj_cpf="43126366000114",
+                    razao_social="Instituto Brasileiro Pró Educação, Trabalho e Desenvolvimento",
+                    endereco=Endereco(
+                        logradouro="Av. Embaixador Abelardo Bueno",
+                        numero="1111",
+                        complemento="Bloco 02, loja 109",
+                        bairro="Não informado",
+                        codigo_municipio=mun_cod,
+                        municipio="Rio de Janeiro",
+                        uf="RJ",
+                        cep="00000000",
+                    ),
+                    telefone="2122153066",
+                )
+            # Tomador ("USUÁRIO DOS SERVIÇOS"): DINÂMICO - rótulos e valores na
+            # mesma linha ("Nome:", "End.:", "CEP:"/"Bairro:"/"Município:"/"UF:",
+            # "CNPJ:"/"IE:"/"IM:"). Delimitado até "Discriminação dos serviços"
+            # para não vazar a tabela de itens/aprendizes para dentro do bloco.
+            pos = re.search(r'USU[ÁA]RIO\s+DOS\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+            ini = pos.end() if pos else 0
+            m_fim = re.search(r'Discrimina[çc][ãa]o\s+dos\s+servi[çc]os', t[ini:], re.IGNORECASE)
+            bloco = t[ini:ini + m_fim.start()] if m_fim else t[ini:]
+
+            razao = "Tomador Não Identificado"
+            m_nome = re.search(r'Nome\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_nome:
+                razao = re.sub(r'[\s,]+$', '', m_nome.group(1).strip())
+
+            cnpj = "00000000000000"
+            m_cnpj = re.search(r'CNPJ\s*:\s*(\d{11,14})', bloco, re.IGNORECASE)
+            if m_cnpj:
+                cnpj = m_cnpj.group(1).zfill(14)
+
+            im = None
+            m_im = re.search(r'\bIM\s*:\s*(\d+)', bloco, re.IGNORECASE)
+            if m_im:
+                im = m_im.group(1)
+
+            logradouro, numero, complemento = "Não informado", "S/N", None
+            m_end = re.search(r'End\.?\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_end:
+                addr = m_end.group(1).strip()
+                m_num = re.match(r'^(.*?)\s+(\d+)(?:\s+(.*))?$', addr)
+                if m_num:
+                    logradouro = m_num.group(1).strip() or "Não informado"
+                    numero = m_num.group(2)
+                    complemento = m_num.group(3).strip() if m_num.group(3) else None
+                else:
+                    logradouro = addr
+
+            cep = "00000000"
+            m_cep = re.search(r'CEP\s*:\s*(\d{8})', bloco, re.IGNORECASE)
+            if m_cep:
+                cep = m_cep.group(1)
+
+            bairro = "Não informado"
+            m_bairro = re.search(r'Bairro\s*:\s*([^\n]+?)\s*Munic[íi]pio', bloco, re.IGNORECASE)
+            if m_bairro:
+                bairro = m_bairro.group(1).strip()
+
+            municipio = "Não informado"
+            m_mun = re.search(r'Munic[íi]pio\s*:?\s*([^\n]+?)\s*UF', bloco, re.IGNORECASE)
+            if m_mun:
+                municipio = m_mun.group(1).strip()
+
+            uf = "BA"
+            m_uf = re.search(r'\bUF\s*:\s*([A-Z]{2})', bloco, re.IGNORECASE)
+            if m_uf:
+                uf = m_uf.group(1).upper()
+
+            mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+            return Entidade(
+                cnpj_cpf=cnpj,
+                inscricao_municipal=im,
+                razao_social=razao,
+                endereco=Endereco(
+                    logradouro=logradouro,
+                    numero=numero,
+                    complemento=complemento,
+                    bairro=bairro,
+                    codigo_municipio=mun_cod,
+                    municipio=municipio,
+                    uf=uf,
+                    cep=cep,
+                ),
+            )
 
         if self.layout == LAYOUT_PJB_LOCACAO:
             if is_intermediario:
@@ -11390,6 +11531,63 @@ class SPPdfExtractor:
             telefone=telefone,
         )
 
+    def _ocr_recut_instituto_valor(self) -> str:
+        """Recorte dedicado para a linha de item + "Valor total da Nota" da
+        grade "Discriminação dos serviços / Unitário R$ / Total R$" do
+        LAYOUT_ISBET (ISBET). Achado real, nota nº SAL-2026-01799: a
+        LINHA DO ITEM ("1 | Referente a receita institucional do mês 08/2026
+        | 130,00 | 130,00") sai como puro lixo no OCR de página inteira em
+        zoom 4x ("DT" / "fessmrmsensncmadmnits") - os rótulos ao redor saem
+        limpos, só essa linha específica falha. Diferente de outras faixas
+        problemáticas desta base, o zoom6/psm6 padrão (usado em
+        `_ocr_recut_dacte_os_grade`) ainda não basta aqui - medido
+        empiricamente que só zoom>=8 recupera o "130,00" de forma
+        consistente; usamos zoom 10. Faixa estreita (só a linha do item até
+        logo abaixo de "Valor total da Nota", SEM chegar em "Atestamos" -
+        incluir aquele parágrafo widened a imagem o bastante para
+        reintroduzir ruído) ancorada nos rótulos "DISCRIMINA" (início) e
+        "NOTA:" (fim, a própria label "Valor total da Nota:") via
+        `image_to_data` sobre a página inteira - nunca frações fixas de
+        altura. Retorna string vazia em qualquer falha (PDF sem página,
+        âncora não encontrada, exceção do Tesseract) - o chamador mantém
+        0,00 + aviso em vez de fabricar um valor."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io as _io
+
+            doc = pymupdf.open(self.pdf_path)
+            pagina_idx = (getattr(self, '_pagina_hint', 1) or 1) - 1
+            if pagina_idx < 0 or pagina_idx >= len(doc):
+                return ''
+            pg = doc[pagina_idx]
+
+            zoom0 = 4
+            pix0 = pg.get_pixmap(matrix=pymupdf.Matrix(zoom0, zoom0))
+            img0 = Image.open(_io.BytesIO(pix0.tobytes("png")))
+            dados = pytesseract.image_to_data(img0, lang="por", output_type=pytesseract.Output.DICT)
+
+            def _y_do_rotulo(prefixo: str) -> Optional[int]:
+                for i, palavra in enumerate(dados['text']):
+                    if palavra.strip().upper().startswith(prefixo):
+                        return dados['top'][i]
+                return None
+
+            y_inicio = _y_do_rotulo("DISCRIMINA")
+            y_fim = _y_do_rotulo("NOTA:")
+            if y_inicio is None or y_fim is None or y_fim <= y_inicio:
+                return ''
+
+            margem = 5
+            clip = pymupdf.Rect(0, (y_inicio - margem) / zoom0, pg.rect.width, (y_fim + 40) / zoom0)
+            zoom1 = 10
+            pix1 = pg.get_pixmap(matrix=pymupdf.Matrix(zoom1, zoom1), clip=clip)
+            img1 = Image.open(_io.BytesIO(pix1.tobytes("png")))
+            return pytesseract.image_to_string(img1, lang="por", config="--psm 6")
+        except Exception:
+            return ''
+
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
@@ -13635,6 +13833,31 @@ class SPPdfExtractor:
             if not m_val:
                 m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+FATURA.*?([\d\.]+,\d{2})', t, re.IGNORECASE | re.DOTALL)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            return Valores(
+                valor_servicos=v, valor_liquido_nfse=v,
+                base_calculo=0.0, valor_iss=0.0, aliquota=0.0
+            )
+
+        if self.layout == LAYOUT_ISBET:
+            # "Valor total da Nota: R$ 130,00" não sobrevive no texto de
+            # página inteira (o número da célula se perde - ver
+            # `_ocr_recut_instituto_valor`); tenta primeiro no texto normal
+            # (caso uma nota futura venha com OCR melhor) e só then recorre
+            # ao recorte dedicado. Sem incidência de ISS convencional
+            # (valores apresentados como dedutíveis do IR, não como serviço
+            # da LC116) - base/alíquota/ISS mantidos em 0, sinalizado em
+            # `Nfse.avisos`.
+            m_val = re.search(r'Valor\s+total\s+da\s*\n?\s*Nota\s*:?\s*R\$\s*([\d\.]+,\d{2})', t, re.IGNORECASE)
+            if m_val:
+                v = self._parse_valor(m_val.group(1))
+            else:
+                # No recorte, "Valor total da Nota" é o rótulo mais próximo do
+                # FIM da faixa - pega o último número no formato R$ em vez do
+                # primeiro (que seria o Valor Unitário do item, coincidente
+                # com o total só porque esta nota tem 1 único item).
+                texto_grade = self._ocr_recut_instituto_valor()
+                todos = re.findall(r'([\d.,]+,\d{2})', texto_grade)
+                v = self._parse_valor(todos[-1]) if todos else 0.0
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
@@ -18181,6 +18404,18 @@ class SPPdfExtractor:
                 "Documento tributado por ICMS (NFCom - Nota Fiscal de Comunicação "
                 "Eletrônica), não sujeito a ISS - campos de Base de Cálculo/"
                 "Alíquota/Valor do ISS mantidos zerados propositalmente"
+            )
+        if self.layout == LAYOUT_ISBET:
+            avisos.append(
+                "Nota de Contribuição Solidária (ISBET/Jovem Aprendiz): valores "
+                "apresentados pelo próprio documento como dedutíveis do IR "
+                "(art. 13, Lei 9.249/95), não como serviço da LC116 - Base de "
+                "Cálculo/Alíquota/Valor do ISS mantidos zerados propositalmente"
+            )
+            avisos.append(
+                "CEP do prestador (Instituto Brasileiro Pró Educação) não é "
+                "impresso no letterhead deste documento - mantido zerado por "
+                "não haver valor real para extrair"
             )
         if self.layout == LAYOUT_SEM_PARAR:
             # Esta fatura não imprime base de cálculo, alíquota nem ISS em

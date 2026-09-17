@@ -32,6 +32,16 @@ sessão, de todos os layouts/fixes entregues está em
   - Suíte: 683 → **714 testes**; 31 novos em `tests/test_dacte_os_ciatrans.py`; prova de mutação 5/6 mortas.
   - Contagem de layouts inalterada em **59** (mesmo tratamento do `LAYOUT_DANFE_PRODUTO`: documento de tipo próprio, fora da numeração de layouts de NFS-e).
 
+### Corrigido
+
+- **Layout ISBET (`isbet_recibo`, "Nota de Contribuição Solidária") completado — antes tinha só detecção + stub de Número/Competência, sem extração de prestador/tomador/valores.** Pedido explícito do usuário ("Crie um plano de ação, para o novo layout instituto, crie um novo caso não exista"), a partir do arquivo real `ISBET - 1799.pdf` (nota nº SAL-2026-01799, Instituto Brasileiro Pró Educação, Trabalho e Desenvolvimento → BONI TRANSPORTES LOGÍSTICA E COMÉRCIO LTDA, R$ 130,00). A investigação revelou que o layout já existia no código (não era um layout novo), mas estava efetivamente morto:
+  - **Detecção nunca disparava**: o check do ISBET vinha DEPOIS do check bare `RIO DE JANEIRO|NOTA CARIOCA`, e o próprio letterhead do ISBET imprime "Rio de Janeiro" (cidade do emitente) — toda nota real caía em `LAYOUT_RIO` (Nota Carioca) antes de chegar no check do ISBET. Corrigido subindo o check do ISBET para ANTES do de Rio de Janeiro, em ambos os detectores.
+  - **Prestador saía com o CNPJ do TOMADOR**: o CNPJ do ISBET reprova o checksum nesta nota (a leitura de página inteira lê "43.125.366/0001-14"; o real, confirmado por crop em zoom 4x, é "43.126.366/0001-14") — o fallback genérico de prestador então usava o único CNPJ válido do documento inteiro, o da BONI (o TOMADOR), duplicando-o também no PRESTADOR.
+  - **Número da nota**: por decisão explícita do usuário, passa a usar o "Boleto Nº" (ex. "656956"), não mais o "Nº:SAL-2026-XXXXX" interno do ISBET.
+  - Prestador FIXO com o CNPJ correto (validado por checksum); tomador DINÂMICO do bloco "USUÁRIO DOS SERVIÇOS"; discriminação real extraída (sem a tabela "Relação de Jovens Aprendizes" vazando pro campo); valor recuperado por recorte OCR dedicado em zoom 10x (a linha do item sai como puro lixo no OCR de página inteira); ISS não incidente sinalizado em aviso. Ver a seção completa em [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
+  - Suíte: 714 → **717 testes** (3 novos em `tests/test_isbet_contribuicao_solidaria_layout.py`).
+  - Contagem de layouts inalterada em **59** — nenhuma constante `LAYOUT_` nova (o layout já existia; a correção só completou a extração dele).
+
 ### Corrigido em detecção
 
 - **O fallback solto por nome de cidade não sequestra mais notas de outros emitentes.** `_detect_layout`/`_detect_layout_page` terminavam com `if re.search(r'Sim[oõ]es Filho', t) → LAYOUT_SIMOES_FILHO`, bastando o nome da cidade aparecer em qualquer lugar do texto. Agora exige, junto, um marcador **estrutural** do template de Simões Filho (`Série/Número RPS`, `Exigibilidade de ISS` — tolerando o garble real "Exigibilidade de 155" —, `SERVIÇO NACIONAL`, `DESCONTO INCONDICIONAL`). A rede de segurança continua de pé para notas cujo cabeçalho da prefeitura não sobreviveu ao OCR, que é para o que ela existe. Sem esse aperto, o próximo emitente novo cujo cliente seja a Staummaq cairia na mesma armadilha.
