@@ -71,6 +71,15 @@ class IBGEResolver:
         "VINHEDO": "3556701",
         "GOIANIA": "5208707", "GOIÂNIA": "5208707",
         "BARUERI": "3505708",
+        # Rio Largo/AL - onde fica o Aeroporto Zumbi dos Palmares, sede da
+        # filial "AGENCIA AEROPORTO MACEIO" da Localiza (achado real, nota
+        # AAMCZ-529060). Sem esta entrada caía em Maceió (2704302), a capital
+        # da UF. ATENÇÃO: o cross-check habitual pela faixa de CEP NÃO vale
+        # aqui - a própria nota imprime "51700-000", que é faixa de Recife/PE
+        # (Rio Largo/AL é 57100-xxx); conferido na imagem, o erro é do emitente,
+        # não do OCR. Código confirmado na API oficial do IBGE
+        # (servicodados.ibge.gov.br/api/v1/localidades/estados/AL/municipios).
+        "RIO LARGO": "2707701",
         # Joinville/SC - município do prestador do LAYOUT_ROTAEXATA_LOCACAO.
         # Sem esta entrada a cidade caía no fallback silencioso de Salvador/BA,
         # que ali seria especialmente difícil de notar (o TOMADOR da nota é de
