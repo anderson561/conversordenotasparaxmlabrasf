@@ -10514,10 +10514,34 @@ class SPPdfExtractor:
         # que houver no meio é complemento; nesta nota o tomador tem "LOTE 02"
         # como complemento e "PITUBA" como bairro, e o parser genérico gravava
         # "LOTE 02" no bairro).
+        #
+        # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES INTEGRADAS DE
+        # SEGURANÇA ELETRÔNICA -> BONI TRANSPORTES): DUAS entidades saíam com
+        # Endereço "Não informado" apesar de o logradouro estar perfeitamente
+        # legível na imagem. Causas: (1) o rótulo "Endereço" imprime colado à
+        # coluna vizinha "E-mail"/"Email" na MESMA linha do cabeçalho
+        # ("Enderaço Email", "Endereço E-mall") — o padrão original exigia
+        # `\s*\n` logo após o rótulo e nunca casava com texto extra na mesma
+        # linha; (2) no prestador, o OCR ainda lê "Endereço" como "Enderaço"
+        # (troca e/a); (3) como "Endereço" e "E-mail" são colunas vizinhas
+        # impressas lado a lado, o OCR de página inteira funde as DUAS
+        # colunas de VALOR também na mesma linha ("<endereço> <e-mail colado
+        # sem separador>") — sem uma barra/vírgula entre elas.
         logradouro, numero, complemento, bairro = 'Não informado', 'S/N', None, 'Não informado'
-        m_end = re.search(r'^\s*Endere[çc]o\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE | re.MULTILINE)
+        m_end = re.search(r'^\s*Ender[ae][çc]o\b[^\n]*\n+\s*([^\n]+)', bloco, re.IGNORECASE | re.MULTILINE)
         if m_end:
-            segs = [s.strip() for s in m_end.group(1).split(',') if s.strip()]
+            valor_end = m_end.group(1)
+            # Remove um e-mail colado no fim da mesma linha do endereço (ver
+            # causa nº 3 acima) — identificado pelo sufixo de domínio comum
+            # ("...com.br", "...com", "...net", "...org"), não por "@" (o "@"
+            # em si costuma sair como ruído/caractere solto no OCR e já não
+            # está presente neste trecho).
+            m_email_colado = re.search(
+                r'\s+\S*\.(?:com(?:\.br)?|net|org|gov(?:\.br)?)\b\S*\s*$',
+                valor_end, re.IGNORECASE)
+            if m_email_colado:
+                valor_end = valor_end[:m_email_colado.start()].rstrip()
+            segs = [s.strip() for s in valor_end.split(',') if s.strip()]
             if segs:
                 logradouro = segs[0]
                 if len(segs) >= 2 and re.match(r'^\d+[A-Za-z]?$|^S/?N$', segs[1], re.IGNORECASE):
@@ -10527,6 +10551,16 @@ class SPPdfExtractor:
                     resto = segs[1:]
                 if resto:
                     bairro = resto[-1]
+                    # Ruído solto de OCR (aspas/guilhemets/etc.) que sobra no
+                    # fim do último segmento (achado real: "[TINGA «" em vez
+                    # de "ITINGA").
+                    bairro = re.sub(r'[^\wÀ-ÿ]+$', '', bairro).strip() or bairro
+                    # Achado real: o "I" inicial de "ITINGA" (bairro de Lauro
+                    # de Freitas/BA) sai como colchete solto ("[TINGA") — a
+                    # mesma família de confusão de traço vertical isolado já
+                    # vista no "D"/"O" do CNPJ deste layout. Substituição
+                    # pontual, restrita a este bairro específico.
+                    bairro = re.sub(r'^\[(?=TINGA\b)', 'I', bairro, flags=re.IGNORECASE)
                     if len(resto) > 1:
                         complemento = ', '.join(resto[:-1])
 
@@ -12686,6 +12720,27 @@ class SPPdfExtractor:
             irrf = _valor_apos_rotulo_grade_v2(r'\bIRRF\b')
             inss = _valor_apos_rotulo_grade_v2(r'Contribui[çc][ãa]o\s+Previdenci[áa]ria\s*-\s*Retida')
             contrib_sociais = _valor_apos_rotulo_grade_v2(r'Contribui[çc][õo]es\s+Sociais\s*-\s*Retidas')
+
+            # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES INTEGRADAS DE
+            # SEGURANÇA ELETRÔNICA, "Serviços sem a incidência de ISSQN e
+            # ICMS"): quando a operação não está sujeita ao ISSQN, o rótulo
+            # "VALOR DA OPERAÇÃO / SERVIÇO" sai tão degradado pelo OCR
+            # ("NATO DA GERAÇÃO FRITO", sem nenhum fragmento reconhecível do
+            # texto original) que `valor_operacao` nunca casa — e "BC ISSQN"
+            # nem chega a ser impresso nessas notas (não há base de cálculo
+            # de um imposto que não incide). Sem tratamento, `serv` ficava
+            # 0,00 apesar de o grid mostrar claramente "VALOR DA OPERAÇÃO /
+            # SERVIÇO: R$ 660,51" (conferido por captura de tela da própria
+            # nota, região do grid de valores). Como não há NENHUMA retenção
+            # nesta nota (ISS não retido, sem IRRF/INSS/contribuições
+            # sociais), o VALOR LÍQUIDO DA NFS-e (que já sai correto, extraído
+            # por um rótulo que sobrevive ao OCR) é matematicamente idêntico
+            # ao valor bruto da operação — por isso serve de fallback só
+            # quando não há nenhuma retenção detectada; se houvesse retenção,
+            # o líquido seria MENOR que o valor da operação e usá-lo aqui
+            # fabricaria um valor de serviço plausível-porém-errado.
+            if not serv and liquido and not (iss_retido or irrf or inss or contrib_sociais or iss):
+                serv = liquido
 
             # NÃO extraídos de propósito:
             # - "PIS/COFINS - Débito Apuração Própria": débito tributário do
