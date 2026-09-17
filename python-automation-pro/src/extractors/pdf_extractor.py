@@ -79,6 +79,7 @@ LAYOUT_BRASILIA  = 'brasilia_df'      # Brasília/DF (Governo do DF)
 LAYOUT_ISBET     = 'isbet_recibo'     # Instituto Brasileiro Pró Educação, Trabalho e Desenvolvimento (ISBET, CNPJ 43.126.366/0001-14, Rio de Janeiro/RJ, certificação CNAS/CEBAS) - "NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" (não uma NFS-e municipal clássica), documento de repasse do programa Jovem Aprendiz: o ISBET intermedia a contratação de aprendizes e cobra da empresa contratante ("USUÁRIO DOS SERVIÇOS") uma "receita institucional" mensal, com os valores individuais de cada aprendiz listados numa tabela anexa ("Relação de Jovens Aprendizes") só para referência - o valor tributável da nota é o da grade "Discriminação dos serviços"/"Valor total da Nota", não a soma da tabela de aprendizes. PDF ESCANEADO (OCR). Detecção pré-existente (título do documento "NOTA DE CONTRIBUIÇÃO SOLIDÁRIA" ou a marca "ISBET"), mas até 2026-09-15 (a) essa detecção era, na prática, MORTA: vinha DEPOIS do check bare `RIO DE JANEIRO|NOTA CARIOCA` na cadeia, e o próprio letterhead do ISBET imprime "Rio de Janeiro" (cidade do emitente) - toda nota real caía em LAYOUT_RIO (Nota Carioca, estrutura totalmente diferente) antes mesmo de chegar no check do ISBET; corrigido subindo o check do ISBET para ANTES do de Rio de Janeiro (mesma família de "marca compartilhada colide" de `reference-ocr-layout-patterns`); e (b) só tinha stub de Número/Competência - SEM extração de prestador/tomador/valores, o que fazia toda nota cair no fallback genérico compartilhado. Achado real, nota nº SAL-2026-01799 -> BONI TRANSPORTES: o CNPJ do ISBET falha o dígito verificador nesta nota (a leitura de página inteira lê "43.125.366/0001-14", que reprova o checksum - o real é "43.126.366/0001-14", confirmado por crop em zoom 4x), então o fallback genérico de prestador ("nenhum CNPJ válido no bloco -> usa o 1º CNPJ válido do documento inteiro") pegava o único CNPJ válido do documento - o da BONI, o TOMADOR - e o atribuía também ao PRESTADOR (mesma família de bug documentada em `reference-ocr-layout-patterns`). Prestador agora é FIXO (mesmo emitente sempre - mesmo racional de LAYOUT_PJB_LOCACAO/LAYOUT_FF_LOCACAO), usando o CNPJ CORRETO (validado por checksum), não o que a página inteira lê. MAS SEM CEP hardcoded: o letterhead do ISBET não imprime CEP nenhum (confirmado no mesmo crop, não é falha de OCR) - diferente do padrão desta família (PJB/F&F têm endereço fixo COMPLETO), aqui o CEP fica sentinela + aviso em vez de inventado. Tomador é DINÂMICO, extraído do bloco "USUÁRIO DOS SERVIÇOS" (rótulos "Nome:"/"End.:"/"CEP:"/"Bairro:"/"Município:"/"UF:"/"CNPJ:"/"IE:"/"IM:", todos rótulo→valor na mesma linha). **Número da nota**: por decisão EXPLÍCITA do usuário (2026-09-15), NÃO usa o "Nº:SAL-2026-XXXXX" impresso duas vezes no documento (era o que o stub original extraía) - usa o "Boleto Nº" (ex. "656956"), o identificador que o usuário efetivamente concilia. Competência: nenhum branch dedicado - o fallback genérico compartilhado de `_extrair_competencia` (1º dia do mês/ano da Data de Emissão, quando nenhum branch de layout resolve nada) já produz o valor correto para este documento, então um branch próprio seria código morto (medido por mutação, removido); o stub original tinha um branch que extraía a DATA completa da emissão em vez do 1º dia do mês - também removido. Documento não tributa ISS de forma convencional (valores apresentados como dedutíveis do IR, art. 13 da Lei 9.249/95, não como serviço da LC116) - Base de Cálculo/Alíquota/Valor do ISS mantidos zerados propositalmente e ItemListaServico/CodigoTributacaoMunicipio = "0000" (mesma convenção de não-incidência já usada em LAYOUT_PJB_LOCACAO/Barreiras), sinalizado em `Nfse.avisos`. A linha de valor da grade ("Referente a receita institucional do mês MM/AAAA | Unitário R$ | Total R$") sai como puro lixo no OCR de página inteira ("DT" / "fessmrmsensncmadmnits") - recuperada por um recorte dedicado em zoom 10x (`_ocr_recut_instituto_valor`, mesma técnica de outras faixas problemáticas desta base, mas medido empiricamente que só zoom>=8 recupera o valor de forma consistente aqui).
 LAYOUT_SIMOES_FILHO = 'simoes_filho_ba'  # Simões Filho/BA
 LAYOUT_RIBEIRAO_PIRES = 'ribeirao_pires_sp' # Ribeirão Pires/SP
+LAYOUT_RIBEIRAO_PRETO = 'ribeirao_preto_sp'  # Ribeirão Preto/SP. PDF digital (pdfminer). Achado real 2026-09-16, nota nº 469 (Paschoalin Sociedade Individual de Advocacia -> UNIÃO PARTICIPAÇÕES LTDA, R$4.500,00): reportado pelo usuário como "número da nota fiscal incorreto" (saía sentinela "00000000"). Causa raiz não era de extração, e sim de DETECÇÃO — a nota não tinha layout próprio, e o fallback bare `if re.search('FEIRA DE SANTANA', t): return LAYOUT_FEIRA` (mesma família de "marca da CONTRAPARTE, não do emitente, sequestra a nota" já vista em `LAYOUT_SIMOES_FILHO`/STAUMMAQ) capturava a nota inteira porque o TOMADOR é de Feira de Santana/BA — mesmo a nota sendo emitida pela Prefeitura de Ribeirão Preto/SP, sem nenhuma relação com o layout Feira de Santana. Sob o layout errado, o Número da Nota saía sentinela, o Código de Verificação saía sentinela, a Data de Emissão perdia o horário (usava só a data do "RPS: 261 - Data: 03/08/2026", não a "Data de emissão 03/08/2026 14:05" real), o Código de Município de AMBAS as entidades caía no default Salvador/BA (2927408, nem Ribeirão Preto nem Feira de Santana estavam nas cidades conhecidas do resolver de IBGE) e Alíquota/Valor do ISS saíam zerados apesar de a nota imprimir claramente "R$ 90,00 (2,00%)". A caixa "Número / Data de emissão / Código de verificação" (topo da página, entre o título e o QR code) não aparece na leitura de página inteira além do rótulo "Número" sozinho — recuperada por recorte dedicado (`_ocr_header_box_ribeirao_preto`), validado em zoom 3x/4x com PSM 6, que lê os 3 campos de uma vez ("Número\n469\nData de emissão\n03/08/2026 14:05\nCódigo de verificação\nF6730843C"). Endereço de prestador/tomador em 2 linhas ("<logradouro>, <número> - [complemento -] <bairro>" e "<município> - <UF> - <CEP>"); o endereço do prestador nesta nota tem um separador " - " duplicado (sem complemento de verdade) e o nome do próprio prestador ("PASCHOALIN") colado ao fim do bairro sem separador — provavelmente um carimbo/marca d'água da própria linha, removido por não ser parte legítima do nome do bairro (heurística: sufixo em CAIXA ALTA colado a um bairro que, no resto, não é todo maiúsculo).
 LAYOUT_CPE_LOCACAO = 'cpe_locacao'    # CPE Tecnologia (Fatura de Locação)
 LAYOUT_GUINCHO_CIDADE = 'guincho_cidade' # Guincho Cidade Eireli (Fatura de Locação)
 LAYOUT_BF_AMBIENTAIS = 'bf_ambientais' # B.F. Serviços Ambientais (Fatura de Locação)
@@ -692,6 +693,16 @@ class SPPdfExtractor:
             return LAYOUT_LOCALIZA_PETROLINA
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
             return LAYOUT_LOCALIZA
+        # Ribeirão Preto/SP: checado ANTES do fallback bare de Feira de
+        # Santana logo abaixo — achado real 2026-09-16, nota nº 469
+        # (Paschoalin Sociedade Individual de Advocacia -> UNIÃO
+        # PARTICIPAÇÕES LTDA): o TOMADOR é de Feira de Santana/BA, e o
+        # fallback bare por nome de cidade capturava a nota inteira mesmo
+        # ela sendo emitida pela Prefeitura de Ribeirão Preto/SP (mesma
+        # família de "marca da CONTRAPARTE sequestra a nota" já vista em
+        # LAYOUT_SIMOES_FILHO/STAUMMAQ) — ver LAYOUT_RIBEIRAO_PRETO.
+        if re.search(r'PREFEITURA\s+DE\s+RIBEIR[ÃA]O\s+PRETO', t, re.IGNORECASE):
+            return LAYOUT_RIBEIRAO_PRETO
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): detecção pelo CNPJ/
@@ -1120,6 +1131,16 @@ class SPPdfExtractor:
             return LAYOUT_LOCALIZA_PETROLINA
         if re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', t, re.IGNORECASE):
             return LAYOUT_LOCALIZA
+        # Ribeirão Preto/SP: checado ANTES do fallback bare de Feira de
+        # Santana logo abaixo — achado real 2026-09-16, nota nº 469
+        # (Paschoalin Sociedade Individual de Advocacia -> UNIÃO
+        # PARTICIPAÇÕES LTDA): o TOMADOR é de Feira de Santana/BA, e o
+        # fallback bare por nome de cidade capturava a nota inteira mesmo
+        # ela sendo emitida pela Prefeitura de Ribeirão Preto/SP (mesma
+        # família de "marca da CONTRAPARTE sequestra a nota" já vista em
+        # LAYOUT_SIMOES_FILHO/STAUMMAQ) — ver LAYOUT_RIBEIRAO_PRETO.
+        if re.search(r'PREFEITURA\s+DE\s+RIBEIR[ÃA]O\s+PRETO', t, re.IGNORECASE):
+            return LAYOUT_RIBEIRAO_PRETO
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): detecção pelo CNPJ/
@@ -1575,6 +1596,20 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
+        if self.layout == LAYOUT_RIBEIRAO_PRETO:
+            # A leitura de página inteira só recupera "RPS: 261 - Data:
+            # 03/08/2026", sem horário. A data COM horário
+            # ("Data de emissão\n03/08/2026 14:05") vem do recorte dedicado
+            # (_ocr_header_box_ribeirao_preto), prependido ao texto.
+            # Mesmo ruído solto do rótulo "Número" (ver `_extrair_numero`)
+            # aparece aqui ("emissão E\n...").
+            m = re.search(
+                r'Data\s+de\s+emiss[ãa]o[^\n]{0,4}\n+\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2})',
+                t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
         if self.layout == LAYOUT_FORTALEZA:
             # O cabeçalho é uma grade multi-coluna que o pdfminer reconstrói
             # fora de ordem: o valor "19/12/2025 13:02:43" sai logo após o
@@ -2577,7 +2612,15 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_RIBEIRAO_PIRES:
             m = re.search(r'NFS-e[\s\n]+(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
-            
+
+        if self.layout == LAYOUT_RIBEIRAO_PRETO:
+            # Achado real (nota nº 469): o recorte de cabeçalho lê um
+            # caractere de ruído solto ("E") colado ao rótulo antes da
+            # quebra de linha ("Número E\n469") - `[^\n]{0,4}` tolera esse
+            # ruído sem afetar o valor em si.
+            m = re.search(r'\bN[uú]mero\b[^\n]{0,4}\n+\s*(\d{1,10})', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_CPE_LOCACAO:
             m = re.search(r'N[úu]mero\s+da\s+Nota\s+de\s+Loca[cç][aã]o\s*[:\s]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
@@ -2899,6 +2942,12 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_RIBEIRAO_PRETO:
+            # A célula "| Descrição do Serviço\n| Honorários" carrega um "|"
+            # de borda de tabela colado à esquerda do valor.
+            m = re.search(r'Descri[çc][ãa]o\s+do\s+Servi[çc]o\s*\n+\s*\|?\s*([^\n]+)', t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_ISBET:
             # A discriminação real é só a linha do item ("Referente a receita
             # institucional do mês MM/AAAA") - o fallback genérico, sem esta
@@ -3481,6 +3530,18 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_RIBEIRAO_PRETO:
+            # "| Código CNAE | Item LC 116/2003 Cód. NBS | Atividade do
+            # Município\n| 6911701 17.14 1.1301.20.00 | ...". Ancorado no
+            # cabeçalho da grade (não num "\d{1,2}\.\d{2}" solto) porque o
+            # Cód. NBS na MESMA linha ("1.1301.20.00") também bate um padrão
+            # NN.NN se lido sem âncora.
+            m = re.search(
+                r'C[óo]digo\s+CNAE\s*\|?\s*Item\s+LC\s+116/2003[^\n]*\n+\s*\|?\s*\d{4,10}\s+(\d{1,2})\.(\d{2})',
+                t, re.IGNORECASE)
+            if m:
+                return m.group(1).zfill(2) + m.group(2)
+
         if self.layout == LAYOUT_BARUERI:
             # Mesma grade "5 rótulos dumped, depois 5 valores" da
             # discriminação (ver `_extrair_discriminacao`) — "Código
@@ -3899,6 +3960,12 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_RIBEIRAO_PRETO:
+            m = re.search(
+                r'C[óo]digo\s+de\s+verifica[çc][ãa]o[^\n]{0,4}\n+\s*([A-Z0-9]{6,12})',
+                t, re.IGNORECASE)
+            if m: return m.group(1).strip().upper()
+
         if self.layout == LAYOUT_FORTALEZA:
             # Mesmo cabeçalho multi-coluna que atrapalha a Data de Emissão
             # (ver `_extrair_data_emissao`): o rótulo "Código de Verificação"
@@ -4520,6 +4587,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_santos(t, is_prestador)
+
+        if self.layout == LAYOUT_RIBEIRAO_PRETO:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_ribeirao_preto(t, is_prestador)
 
         if self.layout == LAYOUT_VINHEDO:
             if is_intermediario:
@@ -8195,6 +8267,99 @@ class SPPdfExtractor:
             ),
             email=email,
             telefone=telefone,
+        )
+
+    def _extrair_entidade_ribeirao_preto(self, t: str, is_prestador: bool) -> Entidade:
+        """Extrai prestador/tomador da NFS-e de Ribeirão Preto/SP (Portal Betha/GINFES-like,
+        campos "Rótulo: valor" na mesma linha).
+
+        Bloco delimitado por "Prestador de Serviços" / "Tomador dos Serviços"
+        até o próximo cabeçalho de seção ("Tomador dos Serviços" / "Serviços").
+        Endereço vem em DUAS linhas: "<logradouro>, <número> - [complemento -]
+        <bairro>" e, na linha seguinte, "<município> - <UF> - <CEP>".
+
+        Achado real (nota nº 469, Paschoalin Sociedade Individual de Advocacia
+        -> UNIÃO PARTICIPAÇÕES LTDA): a linha de endereço do prestador tem um
+        separador " - " DUPLICADO quando não há complemento propriamente dito
+        ("Avenida Presidente Vargas, 2001 - - sala 14 - Jardim Santa Ângela") -
+        segmentos vazios são descartados. O NOME DO PRESTADOR ("PASCHOALIN")
+        aparece colado ao FIM do bairro, sem separador — provavelmente um
+        carimbo/marca d'água do próprio escritório sobre a linha de endereço;
+        removido quando é a única sequência em CAIXA ALTA colada ao fim de um
+        bairro que, no resto, não é todo maiúsculo.
+        """
+        m_prest = re.search(r'Prestador\s+de\s+Servi[çc]os', t, re.IGNORECASE)
+        m_tom = re.search(r'Tomador\s+dos?\s+Servi[çc]os', t, re.IGNORECASE)
+        m_fim = re.search(r'\bServi[çc]os\b\s*\n', t[m_tom.end():], re.IGNORECASE) if m_tom else None
+
+        if is_prestador:
+            bloco = t[m_prest.end():m_tom.start()] if (m_prest and m_tom) else ''
+        else:
+            fim = (m_tom.end() + m_fim.start()) if (m_tom and m_fim) else len(t)
+            bloco = t[m_tom.end():fim] if m_tom else ''
+
+        m_razao = re.search(r'Raz[ãa]o\s+Social\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+        razao = m_razao.group(1).strip() if m_razao else (
+            'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado')
+
+        m_cnpj = re.search(r'CNPJ\s*:\s*([\d./-]+)', bloco, re.IGNORECASE)
+        cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else '00000000000000'
+
+        m_im = re.search(r'Inscri[çc][ãa]o\s+Municipal\s*:\s*(\d+)', bloco, re.IGNORECASE)
+        inscricao = m_im.group(1) if m_im else None
+
+        logradouro, numero, complemento, bairro = 'Não informado', 'S/N', None, 'Não informado'
+        municipio, uf, cep = 'Não informado', 'SP', '00000000'
+
+        for linha in bloco.split('\n'):
+            linha = linha.strip()
+            if ',' not in linha:
+                continue
+            segs = [s.strip() for s in re.split(r'\s*-\s*', linha) if s.strip()]
+            if not segs:
+                continue
+            m_ln = re.match(r'^(.+),\s*(\d+[A-Za-z]?)$', segs[0])
+            if not m_ln:
+                continue
+            logradouro, numero = m_ln.group(1).strip(), m_ln.group(2)
+            resto = segs[1:]
+            if resto:
+                bairro = resto[-1]
+                m_ruido = re.match(r'^(.*\S)\s+([A-ZÀ-Ú]{4,})$', bairro)
+                if m_ruido and not bairro.isupper():
+                    bairro = m_ruido.group(1).strip()
+                if len(resto) > 1:
+                    complemento = ', '.join(resto[:-1])
+            break
+
+        # Ancorado numa linha inteira (não `\s` livre, que atravessaria a
+        # quebra de linha e engoliria o fim da linha anterior de endereço —
+        # achado ao testar contra o texto real: "Jardim Santa Ângela
+        # PASCHOALIN\nRibeirão Preto" em vez de só "Ribeirão Preto").
+        m_mun = re.search(
+            r'^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ]*?)\s*-\s*([A-Z]{2})\s*-\s*(\d{5}-?\d{3})\s*$',
+            bloco, re.MULTILINE)
+        if m_mun:
+            municipio = m_mun.group(1).strip()
+            uf = m_mun.group(2).upper()
+            cep = re.sub(r'\D', '', m_mun.group(3))
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio) or ''
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=inscricao,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
         )
 
     def _extrair_entidade_barueri(self, is_prestador: bool) -> Entidade:
@@ -11924,6 +12089,32 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout == LAYOUT_RIBEIRAO_PRETO:
+            # Grade "Valor Total dos Serviços | Total ISSQN (%) | Valor
+            # Líquido da NFS-e" com os 3 valores na linha seguinte
+            # ("R$ 4.500,00 [ruído OCR] R$ 90,00 (2,00%) R$ 4.500,00") — o
+            # ISS e a alíquota saem juntos na mesma célula "R$ X (Y%)".
+            m_grid = re.search(
+                r'Valor\s+Total\s+dos\s+Servi[çc]os[\s\S]{0,60}?Total\s+ISSQN[\s\S]{0,60}?'
+                r'Valor\s+L[íi]quido\s+da\s+NFS-e\s*\n+\s*R\$\s*([\d.,]+)[\s\S]{0,20}?'
+                r'R\$\s*([\d.,]+)\s*\(([\d.,]+)\s*%\)\s*R\$\s*([\d.,]+)',
+                t, re.IGNORECASE)
+            if m_grid:
+                val_serv = self._parse_valor(m_grid.group(1))
+                iss = self._parse_valor(m_grid.group(2))
+                aliquota = self._parse_valor(m_grid.group(3)) / 100
+                liquido = self._parse_valor(m_grid.group(4))
+                iss_retido = bool(re.search(r'ISS\s+Retido\s*\n+\s*Sim', t, re.IGNORECASE))
+                return Valores(
+                    valor_servicos=val_serv,
+                    base_calculo=val_serv,
+                    aliquota=aliquota,
+                    valor_iss=iss,
+                    iss_retido=iss_retido,
+                    valor_iss_retido=iss if iss_retido else 0.0,
+                    valor_liquido_nfse=liquido,
+                )
+
         if self.layout == LAYOUT_CAMACARI_GESTAOCLICK:
             # Grade em duas faixas de "rótulos numa linha, valores na linha
             # seguinte":
@@ -15642,6 +15833,16 @@ class SPPdfExtractor:
                         if grade_sp.strip():
                             best_text = f"{grade_sp}\n{best_text}"
 
+                # Ribeirão Preto/SP (PDF digital): a caixa "Número / Data de
+                # emissão / Código de verificação" só recupera o rótulo
+                # "Número" isolado na leitura de página inteira. Recorte
+                # dedicado (ver `_ocr_header_box_ribeirao_preto`) recompõe os
+                # 3 campos. Achado real 2026-09-16, nota nº 469.
+                if re.search(r'PREFEITURA\s+DE\s+RIBEIR[ÃA]O\s+PRETO', best_text, re.IGNORECASE):
+                    header_rp = self._ocr_header_box_ribeirao_preto(page)
+                    if header_rp.strip():
+                        best_text = f"{header_rp}\n{best_text}"
+
                 # Barreiras/BA escaneado: a segmentação automática do Tesseract
                 # DESCARTA UMA FAIXA HORIZONTAL INTEIRA desta nota — a faixa que
                 # carrega o texto da discriminação, a OBSERVAÇÃO, a GRADE
@@ -18020,6 +18221,29 @@ class SPPdfExtractor:
                     linhas.append(f"Código de Verificação\n{cod_norm}")
 
             return "\n".join(linhas) + ("\n" if linhas else "")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_header_box_ribeirao_preto(page) -> str:
+        """Recorta e reprocessa em zoom alto a caixa "Número / Data de emissão /
+        Código de verificação" da NFS-e de Ribeirão Preto/SP (PDF digital,
+        pdfminer), que na leitura de página inteira só recupera o rótulo
+        "Número" isolado, sem o valor. Caixa fica no topo da página, entre o
+        título e o QR code (faixa ~62%-87% da largura, ~11,5% do topo da
+        altura); validado em zoom 3,5x-4x com PSM 6, lendo os 3 campos de uma
+        vez ("Número\\n469\\nData de emissão\\n03/08/2026 14:05\\nCódigo de
+        verificação\\nF6730843C")."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            w, h = page.rect.width, page.rect.height
+            clip = pymupdf.Rect(0.62 * w, 0, 0.87 * w, 0.115 * h)
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert('L')
+            return pytesseract.image_to_string(img, lang='por', config='--psm 6')
         except Exception:
             return ""
 
