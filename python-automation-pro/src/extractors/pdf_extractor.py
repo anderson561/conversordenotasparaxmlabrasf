@@ -6076,7 +6076,48 @@ class SPPdfExtractor:
             # sentinela (dado ausente, mas não ERRADO) ao dado da entidade
             # errada.
             if not cnpj and not bloco_veio_de_fallback_limitado:
-                if is_prestador and len(all_cnpjs) >= 1: cnpj = all_cnpjs[0]
+                if is_prestador and len(all_cnpjs) >= 1:
+                    # Acima, `bloco` já delimita corretamente o PRESTADOR (o
+                    # próprio rótulo "PRESTADOR DE SERVIÇOS" foi encontrado —
+                    # não é o caso `bloco_veio_de_fallback_limitado` do guard
+                    # do UFFICIO acima) — mas quando a LINHA do CNPJ some
+                    # inteira do OCR dentro desse bloco (não é corrupção de
+                    # dígito, é ausência total: rótulo "CPF/CNPJ" seguido
+                    # direto do rótulo "Nome/Razão Social", sem nada no
+                    # meio), o "chute" abaixo pega cegamente o 1º CNPJ válido
+                    # do DOCUMENTO INTEIRO, que pode ser o do TOMADOR — achado
+                    # real, nota nº 2232/INSTITUIÇÃO ASSISTENCIAL BENEFICENTE
+                    # CONCEIÇÃO MACEDO → BONI TRANSPORTES: o único CNPJ válido
+                    # do documento é o da BONI (tomadora), e o prestador saía
+                    # com o CNPJ dela duplicado (confirmado pelo próprio
+                    # importador Domínio, que resolve o "Fornecedor" pelo
+                    # CNPJ do XML e mostra "BONI TRANSPORTES" como fornecedor
+                    # de uma nota cujo prestador real é outro). Descarta o
+                    # candidato quando ele só aparece DEPOIS do rótulo da
+                    # OUTRA entidade no texto inteiro — sinal de que pertence
+                    # a ela, não ao prestador — preferindo o sentinela (dado
+                    # ausente) ao dado da entidade errada.
+                    #
+                    # Gated no LAYOUT_SALVADOR: no DANFSe Nacional a coluna
+                    # "CNPJ/CPF/NIF" é comum a todas as entidades e o OCR
+                    # pode ler fora de ordem, colando o CNPJ do PRESTADOR
+                    # dentro do bloco do TOMADOR — lá, "aparecer depois do
+                    # rótulo da outra entidade" NÃO significa pertencer a
+                    # ela (ver tests/test_danfse_nacional_pagina_unica_sem_
+                    # fantasma.py). No Salvador o bloco é confiável (rótulos
+                    # e ordem físicos íntegros nesta nota), então a mesma
+                    # heurística tem o sentido oposto e mais comum: se o
+                    # único CNPJ válido do documento só aparece depois do
+                    # rótulo "TOMADOR DE SERVIÇOS", ele pertence ao tomador.
+                    candidato = all_cnpjs[0]
+                    pertence_a_outra_entidade = False
+                    if self.layout == LAYOUT_SALVADOR:
+                        m_outro_label = re.search(pattern_other_labels, t, re.IGNORECASE)
+                        pertence_a_outra_entidade = bool(
+                            m_outro_label and candidato in re.sub(r'\D', '', t[m_outro_label.start():])
+                        )
+                    if not pertence_a_outra_entidade:
+                        cnpj = candidato
                 elif not is_prestador and not is_intermediario and len(all_cnpjs) >= 2:
                     if "NÃO IDENTIFICADO" not in bloco_clean.upper() and "NAO IDENTIFICADO" not in bloco_clean.upper():
                         cnpj = all_cnpjs[1]
@@ -7014,6 +7055,26 @@ class SPPdfExtractor:
             end_data['municipio'] = 'Salvador'
             end_data['uf'] = 'BA'
             end_data['cep'] = '40280901'
+
+        # INSTITUIÇÃO ASSISTENCIAL BENEFICENTE CONCEIÇÃO MACEDO (CNPJ real
+        # 00.584.568/0001-05, checksum válido) — contraparte recorrente
+        # nesta base, prestadora de nota(s) sempre para BONI TRANSPORTES.
+        # Achado real (nota nº 2232, reportado pelo usuário como "CNPJ
+        # incorreto" após a 1ª rodada de correções desta nota, que só tinha
+        # deixado sentinela + aviso): a linha do CNPJ do prestador está
+        # PERFEITAMENTE legível na imagem (confirmado por crop em zoom 10x,
+        # pixel a pixel) — "00.584.568/0001-05" — mas some POR COMPLETO de
+        # toda leitura de OCR de página inteira testada (zoom 3/4/6/8/10/12,
+        # PSM automático/4/6/11: nenhuma reproduz os dígitos corretos; a
+        # única leitura que bate o checksum é esta substituição, confirmada
+        # de forma independente pela própria imagem). Mesma classe de
+        # "defeito sistemático da imagem, não recuperável por OCR" já
+        # documentada para o CNPJ da BONI TRANSPORTES acima. Substitui só
+        # quando o checksum já reprovou (nunca sobrescreve um CNPJ
+        # genuinamente diferente de outra empresa) e a razão social bate com
+        # esta contraparte conhecida.
+        if not self._validate_cnpj_cpf(cnpj) and 'BENEFICENTE CONCEI' in razao.upper():
+            cnpj = '00584568000105'
 
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'],
