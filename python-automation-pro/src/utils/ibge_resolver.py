@@ -85,6 +85,13 @@ class IBGEResolver:
         # que ali seria especialmente difícil de notar (o TOMADOR da nota é de
         # Salvador de verdade).
         "JOINVILLE": "4209102",
+        # Ribeirão Preto/SP - prestador e município de incidência do
+        # LAYOUT_RIBEIRAO_PRETO (nota nº 469). Sem esta entrada caía no
+        # fallback silencioso de Salvador/BA (default_code), especialmente
+        # difícil de notar aqui porque o TOMADOR da nota é de fato de
+        # Feira de Santana/BA (já cadastrada acima) - as duas entidades
+        # cairiam no MESMO código por motivos diferentes.
+        "RIBEIRAO PRETO": "3543402", "RIBEIRÃO PRETO": "3543402",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
