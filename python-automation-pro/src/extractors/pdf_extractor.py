@@ -1549,6 +1549,26 @@ class SPPdfExtractor:
         # qualquer plataforma.
         if result and data_emissao and result.month == data_emissao.month and result.year != data_emissao.year:
             result = datetime(data_emissao.year, result.month, 1)
+        # Ano ABSURDO (não só "1 dígito trocado" — o guard acima só cobre
+        # esse caso, exigindo mês igual ao da Data de Emissão). Achado real,
+        # nota LUNITECK nº 2436 (Salvador/BA): o texto tem DUAS ocorrências
+        # de "COMPETÊNCIA" (recorte de página + leitura de página inteira,
+        # ambas prependadas ao mesmo `raw_text`) — "COMPETÊNCIA: 0/2025" (mês
+        # "0", inválido, não casa o regex de 2 dígitos do LAYOUT_SALVADOR) e
+        # "COMPETÊNCIA 04/7025" (mês plausível, mas "2025" virou "7025",
+        # "2"→"7") — o regex específico do Salvador (exige `\d{2}` de mês)
+        # pula a 1ª ocorrência e casa a 2ª, produzindo Competência
+        # "7025-04-01". O guard de mês-trocado acima não dispara aqui (mês
+        # "04" ≠ mês "08" da Data de Emissão), deixando o ano absurdo
+        # vazar pro XML. Nenhuma competência legítima de NFS-e fica a mais
+        # de 1 ano de distância da própria Data de Emissão (mesmo com o mês
+        # genuinamente diferente, é sempre o mês anterior/seguinte, nunca um
+        # ano inteiro nem cinco mil anos) — quando o ano capturado foge desse
+        # intervalo, é sinal de dígito corrompido, não de competência
+        # legitimamente antiga/futura, e usar o ano da Data de Emissão é
+        # mais confiável que um valor sabidamente absurdo.
+        if result and data_emissao and abs(result.year - data_emissao.year) > 1:
+            result = datetime(data_emissao.year, data_emissao.month, 1)
         if result is None: result = datetime(data_emissao.year, data_emissao.month, 1)
         return result
 
