@@ -4207,12 +4207,37 @@ class SPPdfExtractor:
             # 08/2026: "6UTVQW43O" saía "6UTV"). Nenhum efeito sobre o
             # escaneado, cuja janela continua exatamente a mesma.
             janela_tam = 100 if self.layout == LAYOUT_CAMACARI else 40
+            # No fluxo ESCANEADO o cabeçalho é lido mais de uma vez (recortes
+            # dedicados + página inteira), então o mesmo código aparece várias
+            # vezes no texto — e nem sempre igual entre as leituras. Achado
+            # real, nota nº 4497 do lote "STAUMMAQ - SCAN 3": duas leituras
+            # deram "BZz68G363T" e a terceira deu "BZ68G363T" (o impresso).
+            # Como o `.upper()` era aplicado ANTES da escolha, a 1ª leitura
+            # virava "BZZ68G363T" e era aceita de imediato — um caractere a
+            # mais no código que vai para o `<CodigoVerificacao>`.
+            #
+            # Critério de desempate: a prefeitura imprime o código todo em
+            # caixa alta, então uma MINÚSCULA no meio do candidato é
+            # assinatura de leitura ruim ("z" onde o glifo é "2"). Preferimos
+            # o candidato que já veio integralmente em [A-Z0-9]; só se NENHUMA
+            # leitura for limpa mantemos a primeira, exatamente como antes (o
+            # campo nunca fica menos preenchido do que ficava).
+            #
+            # Voto por maioria NÃO serve aqui (diferente do número da nota de
+            # Cuiabá): nesta nota a leitura ERRADA é que aparece duas vezes.
+            candidatos = []
             for m_lab in re.finditer(r'autenticidade', t, re.IGNORECASE):
                 janela = t[m_lab.end(): m_lab.end() + janela_tam]
                 for m_cod in re.finditer(r'\b([A-Z0-9]{6,12})\b', janela, re.IGNORECASE):
-                    cand = m_cod.group(1).upper()
+                    bruto = m_cod.group(1)
+                    cand = bruto.upper()
                     if re.search(r'[A-Z]', cand) and re.search(r'\d', cand):
-                        return cand
+                        if bruto == cand:
+                            return cand
+                        candidatos.append(cand)
+                        break
+            if candidatos:
+                return candidatos[0]
 
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
@@ -9613,7 +9638,22 @@ class SPPdfExtractor:
 
         inscricao = _campo(r'Inscri[çc][ãa]o\s+Municipal\s*[:.]?\s*(\d+)')
 
-        logradouro = _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|$)')
+        def _sem_ruido_a_esquerda(v: str) -> str:
+            """Descarta pontuação solta grudada no INÍCIO do valor. Neste
+            layout o OCR transforma a borda esquerda da célula (ou um resíduo
+            do rótulo) num traço/barra colado ao campo — achados reais no lote
+            "STAUMMAQ - SCAN 3": "Logradouro: — BA 522 - VIA CASCALHEIRA"
+            (travessão, nota nº 4497) e "Bairro: -CASCALHEIRA (ABRANTES)"
+            (hífen, nota nº 4495). O `.strip(' .:|')` do `_campo` não cobre
+            traço nem travessão, e o lixo seguia grudado até o XML.
+
+            Só pontuação é removida, e só à esquerda: nenhum logradouro ou
+            bairro começa por ela, então não há risco de comer caractere real
+            (o "-" que separa "BA 522 - VIA CASCALHEIRA" fica intacto)."""
+            return re.sub(r'^[\s\-–—|/\\:.,_=]+', '', v).strip()
+
+        logradouro = _sem_ruido_a_esquerda(
+            _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|$)'))
         # Exige pontuação explícita (":"/";"/".") logo após "Nº" — achado real:
         # sem essa exigência, o próprio rótulo "Nome/Razão Social" (que começa
         # com "No" — casa com `N[ºo°]`) era lido como se fosse "Nº", e o
@@ -9625,11 +9665,45 @@ class SPPdfExtractor:
         # se perde.
         complemento = _campo(r'Compl\.?\s*:?\s*(.+?)\s*(?:B[ail]{1,2}r{1,2}o|Beira|$)')
 
+        # O bairro estava FIXO em "Não informado" neste extrator, embora a nota
+        # IMPRIMA o campo rotulado — ele só divide a linha com o complemento
+        # ("Compl.: SALA 04 Bairro: CASCALHEIRA (ABRANTES)"), que já usava esse
+        # mesmo rótulo como lookahead de parada. Reaproveitamos exatamente as
+        # tolerâncias de grafia daquele lookahead ("Balro:", "Beira").
+        #
+        # Três defesas, todas motivadas por notas reais já na suíte:
+        #  - parada no "Nº" que às vezes fecha a linha ("Balro: A Nº; 00022:",
+        #    "Bairro: Nº. 38" — nota nº 20335/PADUA): sem ela o número do
+        #    endereço vinha junto, como se fosse parte do bairro;
+        #  - corte no primeiro token com MINÚSCULA: o bairro é impresso todo
+        #    em caixa alta neste layout, então "GUARAJUBA (MONTE GORDO) cm" e
+        #    "... ni || dl," (notas do lote Guarajuba) são sujeira da margem
+        #    direita do scan, não parte do nome;
+        #  - descarte de captura degenerada (< 3 alfanuméricos), mesma regra
+        #    que o município já aplica logo abaixo: na PADUA o bairro saiu
+        #    ilegível ("A") e "Não informado" é a resposta honesta.
+        bairro = _sem_ruido_a_esquerda(
+            _campo(r'(?:B[ail]{1,2}r{1,2}o|Beira)\s*[:.]?\s*([^\n]*?)\s*(?:N[ºo°]\s*[:;.]|\n|$)'))
+        bairro = re.sub(r'\s+\S*[a-z].*$', '', bairro)      # token minúsculo -> ruído
+        bairro = re.sub(r'(?:\s+[^\w\s]+)+$', '', bairro)   # tokens só de pontuação
+        # Sobra de margem em CAIXA ALTA e curta ("... (MONTE GORDO) ML"): só é
+        # descartada quando não tem vogal nem dígito — assim "JARDIM ... II" e
+        # "QUADRA 2" continuam inteiros, que são os finais curtos legítimos.
+        bairro = re.sub(r'\s+[B-DF-HJ-NP-TV-Z]{1,2}$', '', bairro)
+        if len(re.sub(r'[^A-Za-zÀ-ú0-9]', '', bairro)) < 3:
+            bairro = ''
+
         # Tolera "." no lugar de ":" depois do rótulo (achado real: "CEP.
         # 42804039" / "CEP. 40330533" — as duas ocorrências, prestador e
-        # tomador, saem com ponto em vez de dois-pontos nesta nota).
+        # tomador, saem com ponto em vez de dois-pontos nesta nota) e o "C"
+        # lido como "G" (achado real, nota nº 4497 do lote "STAUMMAQ - SCAN
+        # 3": "GEP: 42820512"). Sem essa segunda tolerância o campo inteiro
+        # se perdia e o CEP do prestador ia zerado para o XML, apesar de
+        # estar legível na nota — mesma classe de defeito do rótulo
+        # "CEP/CID/UF" do layout `localiza_fatura`: UM rótulo maltratado pelo
+        # OCR derruba o dado que vem depois dele.
         cep = ''
-        m_cep = re.search(r'CEP\s*[:.]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
+        m_cep = re.search(r'[CG]EP\s*[:.]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
         if m_cep:
             cep = re.sub(r'\D', '', m_cep.group(1))
 
@@ -9653,7 +9727,7 @@ class SPPdfExtractor:
                 logradouro=logradouro or 'Não informado',
                 numero=numero or 'S/N',
                 complemento=complemento,
-                bairro='Não informado',
+                bairro=bairro or 'Não informado',
                 codigo_municipio=cod_mun,
                 municipio=municipio or municipio_default,
                 uf=uf,
