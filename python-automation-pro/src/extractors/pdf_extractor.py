@@ -5172,6 +5172,13 @@ class SPPdfExtractor:
             # antes do valor) do boleto/ficha de compensação anexados ao mesmo
             # PDF - achado real, nota nº 53044 (TEMIS PROJETOS DE MEIO
             # AMBIENTE E SUSTENTABILIDADE LTDA).
+            #
+            # Mesmo guard do LAYOUT_LOCALIZA: a agência franqueada emite o
+            # mesmo documento, que também não tem intermediário, e aqui o
+            # `<Intermediario>` fantasma nascia do mesmo jeito.
+            if is_intermediario:
+                return None
+
             def _split_endereco_virgula(raw_addr: str):
                 """"AVENIDA HONORATO VIANA, 309 - GERCINO COELHO" -> logradouro/
                 número/bairro (mesmo formato do prestador Localiza genérico)."""
@@ -5268,15 +5275,32 @@ class SPPdfExtractor:
             # QUALQUER um dos formatos (validado contra 4 notas reais de
             # filiais/formatos distintos: Trade Center Pituba, AG Aeroporto
             # Recife, Agência Aeroporto Salvador, Agência Centro Cabula).
+            # Uma fatura da Localiza não tem intermediário. Sem este guard o
+            # extrator do TOMADOR rodava de novo para o papel de intermediário
+            # e o XML saía com um `<Intermediario>` fantasma repetindo o
+            # tomador inteiro (CNPJ e razão social) - pior ainda depois da
+            # correção do tomador, porque aí o bloco duplicado fica com dados
+            # corretos e parece legítimo. Mesma convenção dos demais layouts.
+            if is_intermediario:
+                return None
+
             def _split_endereco_localiza(raw_addr: str):
                 """"AV TANCREDO NEVES, 1632 - CAMINHO ARVORES" -> logradouro/
                 número/bairro/complemento. O bairro é sempre o ÚLTIMO segmento
                 separado por hífen (ex.: "RUA TERRITORIO DO AMAPA, 146 CS 2 -
-                PITUBA" -> bairro "PITUBA", complemento "CS 2")."""
-                m_num = re.search(r',\s*(\d+)', raw_addr)
+                PITUBA" -> bairro "PITUBA", complemento "CS 2").
+
+                Aceita "S/N" como número além dos dígitos: as filiais de
+                aeroporto imprimem o endereço nesse formato ("HALL AEROPORTO
+                ZUMBI DOS PALMARES, S/N - AEROPORTO") e, sem isso, o número
+                não casava, o endereço inteiro virava logradouro e o bairro
+                ficava "Não informado"."""
+                m_num = re.search(r',\s*(\d+|S/?N\b)', raw_addr, re.IGNORECASE)
                 if m_num:
                     logradouro = raw_addr[:m_num.start()].strip()
                     numero = m_num.group(1)
+                    if not numero.isdigit():
+                        numero = "S/N"
                     resto = raw_addr[m_num.end():].strip()
                 else:
                     logradouro, numero, resto = raw_addr.strip(), "S/N", ""
@@ -5292,8 +5316,13 @@ class SPPdfExtractor:
             def _strip_texto_colado(raw: str) -> str:
                 """Corta um trecho maiúsculo de endereço no 1º pedaço colado sem
                 espaço (e-mail do OCR sem "@" legível, parênteses, etc.), sem
-                depender de reconhecer o que veio grudado."""
-                m = re.match(r'([A-ZÀ-Ú0-9][A-ZÀ-Ú0-9.,\-\s]*?)(?:\s+[a-z(][^\n]*)?\s*$', raw)
+                depender de reconhecer o que veio grudado.
+
+                A "/" entra na classe por causa do "S/N" das filiais de
+                aeroporto: sem ela o casamento falhava na barra, a função
+                devolvia a linha inteira e o e-mail colado ia junto para o
+                logradouro."""
+                m = re.match(r'([A-ZÀ-Ú0-9][A-ZÀ-Ú0-9./,\-\s]*?)(?:\s+[a-z(][^\n]*)?\s*$', raw)
                 return m.group(1).strip() if m else raw.strip()
 
             if is_prestador:
@@ -5322,6 +5351,23 @@ class SPPdfExtractor:
                         antes_cep, re.IGNORECASE)
                     if m_addr:
                         logradouro_raw = _strip_texto_colado(m_addr.group(1))
+                    else:
+                        # Nem toda filial fica numa via com prefixo: as de
+                        # aeroporto imprimem "HALL AEROPORTO ZUMBI DOS
+                        # PALMARES, S/N - AEROPORTO" (achado real, AGENCIA
+                        # AEROPORTO MACEIO), e o endereço saía "Não informado".
+                        # No letterhead a linha do endereço é sempre a ÚLTIMA
+                        # antes da linha de CEP/cidade/UF, então ela serve de
+                        # âncora posicional quando o prefixo não existe. Só
+                        # roda neste caso - as notas já cobertas continuam
+                        # passando pelo casamento por prefixo, sem regressão.
+                        linhas_antes = [l.strip() for l in antes_cep.split('\n') if l.strip()]
+                        if linhas_antes:
+                            candidata = linhas_antes[-1]
+                            # A marca d'água/logotipo "Localiza" sai colada no
+                            # começo da linha ("SlLocaliza HALL AEROPORTO...").
+                            candidata = re.sub(r'^\S*localiza\S*\s+', '', candidata, flags=re.IGNORECASE)
+                            logradouro_raw = _strip_texto_colado(candidata)
 
                 cnpj = re.sub(r'\D', '', m_cnpj_prest.group(1)) if m_cnpj_prest else ""
                 mun = m_cep_prest.group(2).strip() if m_cep_prest else "SALVADOR"
@@ -5344,8 +5390,18 @@ class SPPdfExtractor:
                     )
                 )
             else:
+                # O rótulo "CEP/CID/UF:" é a âncora de TODO o bloco do tomador —
+                # endereço, CEP, município, UF e (logo abaixo) o CNPJ dependem
+                # deste match. Por isso as barras precisam ser tolerantes ao
+                # OCR: em scan degradado elas saem como "I"/"|"/"1"/"l"
+                # ("CEPICID/UF:43721-450 - SIMOES FILHO - BA", achado real, nota
+                # AAMCZ-529060/STAUMMAQ). Com o rótulo literal, `m_end` vinha
+                # None e UMA causa-raiz derrubava CINCO campos de uma vez: CNPJ
+                # sentinela, endereço "Não informado", bairro idem, município
+                # caindo no fallback silencioso de Salvador (a nota é de Simões
+                # Filho/BA) e CEP zerado.
                 m_end = re.search(
-                    r'ENDERE[ÇC]O:\s*(.+?)\s*CEP/CID/UF:\s*([\d-]+)\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})',
+                    r'ENDERE[ÇC]O:\s*(.+?)\s*CEP[\s/|I1l]*CID[\s/|I1l]*UF\s*:\s*([\d-]+)\s*-\s*([A-Z\s]+?)\s*-\s*([A-Z]{2})',
                     t, re.IGNORECASE | re.DOTALL)
 
                 # A razão social do tomador aparece em 2 formatos: (a) quebrada em
@@ -5361,7 +5417,27 @@ class SPPdfExtractor:
                 m_codigo_label = re.search(r'C[ÓO]DIGO:\s*\d+', t, re.IGNORECASE)
                 if m_cliente_label and m_codigo_label and m_cliente_label.start() < m_codigo_label.start():
                     m_full = re.search(r'CLIENTE:\s*(.+?)\s*ENDERE[ÇC]O:', t, re.IGNORECASE | re.DOTALL)
-                    razao = re.sub(r'\s+', ' ', m_full.group(1)).strip() if m_full else ""
+                    razao = m_full.group(1) if m_full else ""
+                    # A ORDEM dos rótulos não basta para saber se o nome veio
+                    # inteiro: existe uma 3ª variante (OCR, achado real na nota
+                    # AAMCZ-529060/STAUMMAQ) em que "CLIENTE:" vem ANTES de
+                    # "CÓDIGO:" — como no formato digital — mas o nome AINDA
+                    # está quebrado em 2 fragmentos, com a coluna da DIREITA
+                    # intercalada no meio deles:
+                    #     CLIENTE: —STAUMMAQ ... MOTORES E CÓDIGO: 01945295
+                    #     "MAQUINAS LTDA INSC. ESTADUAL: 048137340
+                    # O que de fato distingue os formatos é se esses rótulos da
+                    # coluna direita caíram DENTRO da janela CLIENTE:→ENDEREÇO:.
+                    # Removê-los com seus valores reconstrói o nome nas duas
+                    # variantes e é no-op no formato digital, onde "CÓDIGO:" e
+                    # "INSC. ESTADUAL:" ficam DEPOIS do endereço, fora da janela.
+                    razao = re.sub(r'C[ÓO]DIGO\s*:\s*\d*', ' ', razao, flags=re.IGNORECASE)
+                    razao = re.sub(r'INSC\.?\s*ESTADUAL\s*:?\s*\d*', ' ', razao, flags=re.IGNORECASE)
+                    # Sujeira de borda de coluna do OCR (travessão de abertura,
+                    # aspas coladas no fragmento de baixo) — nunca fazem parte
+                    # de uma razão social.
+                    razao = razao.replace('"', ' ').replace('—', ' ').replace('–', ' ')
+                    razao = re.sub(r'\s+', ' ', razao).strip(' .-')
                     razao = re.sub(r'([A-ZÀ-Ú])\s*(LTDA|EIRELI|S\.A\.?|ME|EPP)\s*$', r'\1 \2', razao, flags=re.IGNORECASE)
                 else:
                     nome1 = ""
@@ -13717,6 +13793,15 @@ class SPPdfExtractor:
         "CNPJ", "CPF", "VALOR", "CEP", "DISCRIMINA", "EMISSAO", "EMISSÃO",
     )
 
+    # Abaixo deste placar, a leitura em 0° não passa por "documento fiscal
+    # reconhecido" e vale a pena gastar até 3 passadas extras de OCR testando
+    # as outras orientações. Calibrado em notas reais: na orientação CERTA uma
+    # NFS-e pontua dezenas (51, 82 e 84 nas três notas do lote "STAUMMAQ - SCAN
+    # 3"; 17 e 18 nos dois boletins de medição do mesmo lote, que são páginas
+    # de texto corrido, não notas). Na orientação ERRADA o placar fica em 0 ou
+    # 1. O limiar mora no vão entre esses dois mundos.
+    _OCR_ROTACAO_LIMIAR = 10
+
     @classmethod
     def _score_ocr_text(cls, text: str) -> int:
         """Pontua a qualidade de um texto OCR pela presença de termos fiscais
@@ -13783,16 +13868,37 @@ class SPPdfExtractor:
 
                 # Só vale a pena testar outras rotações se a leitura em 0°
                 # não pareceu um documento fiscal de verdade.
-                if best_score == 0:
+                #
+                # O portão era `best_score == 0`, e UM acerto acidental de
+                # palavra-chave no texto invertido bastava para bloquear a
+                # busca inteira (achado real, "STAUMMAQ - SCAN 3.pdf", págs. 2
+                # e 4: as 5 páginas do lote estão de cabeça para baixo; as
+                # págs. 1/3/5 pontuaram 0 em 0° e foram corrigidas, mas as 2 e
+                # 4 pontuaram exatamente **1** e ficaram presas na orientação
+                # errada — contra **82** e **84** a 180°. Resultado: as duas
+                # NFS-e caíam em LAYOUT_GENERICO e o lote inteiro saía com 1
+                # nota em vez de 3). Por isso o portão vira um LIMIAR: uma nota
+                # lida na orientação certa pontua dezenas (51/82/84 nas páginas
+                # deste lote), então qualquer coisa abaixo de `_OCR_ROTACAO_LIMIAR`
+                # é leitura ruim o bastante para valer 3 passadas extras.
+                #
+                # A aceitação ganha uma MARGEM (3x) para o caso simétrico, já
+                # documentado no fallback de PSM 6 logo abaixo: uma rotação
+                # ERRADA também pode pontuar > 0 por coincidência, e sem margem
+                # ela substituiria uma leitura 0° mediana porém correta. Com
+                # `best_score == 0` a margem é inócua (`0 * 3 == 0`), ou seja, o
+                # comportamento das notas 160/201 continua idêntico — o que muda
+                # é só a faixa 1..9, que antes não era tratada.
+                if best_score < self._OCR_ROTACAO_LIMIAR:
                     for angle in (180, 90, 270):
                         rotated = img.rotate(-angle, expand=True)
                         candidate = pytesseract.image_to_string(rotated, lang='por')
                         score = self._score_ocr_text(candidate)
-                        if score > best_score:
+                        if score > best_score and score > best_score * 3:
                             best_score = score
                             best_text = candidate
                             best_angle = angle
-                        if best_score > 0:
+                        if best_score >= self._OCR_ROTACAO_LIMIAR:
                             break
 
                 # PSM automático (3, layout automático) pode falhar por COMPLETO

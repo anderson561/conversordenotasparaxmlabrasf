@@ -11,6 +11,19 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
+## [Não lançado]
+
+### Corrigido
+
+- **Layout `localiza_fatura` — tomador extraído incorreto (nota AAMCZ-529060, filial AGENCIA AEROPORTO MACEIO → STAUMMAQ ..., Simões Filho/BA, R$ 3.517,61)**. Duas causas-raiz independentes na mesma nota:
+  - **Razão social fundida com a coluna vizinha.** A escolha do formato usava a ORDEM dos rótulos ("CLIENTE:" antes de "CÓDIGO:" ⇒ nome completo). Existe uma 3ª variante em que a ordem é essa **e mesmo assim** o nome vem quebrado em 2 fragmentos, com a coluna da direita intercalada — saía `—STAUMMAQ ... MOTORES E CÓDIGO: 01945295 "MAQUINAS LTDA INSC. ESTADUAL: 048137340`. O critério passou a ser se esses rótulos caíram dentro da janela `CLIENTE:`→`ENDEREÇO:`; caindo, são removidos com seus valores e os fragmentos remontam o nome.
+  - **Rótulo `CEP/CID/UF:` ilegível derrubava cinco campos de uma vez.** O OCR do scan leu as barras como "I" (`CEPICID/UF:`) e o regex exigia as barras literais. Como esse rótulo ancora todo o bloco do tomador — e o CNPJ só é buscado numa janela depois dele — caíam juntos CNPJ (sentinela), endereço, bairro, município (fallback silencioso de Salvador, sendo a nota de Simões Filho) e CEP (zerado). Separadores agora toleram `/`, `I`, `|`, `1`, `l`.
+  - **`<Intermediario>` fantasma nas faturas da Localiza**: a fatura não tem intermediário, mas o extrator do tomador rodava de novo para esse papel e o XML saía com o bloco duplicado. Guard `if is_intermediario: return None`, aplicado também ao `localiza_petrolina`, que tinha o defeito idêntico.
+  - **Município do prestador nas filiais de aeroporto**: `RIO LARGO` (AL) acrescentada ao `IBGEResolver.KNOWN_CITIES` com o código `2707701`, confirmado na API oficial do IBGE — antes caía em Maceió (`2704302`), o que desloca `OrgaoGerador` e `MunicipioIncidencia`. O CEP impresso na nota (`51700-000`, faixa de Recife/PE) está errado no próprio documento, conferido na imagem; é preservado como impresso, não "corrigido".
+  - **Endereço do prestador nas filiais de aeroporto**: `HALL AEROPORTO ZUMBI DOS PALMARES, S/N - AEROPORTO` não começa por prefixo de via (AV/RUA/ROD/...) e saía "Não informado". Fallback posicional (última linha antes do CEP no letterhead, descartando logotipo e e-mail colados) e `S/N` aceito como número, sem o que o bairro se perdia. Só roda quando o casamento por prefixo não acha nada.
+  - Suíte: 603 → **622 testes**.
+- **Páginas de cabeça para baixo ficavam presas na orientação errada e sumiam do resultado** (portão da busca de rotação do OCR, compartilhado por todos os layouts). `_ocr_page` corrige digitalização invertida testando 180°/90°/270°, mas a busca só rodava quando a leitura em 0° pontuava **exatamente zero** — e um único acerto acidental de palavra-chave no texto embaralhado bastava para travá-la. Achado no lote "STAUMMAQ - SCAN 3.pdf", cujas cinco páginas estão invertidas: as págs. 1/3/5 pontuaram 0 e foram corrigidas, mas as 2 e 4 pontuaram **1** (contra **82** e **84** a 180°) e ficaram presas; sem texto legível caíam em `LAYOUT_GENERICO` e `parse_multiple` descartava as páginas, então o lote saía com **1 nota em vez de 3**. O portão virou um limiar (`_OCR_ROTACAO_LIMIAR = 10`) e a aceitação de uma rotação ganhou margem de 3x — a rotação ERRADA também pode pontuar > 0 por coincidência (caso já documentado no fallback de PSM 6) e, sem margem, roubaria uma leitura 0° mediana porém correta. Com placar 0 a margem é inócua, então o comportamento já validado nas notas 160/201 fica idêntico. Suíte: 622 → **630 testes**.
+
 ## [1.9.0] - 2026-09-14
 
 ### Adicionado

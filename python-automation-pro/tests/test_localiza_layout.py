@@ -390,5 +390,254 @@ def test_extract_localiza_variante_feira_de_santana_4_paginas(monkeypatch):
             os.remove(dummy_path)
 
 
+# ----------------------------------------------------------------------
+# 3a VARIANTE DO BLOCO DO TOMADOR (achado real 2026-09-14, nota AAMCZ-529060,
+# filial AGENCIA AEROPORTO MACEIO -> STAUMMAQ SERVICOS TECNICOS AUTOMACAO
+# MOTORES E MAQUINAS LTDA, Simoes Filho/BA, R$ 3.517,61).
+#
+# Relatado pelo usuario como "tomador extraido incorreto". Sao DOIS defeitos
+# independentes nesta mesma nota:
+#
+# 1. RAZAO SOCIAL FUNDIDA COM A COLUNA DA DIREITA. O discriminador entre os
+#    formatos usava a ORDEM dos rotulos: se "CLIENTE:" vinha antes de
+#    "CODIGO:", assumia que o nome ja estava completo. Nesta nota "CLIENTE:"
+#    vem antes MESMO o nome estando quebrado em 2 fragmentos, com a coluna da
+#    direita intercalada. Saia:
+#      "—STAUMMAQ SERVICOS TECNICOS AUTOMACAO MOTORES E CODIGO: 01945295
+#       "MAQUINAS LTDA INSC. ESTADUAL: 048137340"
+#
+# 2. ROTULO "CEP/CID/UF:" ILEGIVEL NO SCAN -> UMA causa-raiz, CINCO campos
+#    errados. O OCR leu as barras como "I" ("CEPICID/UF:"), o regex ancora
+#    exigia as barras literais, e sem esse match caem juntos: CNPJ (sentinela
+#    00000000000000), endereco, bairro, municipio (fallback silencioso de
+#    Salvador, sendo a nota de Simoes Filho) e CEP (zerado).
+#
+# Texto REAL do OCR (Tesseract via _ocr_page), verbatim.
+MOCK_OCR_AAMCZ_STAUMMAQ = (
+    "LOCALIZA RENT A CAR S/A ASSISTÊNCIA A CLIENTES\n"
+    "AGENCIA AEROPORTO MACEIO TEL 0800 979 2020\n"
+    "SlLocaliza HALL AEROPORTO ZUMBI DOS PALMARES, S/N - AEROPORTO assistenciaaclientesQlocaliza com\n"
+    "51700-000 - RIO LARGO - AL\n"
+    "CNPJ - 16.670.085/0028-75\n"
+    "\n"
+    "FATURA / DUPLICATA Nº: AAMCZ - 529060\n"
+    "\n"
+    "CLIENTE: —STAUMMAQ SERVICOS TECNICOS AUTOMACAO MOTORES E CÓDIGO: 01945295\n"
+    "\"MAQUINAS LTDA INSC. ESTADUAL: 048137340\n"
+    "\n"
+    "ENDEREÇO:URBANA, 1 CIA SUL - CIA SUL\n"
+    "\n"
+    "CEPICID/UF:43721-450 - SIMOES FILHO - BA DATA DE EMISSÃO:18/08/2026\n"
+    "\n"
+    "CNPJ: 02.370.080/0001-00\n"
+    "\n"
+    "ALUGUEL CONFORME CONTRATO RLGA486217 R$ 3.481,71\n"
+    "\n"
+    "VALOR DO SEGURO R$ 35,90\n"
+    "\n"
+    "| VENCIMENTO TT CONDIÇÕESDE PAGAMENTO VALOR TOTAL\n"
+    "02/09/2026 A PRAZO R$ 3.517,61\n"
+    "\n"
+    "Não contribuinte de ISS s/locação cfe. LC n. 116/03\n"
+    "\n"
+    "Aceite:\n"
+)
+
+
+def _parse_staummaq(monkeypatch, texto=None):
+    """Nome do arquivo dummy sem o numero da nota de proposito: existe um
+    fallback que pesca o numero do nome do arquivo."""
+    dummy = "tests/dummy_localiza_scan.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy, "wb") as f:
+        f.write(b"%PDF-1.4")
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text",
+                        lambda path: texto if texto is not None else MOCK_OCR_AAMCZ_STAUMMAQ)
+    try:
+        ex = SPPdfExtractor(dummy)
+        return ex, ex.parse()
+    finally:
+        if os.path.exists(dummy):
+            os.remove(dummy)
+
+
+def test_staummaq_layout_localiza(monkeypatch):
+    ex, _ = _parse_staummaq(monkeypatch)
+    assert ex.layout == LAYOUT_LOCALIZA
+
+
+def test_staummaq_razao_social_do_tomador_reconstruida(monkeypatch):
+    """O defeito relatado: os 2 fragmentos do nome saiam fundidos com os
+    rotulos da coluna da direita."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert nfse.tomador.razao_social == (
+        "STAUMMAQ SERVICOS TECNICOS AUTOMACAO MOTORES E MAQUINAS LTDA"
+    )
+
+
+def test_staummaq_razao_social_sem_rotulos_da_coluna_vizinha(monkeypatch):
+    _, nfse = _parse_staummaq(monkeypatch)
+    razao = nfse.tomador.razao_social
+    for lixo in ("CÓDIGO", "CODIGO", "INSC", "ESTADUAL", "01945295", "048137340", '"', "—"):
+        assert lixo not in razao, "razao social ainda carrega %r" % lixo
+
+
+def test_staummaq_cnpj_do_tomador(monkeypatch):
+    """Saia sentinela: o CNPJ so e' procurado DEPOIS do match do endereco, que
+    falhava pelo rotulo CEP/CID/UF ilegivel."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert nfse.tomador.cnpj_cpf == "02370080000100"
+    assert not nfse.tomador.cnpj_cpf.startswith("00000000000")
+
+
+def test_staummaq_tomador_nao_herda_cnpj_do_prestador(monkeypatch):
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert nfse.tomador.cnpj_cpf != nfse.prestador.cnpj_cpf
+
+
+def test_staummaq_municipio_do_tomador_nao_cai_em_salvador(monkeypatch):
+    """Fallback silencioso: sem o match do endereco o municipio ia para
+    Salvador/BA (2927408), sendo a nota de Simoes Filho/BA."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    end = nfse.tomador.endereco
+    assert end.municipio == "SIMOES FILHO"
+    assert end.codigo_municipio == "2930709"
+    assert end.codigo_municipio != "2927408"
+    assert end.uf == "BA"
+
+
+def test_staummaq_endereco_e_cep_do_tomador(monkeypatch):
+    _, nfse = _parse_staummaq(monkeypatch)
+    end = nfse.tomador.endereco
+    assert end.logradouro == "URBANA"
+    assert end.numero == "1"
+    assert end.bairro == "CIA SUL"
+    assert end.cep == "43721450"
+    assert end.cep != "00000000"
+
+
+def test_staummaq_rotulo_cep_cid_uf_tolerante_ao_ocr(monkeypatch):
+    """A ancora tem que aceitar as barras lidas como I, | ou 1 -- e continuar
+    aceitando o rotulo limpo."""
+    for variante in ("CEPICID/UF:", "CEP/CID/UF:", "CEP|CID|UF:", "CEP/CID/UF :"):
+        texto = MOCK_OCR_AAMCZ_STAUMMAQ.replace("CEPICID/UF:", variante)
+        _, nfse = _parse_staummaq(monkeypatch, texto)
+        assert nfse.tomador.cnpj_cpf == "02370080000100", "falhou com %r" % variante
+        assert nfse.tomador.endereco.codigo_municipio == "2930709", "falhou com %r" % variante
+
+
+def test_staummaq_campos_da_nota(monkeypatch):
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert nfse.numero == "529060"
+    assert nfse.data_emissao.strftime("%d/%m/%Y") == "18/08/2026"
+    assert nfse.valores.valor_servicos == pytest.approx(3517.61)
+    assert nfse.valores.valor_liquido_nfse == pytest.approx(3517.61)
+    # Locacao de bens moveis: a propria nota diz "Nao contribuinte de ISS
+    # s/locacao cfe. LC n. 116/03".
+    assert nfse.valores.base_calculo == 0.0
+    assert nfse.valores.valor_iss == 0.0
+    assert nfse.servico_codigo == "0601"
+
+
+def test_staummaq_prestador_e_a_filial_de_maceio(monkeypatch):
+    """O CNPJ da filial nao pode ser fixo no codigo: a Localiza usa 1 CNPJ por
+    estabelecimento sobre a raiz 16.670.085."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert nfse.prestador.cnpj_cpf == "16670085002875"
+    assert nfse.prestador.razao_social == "LOCALIZA RENT A CAR S/A"
+    assert nfse.prestador.endereco.uf == "AL"
+
+
+def test_staummaq_sem_aviso_de_entidade_nao_identificada(monkeypatch):
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert not any("tomador" in a.lower() for a in nfse.avisos), nfse.avisos
+
+
+# ----------------------------------------------------------------------
+# COLATERAIS aprovados pelo usuario em 2026-09-14, achados ao corrigir o
+# tomador da nota AAMCZ-529060.
+# ----------------------------------------------------------------------
+
+def test_staummaq_sem_intermediario_fantasma(monkeypatch):
+    """Uma fatura da Localiza nao tem intermediario. O extrator do TOMADOR
+    rodava de novo para esse papel e o XML saia com um <Intermediario>
+    repetindo o tomador inteiro -- pior depois da correcao do tomador, porque
+    o bloco duplicado passa a ter dados corretos e parece legitimo."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert nfse.intermediario is None
+
+
+def test_intermediario_none_tambem_na_variante_digital(monkeypatch):
+    """O mesmo defeito existia em todas as notas do layout, nao so' na scan."""
+    dummy = "tests/dummy_localiza_sem_interm.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy, "wb") as f:
+        f.write(b"%PDF-1.4")
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text",
+                        lambda path: MOCK_DIGITAL_ACFSA)
+    try:
+        nfse = SPPdfExtractor(dummy).parse()
+        assert nfse.intermediario is None
+    finally:
+        if os.path.exists(dummy):
+            os.remove(dummy)
+
+
+def test_staummaq_municipio_do_prestador_e_rio_largo(monkeypatch):
+    """O Aeroporto Zumbi dos Palmares fica em Rio Largo/AL, nao em Maceio.
+    Ausente do KNOWN_CITIES, a cidade caia na capital da UF (2704302) -- o que
+    desloca tambem OrgaoGerador e MunicipioIncidencia."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    end = nfse.prestador.endereco
+    assert end.municipio == "RIO LARGO"
+    assert end.codigo_municipio == "2707701"
+    assert end.codigo_municipio != "2704302"
+    assert end.uf == "AL"
+
+
+def test_rio_largo_registrada_no_resolver_ibge():
+    from src.utils.ibge_resolver import IBGEResolver
+    assert IBGEResolver.KNOWN_CITIES.get("RIO LARGO") == "2707701"
+
+
+def test_staummaq_endereco_do_prestador_filial_de_aeroporto(monkeypatch):
+    """"HALL AEROPORTO ..." nao comeca por nenhum prefixo de via (AV/RUA/ROD),
+    entao o casamento por prefixo falhava e o endereco saia "Nao informado".
+    O "S/N" tambem precisa ser aceito como numero, senao o bairro se perde."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    end = nfse.prestador.endereco
+    assert end.logradouro == "HALL AEROPORTO ZUMBI DOS PALMARES"
+    assert end.numero == "S/N"
+    assert end.bairro == "AEROPORTO"
+
+
+def test_staummaq_logradouro_do_prestador_sem_logotipo_nem_email(monkeypatch):
+    """A linha do endereco vem entre o logotipo ("SlLocaliza") e o e-mail que o
+    OCR cola no fim ("assistenciaaclientesQlocaliza com")."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    log = nfse.prestador.endereco.logradouro
+    assert "ocaliza" not in log
+    assert "assistencia" not in log.lower()
+
+
+def test_staummaq_cep_do_prestador_preserva_o_que_a_nota_imprime(monkeypatch):
+    """A NOTA imprime "51700-000", que e' faixa de Recife/PE -- Rio Largo/AL e'
+    57100-xxx. Conferido na imagem da nota: o erro e' do emitente, o OCR esta
+    fiel. O CEP impresso e' preservado como esta; corrigi-lo seria inventar
+    dado que o documento nao declara (ver o municipio, esse sim resolvido pelo
+    nome da cidade, que a nota imprime corretamente)."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    assert nfse.prestador.endereco.cep == "51700000"
+
+
+def test_split_endereco_aceita_numero_e_sn(monkeypatch):
+    """Guarda do formato ja coberto: endereco COM numero nao pode mudar de
+    comportamento por causa do "S/N" novo."""
+    _, nfse = _parse_staummaq(monkeypatch)
+    # Tomador desta mesma nota usa numero real.
+    assert nfse.tomador.endereco.numero == "1"
+    assert nfse.prestador.endereco.numero == "S/N"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
