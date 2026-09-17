@@ -7842,22 +7842,25 @@ class SPPdfExtractor:
 
     def _extrair_prestador_nfcom_sete_connect(self) -> Entidade:
         """Prestador FIXO (emissor único gated por CNPJ): SETE CONNECT
-        TECNOLOGIA DA INFORMAÇÃO LTDA, Salvador/BA. Endereço vem do próprio
-        letterhead do template NFCom, estável entre notas - mesmo racional de
-        "prestador fixo" já usado em LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR/
-        LAYOUT_NFCOM_LOTEC_FIBRA."""
+        TECNOLOGIA DA INFORMAÇÃO LTDA, Dias d'Ávila/BA. Endereço vem do
+        próprio letterhead do template NFCom, estável entre notas - mesmo
+        racional de "prestador fixo" já usado em LAYOUT_NFCOM_SALVADOR/
+        LAYOUT_NFCOM_RLGR/LAYOUT_NFCOM_LOTEC_FIBRA. Achado real, nota nº
+        18770 (NORDESTE TUBETES - SCAN.pdf, pág. 2): o letterhead cita Dias
+        d'Ávila, não Salvador - daí "DIAS DAVILA"/"DIAS DÁVILA" terem sido
+        adicionados a KNOWN_CITIES em ibge_resolver.py no mesmo PR."""
         return Entidade(
             cnpj_cpf="13060537000199",
             razao_social="SETE CONNECT TECNOLOGIA DA INFORMACAO LTDA",
             endereco=Endereco(
-                logradouro="AV LUIS EDUARDO MAGALHAES",
-                numero="1245",
-                complemento="SALA 302",
-                bairro="STIEP",
-                codigo_municipio="2927408",
-                municipio="SALVADOR",
+                logradouro="RUA GETULIO VARGAS",
+                numero="61",
+                complemento="SALA 07",
+                bairro="CENTRO",
+                codigo_municipio="2910057",
+                municipio="DIAS DAVILA",
                 uf="BA",
-                cep="41770235",
+                cep="42850000",
             ),
         )
 

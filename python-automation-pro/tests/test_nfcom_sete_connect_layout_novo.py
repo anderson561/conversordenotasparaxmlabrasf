@@ -40,8 +40,8 @@ MOCK_OCR = (
     "DOCUMENTO AUXILIAR DA NOTA FISCAL FATURA DE SERVIÇOS DE COMUNICAÇÃO ELETRÔNICA\n\n"
     "SETE CONNECT TECNOLOGIA DA INFORMAÇÃO LTDA\n"
     "CNPJ: 13.060.537/0001-99\n"
-    "AV LUIS EDUARDO MAGALHAES, 1245 - SALA 302 - STIEP\n\n"
-    "Salvador - BA - 41770235\n"
+    "RUA GETULIO VARGAS, 61 - SALA 07 - CENTRO\n\n"
+    "Dias d'Avila - BA - 42850000\n"
     "Telefone: 7133334444\n\n"
     "CLIENTE:\n"
     "NORDESTE TUBETES LTDA\n\n"
@@ -87,8 +87,9 @@ def test_layout_detectado_pelo_cnpj_e_marcador(tmp_path):
 def test_prestador_fixo(nfse):
     assert nfse.prestador.razao_social == "SETE CONNECT TECNOLOGIA DA INFORMACAO LTDA"
     assert nfse.prestador.cnpj_cpf == "13060537000199"
-    assert nfse.prestador.endereco.municipio == "SALVADOR"
+    assert nfse.prestador.endereco.municipio == "DIAS DAVILA"
     assert nfse.prestador.endereco.uf == "BA"
+    assert nfse.prestador.endereco.codigo_municipio == "2910057"   # Dias d'Ávila/BA
 
 
 def test_tomador_dinamico_com_cnp_sem_j_tolerado(nfse):
