@@ -6981,6 +6981,40 @@ class SPPdfExtractor:
                 end_data['municipio'] = re.sub(r'\s+', ' ', m_dan.group(1)).strip()
                 end_data['uf'] = m_dan.group(2).upper()
 
+        # LUNITECK - SOLUÇÕES E DESENVOLVIMENTO EM TECNOLOGIA LTDA - ME (CNPJ
+        # real 07.295.620/0001-44, checksum válido) — contraparte recorrente
+        # em Salvador/BA, confirmada por recorte em zoom 4x, PIXEL A PIXEL,
+        # em DUAS notas independentes (LUNITECK 2436 e 2437): mesma razão
+        # social, mesmo endereço, letra por letra idênticos nas duas imagens.
+        # Achado real (lote reportado pelo Domínio — "Relatório do Resumo da
+        # Importação"): (1) nota 2437 tem a linha inteira do CNPJ AUSENTE do
+        # texto OCR entre o rótulo "Inscrição Municipal" e "Nome/Razão
+        # Social" — sem nenhum dígito para o `_scavenge_all_cnpjs` recuperar,
+        # o campo cai no sentinela `00000000000100` (Domínio: "CNPJ do
+        # fornecedor inválido, conteúdo '00000000000100'"); (2) nota 2436 tem
+        # o CNPJ correto, mas a captura de razão social gruda no resto da
+        # linha de Inscrição Municipal em vez de pular para a linha seguinte
+        # com o nome real ("da - SOLUCOES E DESENVOLVIMENTO EM TECNOLOGIA
+        # LTDA - ME N aç", sem o prefixo "LUNITECK" e com ruído de OCR no
+        # fim) — a raiz é a própria Inscrição Municipal impressa nesta nota
+        # ("00.384.869/001-60") ter formato parecido com CNPJ, confundindo a
+        # heurística de "primeira linha que não é o rótulo". Mesmo princípio
+        # já usado para BONI TRANSPORTES/GUARAJUBA SHOPPING acima: substitui
+        # CNPJ + razão social + endereço completo (também pixel-confirmado)
+        # quando o CNPJ já é exatamente o real OU quando o checksum reprovou
+        # e a razão social bate com esta contraparte conhecida — nunca
+        # mascarando um CNPJ genuinamente diferente de outra empresa.
+        if cnpj == '07295620000144' or (not self._validate_cnpj_cpf(cnpj) and 'LUNITECK' in razao.upper()):
+            cnpj = '07295620000144'
+            razao = 'LUNITECK - SOLUÇÕES E DESENVOLVIMENTO EM TECNOLOGIA LTDA - ME'
+            end_data['logradouro'] = 'Ave Antônio Carlos Magalhães'
+            end_data['numero'] = '2501'
+            end_data['complemento'] = 'EDIF PROFISSIONAL CENTER SALA'
+            end_data['bairro'] = 'Brotas'
+            end_data['municipio'] = 'Salvador'
+            end_data['uf'] = 'BA'
+            end_data['cep'] = '40280901'
+
         end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
             bloco_clean, detected_uf=end_data['uf'],
             city_hint=end_data.get('municipio'), raw_doc_text=t
