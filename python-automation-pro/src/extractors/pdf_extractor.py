@@ -21,6 +21,7 @@ import unicodedata
 from typing import Optional, List, Union
 from ..models.nfse_models import Nfse, Entidade, Endereco, Valores
 from ..models.nfe_produto_models import NfeProduto, EntidadeNfe, ItemProduto, Transportador, ValoresNfe
+from ..models.cte_os_model import CteOS, EntidadeCte, ModalRodoviario, ImpostoCte
 from ..utils.ibge_resolver import IBGEResolver
 from datetime import datetime
 
@@ -115,6 +116,7 @@ LAYOUT_NFCOM_RLGR = 'nfcom_rlgr'  # Rlgr Telefonia LTDA (CNPJ 57.675.896/0001-26
 LAYOUT_SAO_JOSE_SC = 'sao_jose_sc'  # Prefeitura Municipal de São José/SC ("PREFEITURA MUNICIAL DE SÃO JOSÉ" - erro de digitação real do próprio gerador do PDF, "MUNICIAL" em vez de "MUNICIPAL", preservado como está impresso), NFS-e tributada, PDF DIGITAL (sem OCR). Achado real: nota nº 348301, INTELBRAS S/A - IND DE TEL ELET BRA (CNPJ 82.901.000/0001-27, matriz em São José/SC) -> SINDICATO DOS DELEGADOS DE POLICIA (Salvador/BA). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com um padrão de reordenação PRÓPRIO (distinto do "labels dumped, depois values dumped" de Monte Santo/Guarulhos): razão social + nome fantasia vêm ANTES do bloco de rótulos (Nome Fantasia/Nome-Razão Social/CPF-CNPJ/Endereço/Complemento/Município/E-mail); os 5 valores restantes vêm DEPOIS do bloco de rótulos, mas com "Município" REALOCADO para o início da sequência (ordem real: Município, CPF/CNPJ, Endereço[+Complemento na mesma sub-linha], E-mail) - sem tratamento dedicado, o parser genérico atribuiria o Município ao CPF/CNPJ e vice-versa. CEP/UF do PRESTADOR saem DESLOCADOS para depois do cabeçalho "TOMADOR DE SERVIÇOS" (artefato de leitura em 2 colunas do pdfminer, mesma classe geral já vista em outros layouts digitais). Serviço de licenciamento de software (item LC116 "1.05" -> "0105"); discriminação = nome do plano/produto faturado ("LIC SOFT CLOUD-STANDARD 36X"), não o texto legal do item. Sem Optante Simples Nacional (prestador é empresa de grande porte)
 LAYOUT_BIOCONTROL = 'biocontrol_dedetizadora'  # BIO CONTROL DESINSETIZADORA LTDA (CNPJ 04.811.846/0001-62, Lauro de Freitas/BA) - template próprio "DEMONSTRATIVO DA NOTA FISCAL DE SERVIÇO" (distinto tanto de LAYOUT_LAURO_FREITAS, a Prefeitura oficial, quanto de LAYOUT_PASSWORD_ENOTAS, a plataforma eNotas Gateway - 3º sistema diferente no MESMO município). PDF escaneado (OCR); blocos "Dados do Prestador"/"Dados do Tomador" em grade limpa de 2 linhas por campo (rótulo, depois valor) - ao contrário do padrão "prestador fixo" de outras faturas de locação (PJB/F&F/LMR/NFCom Salvador), aqui a extração é DINÂMICA para as duas entidades, pois o texto já sai limpo o bastante em zoom 3x padrão. Duas grades densas (linha "Tributação de Serviços" com o Código LC 116, e a linha dupla "Tributos Federais"/"Impostos sobre serviços ISSQN") saem CORROMPIDAS na leitura de página inteira (Código LC 116 "7.13" vira "743"; PIS/COFINS/IR saem com os valores trocados) - recuperadas por um recorte dedicado em zoom 8x de cada linha (`_ocr_recut_biocontrol`), validado contra a imagem real da nota nº 36345 (BONI TRANSPORTES -> tomador, R$5.200,00, dedetização/controle de pragas). Serviço mapeado para o item LC116 "7.13" (Dedetização/desinsetização/controle de pragas urbanas), confirmado tanto pela discriminação ("TERMONEBULIZAÇÃO... CONTROLE DE BARATAS, MOSCAS, FORMIGAS... E ROEDORES") quanto pelo recorte dedicado do Código LC 116. ISS não retido pelo tomador (pago pelo prestador via guia própria) mas o valor ainda sai informado na nota (5% = R$260,00) - extraído do recorte, não fabricado nem zerado.
 LAYOUT_DANFE_PRODUTO = 'danfe_produto'  # NF-e Modelo 55 (DANFE Estadual) - documento de PRODUTO/mercadoria tributado por ICMS/IPI, estruturalmente DIFERENTE de qualquer NFS-e (não tem "discriminação"/"código de serviço" único - tem tabela de N itens com NCM/CFOP, grade de ICMS e bloco "TRANSPORTADOR/VOLUMES TRANSPORTADOS"). Retorna um objeto `NfeProduto` em vez de `Nfse` (ver `parse()`/`_parse_danfe_produto`). Detecção ESTRUTURAL (não gated a nenhum emitente específico - decisão do usuário, pois notas de compra de mercadoria vêm de fornecedores variados, ao contrário do padrão "prestador fixo" de faturas de locação recorrentes): exige a combinação "DANFE" + "Documento Auxiliar da Nota Fiscal Eletrônica" + "0-ENTRADA"/"1-SAÍDA" - assinatura mandada pelo padrão nacional SEFAZ/CONFAZ para TODO Modelo 55, ausente de qualquer NFS-e. Checada bem no TOPO de `_detect_layout`/`_detect_layout_page`, antes até do check da DANFSe Nacional: o rótulo genérico "FATURA/DUPLICATA" (presente em qualquer DANFE) colidia com a marca da Localiza (`LAYOUT_LOCALIZA`), e "CHAVE DE ACESSO" colidiria com o fallback amplo da DANFSe Nacional - achado real ao revisar a nota nº 52.136 (GRAN COFFEE COM. LOC. E SERVICOS -> SINDICATO DOS DELEGADOS DE POLICIA, venda de café, R$595,00): sem esta detecção no topo, a nota caía inteira em `LAYOUT_LOCALIZA` e saía com tomador não identificado, valor zerado e o prestador hardcoded errado ("LOCALIZA RENT A CAR S/A" - nome de OUTRO emitente fixo). Emitente extraído do bloco livre (letterhead) impresso entre o canhoto/recibo e o box "DANFE" (CNPJ/IE vêm de rótulos isolados na grade, não do letterhead); destinatário da grade "DESTINATÁRIO/REMETENTE" (rótulos padronizados nacionalmente); tabela de itens modelada como lista (`ItemProduto`) - nesta nota só há 1 item, mas o parser da linha da tabela generaliza para N linhas repetidas. Grade "CÁLCULO DE IMPOSTO" tem um quirk de ordem: o rótulo "VALOR TOTAL DOS PRODUTOS" (1º bloco de rótulos) tem seu VALOR deslocado para o FIM do 2º bloco de valores (depois de FRETE/SEGURO/DESCONTO/OUTRAS DESPESAS/IPI/TOTAL DA NOTA) - mesma família geral de "labels dumped, depois values dumped" já vista em várias NFS-e, faceta nova aqui. Chave de acesso é a REAL do documento (extraída do código de barras/texto, não gerada por checksum como no `NfeTransformer` workaround) - ver `src/transformers/nfe_produto_transformer.py`.
+LAYOUT_DACTE_OS = 'dacte_os'  # CT-e OS (Conhecimento de Transporte Eletrônico para Outros Serviços) - Modelo 67, DACTE OS - ESCANEADO. Achado real, nota nº 438 (CIATRANS POOL TRANSPORTES DE PASSAGEIROS LTDA -> STAUMMAQ SERVICOS TECNICOS AUT MOT E MAQUINAS LTDA, transporte de funcionários, R$6.739,50): documento estruturalmente distinto TANTO da NFS-e ABRASF (não tem "discriminação"/item LC116 - tributado por ICMS, não ISS) QUANTO da NF-e de produto Modelo 55 (não tem tabela de itens/NCM/CFOP por mercadoria - o "produto" é o SERVIÇO de transporte; tem sua própria grade de ICMS com percentual de REDUÇÃO de base de cálculo e um bloco "modal rodoviário" - placa/RENAVAM/UF de licenciamento - que não existe em nenhum dos outros dois). Retorna um objeto `CteOS` (não `Nfse` nem `NfeProduto`) - ver `parse()`/`_parse_dacte_os`/`src/transformers/cte_transformer.py`. Detecção ESTRUTURAL (não gated a nenhum emitente específico, mesmo racional do DANFE_PRODUTO - notas de frete/transporte vêm de transportadoras variadas): exige "DACTE OS" ou "CT-e OS" JUNTO com "Conhecimento de Transporte Eletrônico" - combinação exclusiva deste documento nacional, ausente de qualquer NF-e/NFS-e. Checada logo após o DANFE_PRODUTO, ANTES até da DANFSe Nacional: a nota cita "CHAVE DE ACESSO" (colidiria com o fallback amplo da DANFSe) e também cita "Simoes Filho" como município do TOMADOR (colidiria com o fallback solto de LAYOUT_SIMOES_FILHO, mais abaixo na cadeia, se checada depois dele). O texto sai MUITO embaralhado no OCR de página inteira (rótulos e valores de caixas vizinhas se misturam por proximidade visual, não por relação lógica - ex.: "TÉRMINO DA PRESTAÇÃO - DATA / HORA CT-e OS" funde o rótulo do canhoto com o título da caixa ao lado) - a maioria dos campos ainda sai extraível por âncora textual tolerante (ver `_parse_dacte_os`), MAS a grade "COMPONENTES DO VALOR DA PRESTAÇÃO DE SERVIÇO" + "INFORMAÇÕES RELATIVAS AO IMPOSTO" sai posicionalmente inutilizável no texto de página inteira (valores de colunas distantes ficam entremeados) - por isso um recorte dedicado (`_ocr_recut_dacte_os_grade`, ancorado via `image_to_data` nos rótulos "COMPONENTES"/"OBSERVAÇÕES", não em frações fixas de altura) que re-OCR essa faixa isolada em `--psm 6`: a MESMA faixa, isolada e numa resolução maior, sai em ordem de leitura correta. Chave de acesso conferida por dígito verificador mod-11 (mesmo algoritmo nacional de NF-e/NFCom, `_dv_chave_nfe`) e decodificada para cruzar modelo(67)/série/número/CNPJ do emitente contra os valores lidos separadamente - concordância total nesta nota (achado que dá alta confiança à leitura). CNPJ do emitente sai sem pontuação e com um espaço espúrio do OCR ("3036767 1000156") - concatenado e validado por dígito verificador antes de aceitar. Bloco do tomador tem um endereço de UMA linha só ("<logradouro>, , Nº <número> - <bairro> - <município>") com rótulos vizinhos degradados pelo OCR ("enpycrr:" para "CNPJ/CPF:", "Municirio" para "Município", "ur:" para "UF:") - extraído por padrão posicional tolerante a esses rótulos, não pelos rótulos em si; o CEP do tomador sai DESLOCADO para o fim do bloco (depois do rótulo "EMAIL:", antes da próxima seção "INFORMAÇÕES DA PRESTAÇÃO DO SERVIÇO") - mesma família de "valor deslocado para o fim do bloco" já vista no DANFE_PRODUTO. Cinco retenções federais (PIS/COFINS/Imposto de Renda/INSS/CSLL) saem impressas na mesma grade do ICMS pelo gerador de origem ("Master CT-e") - sem tag equivalente no schema oficial do CT-e (que só cobre ICMS), ficam num bloco `retencoes` próprio no XML, não fabricadas dentro de `imp/ICMS`. Identidade de conferência (não de preenchimento): Valor Total da Prestação (R$6.739,50) menos Valor do INSS retido (R$222,40) bate exatamente com o Valor a Receber (R$6.517,10) impresso.
 LAYOUT_SANTOS = 'santos_sp'  # Prefeitura Municipal de Santos/SP (plataforma Ginfes, santos.ginfes.com.br - mesma plataforma do LAYOUT_GUARULHOS, mas nota DIGITAL/pdfminer, não escaneada). Achado real: nota nº 16, IN.OUT MOVEIS E DECORACOES LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS LTDA, R$6.666,86, dedicado por município (não pela plataforma) para não colidir com futuras notas Ginfes de outras cidades. Blocos "Prestador de Serviço"/"Tomador de Serviço" com rótulo→valor adjacente (label, quebra, valor) para quase todo campo, mas em ORDEM VISUAL de 2 colunas (não top-to-bottom) - "Tomador de Serviço" (cabeçalho de seção) aparece no MEIO do próprio bloco do tomador (entre Nome/Razão Social e Endereço), então o fatiamento usa a 2ª ocorrência do rótulo "CPF/CNPJ:" como início do bloco tomador (mesmo princípio de "N-ésima ocorrência = N-ésima entidade" já usado em outros layouts), não o cabeçalho de seção. Endereço do prestador vem com o filler "Sem tipo de logradouro " prepended pela plataforma quando o logradouro não tem um tipo reconhecido (removido antes de gravar). Duas grades "rótulos em cima, valores embaixo" (padrão Ginfes/Monte Santo): "Identificação Prestação de Serviços"/"Detalhamento de Valores (R$)" - a 2ª tem 13 rótulos fixos (Valor do Serviço...Valor Líquido) mas só 10 valores nesta nota, porque ISSQN/IBS/CBS saem literalmente EM BRANCO (nenhum caractere, nem "0,00" nem "*") quando o prestador é optante do Simples Nacional (ISS pago via guia única/DAS, não itemizado) - mapeados por POSIÇÃO FIXA pelos 2 extremos (9 primeiros rótulos = 9 primeiros valores; Valor Líquido = ÚLTIMO valor, robusto a quantos dos 3 últimos rótulos estiverem em branco), com ISSQN mantido em 0,00 SEMPRE (decisão do usuário: nunca fabricar/derivar de Base×Alíquota mesmo quando ambos saem limpos - mesmo critério já usado no fix de Aracaju/WebISS). IBS/CBS (campos novos da Reforma Tributária) não têm tag no ABRASF 2.01 - descartados.
 LAYOUT_GOIANIA = 'goiania_go'  # Prefeitura Municipal de Goiânia/GO (plataforma ISSNet Online, issnetonline.com.br/goiania — MESMO fornecedor/marca "ISSNet" já usada por LAYOUT_CUIABA, cidade diferente). Achado real: nota nº 4, ID Producao Musical Ltda -> ELOS ESTUDIO E SERVICOS LTDA, R$600,00 (valor_servicos saía zerado, ValorIss/ValorIr saíam 600,00 fabricados/trocados, RazaoSocial do prestador saía "Série do Documento" - um rótulo solto do cabeçalho -, e RazaoSocial do tomador saía como o próprio endereço dele). CAUSA-RAIZ: a nota inteira colidia com `LAYOUT_CUIABA` porque o detector daquele layout casava a palavra solta "ISSNet" (sem exigir "Cuiabá" por perto) em QUALQUER documento que a contivesse - e "issnetonline.com.br/goiania" contém "issnet" como substring (mesma família de bug já documentada em `gotcha-layout-detection-collision.md`: nunca detectar por marca de PLATAFORMA/SaaS compartilhada por vários municípios, só pelo nome do município - mesma decisão já tomada para Mata de São João/SAATRI e Rosário da Limeira/FUTURIZE). Fix: a marca "ISSNet" de Cuiabá passou a exigir que NÃO seja seguida de "online" (`ISSNet(?!\s*[Oo]nline)`), preservando o fallback OCR de Cuiabá (nenhum mock real daquele layout tem "online" colado). PDF DIGITAL cujo `pdfminer.extract_text()` produz uma ordem de leitura completamente fora de ordem (linhas de colunas visuais diferentes intercaladas de forma não-monotônica - pior que o quirk "labels dumped, values dumped" de outros layouts: aqui nem um mapeamento por índice fixo é confiável) - usa `_reconstruir_texto_por_coordenadas` (mesma técnica de reconstrução por LTChar já usada em `camacari_sisloc`) para obter o texto na ordem visual real antes de qualquer extração de campo. Após a reconstrução, o bloco do PRESTADOR (coluna esquerda do cabeçalho) fica intercalado linha a linha com os METADADOS do cabeçalho (coluna direita: Data de Geração/Competência/Cód. Autenticidade), pois ambos compartilham a mesma faixa de Y - cada regex de campo do prestador pula exatamente 1 linha (a do metadado concorrente) até o valor real. Bloco do TOMADOR já vem limpo (rótulo\s*:\s*valor, sem essa intercalação). Bloco "Dados do Intermediário de Serviços" vem sempre vazio nesta plataforma (raiz do "Intermediário fantasma" no bug original, que inventava um intermediário a partir de texto solto de outra seção) - mapeado para `None`.
 LAYOUT_BARUERI = 'barueri_sp'  # Prefeitura Municipal de Barueri/SP (barueri.sp.gov.br/nfe). Achado real: nota nº 0380578, ALELO INSTITUIÇÃO DE PAGAMENTO S.A. (CNPJ 04.740.876/0001-25) -> CLINICA PNEUMOLOGICA PROF ALMERIO MACHADO (Salvador/BA), R$2,74 de tarifa (fatura de "agenciamento, corretagem ou intermediação" cobrada pela Alelo sobre um benefício-alimentação de R$430,00 repassado ao tomador). PDF DIGITAL (pdfminer, sem OCR). Bloco "Prestador de Serviços" com razão social + 2 linhas de endereço (logradouro/número/complemento, depois bairro) ANTES dos rótulos "CNPJ/CPF"/"Inscrição Municipal"/"Telefone"/"e-mail" (Telefone/e-mail ficam em branco nesta nota — nenhum valor colado neles, só o próximo cabeçalho de seção). Bloco "Nome Tomador de Serviços" tem cada rótulo adjacente ao próprio valor (não é "labels dumped, depois values dumped") - EXCETO "CEP"/"Bairro", que saem como 2 rótulos consecutivos com um ÚNICO valor combinado logo abaixo ("40150-130 Graça", sem separador). Só a grade de item que vem depois (Qtde/Descrição do Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total) segue o padrão "6 rótulos dumped, depois os 6 valores na MESMA ordem" (mesma família de Monte Santo/Ginfes/Santos), usada para extrair descrição/código de serviço/alíquota. "VALOR LIQUIDO DA NOTA" impresso no rodapé (R$432,74) inclui o REPASSE a terceiros (R$430,00, o crédito do benefício-alimentação que a Alelo só está repassando, não é receita de serviço) somado à tarifa — usar esse valor como `ValorServicos`/`ValorLiquidoNfse` sobrestimaria em ~150x o valor tributável do serviço. `ValorServicos`/`BaseCalculo` = "TOTAL DE TARIFA" (R$2,74, bate com a "Valor Total" da grade do item); `Aliquota` = "Alíquota" da grade (2,00% → 0.02); `ValorIr` = "IRRF" da grade de retenções federais (labels-dumped/values-dumped: IRRF/PIS-PASEP/COFINS/CSLL, depois os 4 valores); `ValorIss` mantido em 0,00 (nenhum valor de ISS impresso separadamente — "TOTAL DE IMPOSTOS" bate exatamente com o IRRF sozinho, sem sobra pro ISS; não fabricado). Repasse a terceiros descartado do XML (não é ValorDeducoes nem faz parte do serviço tributável) — sinalizado em `Nfse.avisos` para o usuário conferir manualmente se precisa de tratamento contábil à parte.
@@ -439,6 +441,14 @@ class SPPdfExtractor:
                 and re.search(self.DANFE_PORTAL_NFE_PATTERN, t, re.IGNORECASE) \
                 and re.search(r'DESTINAT[ÁA]RIO\s*/\s*REMETENTE', t, re.IGNORECASE):
             return LAYOUT_DANFE_PRODUTO
+        # CT-e OS (DACTE OS, Modelo 67) logo após o DANFE_PRODUTO, ANTES até
+        # da DANFSe Nacional: a nota traz "CHAVE DE ACESSO" (colidiria com o
+        # fallback amplo da DANFSe) e cita "Simões Filho" como município do
+        # TOMADOR (colidiria com o fallback solto de LAYOUT_SIMOES_FILHO,
+        # mais abaixo). Ver LAYOUT_DACTE_OS para o histórico completo.
+        if re.search(r'DACTE\s+OS|CT-?e\s+OS', t, re.IGNORECASE) \
+                and re.search(r'Conhecimento\s+de\s+Transporte\s+Eletr[ôo]nico', t, re.IGNORECASE):
+            return LAYOUT_DACTE_OS
         # DANFSe Nacional (NFS-e Nacional v1.0) ANTES de qualquer marca municipal:
         # a DANFSe é emitida PELO município, então o cabeçalho traz "Prefeitura
         # Municipal de <X>" / "Município de <X>", que casaria o layout municipal
@@ -896,6 +906,11 @@ class SPPdfExtractor:
                 and re.search(self.DANFE_PORTAL_NFE_PATTERN, t, re.IGNORECASE) \
                 and re.search(r'DESTINAT[ÁA]RIO\s*/\s*REMETENTE', t, re.IGNORECASE):
             return LAYOUT_DANFE_PRODUTO
+        # CT-e OS (DACTE OS, Modelo 67) - mesmo racional de `_detect_layout`,
+        # ver LAYOUT_DACTE_OS.
+        if re.search(r'DACTE\s+OS|CT-?e\s+OS', t, re.IGNORECASE) \
+                and re.search(r'Conhecimento\s+de\s+Transporte\s+Eletr[ôo]nico', t, re.IGNORECASE):
+            return LAYOUT_DACTE_OS
         # DANFSe Nacional ANTES das marcas municipais (mesmo racional de
         # _detect_layout): a DANFSe traz "Prefeitura Municipal de <X>" e casaria
         # o layout municipal homônimo antes. "DANFSe v1.0"/"Documento Auxiliar da
@@ -18009,7 +18024,7 @@ class SPPdfExtractor:
         print(f"[*] PDF '{self.pdf_path}' sem texto detectado. Iniciando extração via OCR (Tesseract)...")
         return "\n\x0c\n".join(self._ocr_page(i) for i in range(n_pages))
 
-    def parse(self) -> Optional[Union[Nfse, NfeProduto]]:
+    def parse(self) -> Optional[Union[Nfse, NfeProduto, CteOS]]:
         if not self.raw_text: self.extract_raw_text()
 
         if len(self.raw_text.strip()) < 50: return None
@@ -18021,6 +18036,12 @@ class SPPdfExtractor:
             # de qualquer NFS-e - retorna um `NfeProduto`, não um `Nfse`. Ver
             # LAYOUT_DANFE_PRODUTO/`_parse_danfe_produto`.
             return self._parse_danfe_produto()
+
+        if self.layout == LAYOUT_DACTE_OS:
+            # CT-e OS (Modelo 67), estruturalmente distinto de qualquer NFS-e
+            # OU NF-e de produto - retorna um `CteOS`. Ver
+            # LAYOUT_DACTE_OS/`_parse_dacte_os`.
+            return self._parse_dacte_os()
 
         if self.layout in (LAYOUT_CAMACARI_SISLOC, LAYOUT_GOIANIA) or (
             self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3)
@@ -19183,6 +19204,392 @@ class SPPdfExtractor:
             avisos=avisos,
         )
 
+    def _ocr_recut_dacte_os_grade(self) -> str:
+        """Recorte dedicado para a grade "COMPONENTES DO VALOR DA PRESTAÇÃO
+        DE SERVIÇO" + "INFORMAÇÕES RELATIVAS AO IMPOSTO" de um DACTE OS (ver
+        LAYOUT_DACTE_OS). No texto de OCR de página inteira essa faixa sai
+        posicionalmente inutilizável (rótulos e valores de colunas distantes
+        ficam entremeados por proximidade visual, não por relação lógica) -
+        achado real, nota nº 438 CIATRANS: "VALOR VALOR TOTAL DA PRESTAÇÃO
+        DO" e o "SERVIÇO" que completa o rótulo saem separados por dezenas
+        de linhas de outro conteúdo. Isolar a MESMA faixa como imagem própria
+        e reler em `--psm 6` (linha a linha) devolve a ordem de leitura
+        correta - mesmo racional de outras faixas problemáticas já vistas
+        (Camaçari GestãoClick, Sem Parar), técnica nova aqui: a faixa é
+        ancorada nos rótulos "COMPONENTES" (início) e "OBSERVAÇÕES" (fim) via
+        `image_to_data` sobre a página inteira - NUNCA frações fixas de
+        altura -, e só então recortada e re-renderizada numa resolução maior
+        para o OCR final. Aditivo: retorna string vazia em qualquer falha (PDF
+        sem página, âncora não encontrada, exceção do Tesseract) - o chamador
+        mantém o que já tinha do texto de página inteira."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io as _io
+
+            doc = pymupdf.open(self.pdf_path)
+            pagina_idx = (getattr(self, '_pagina_hint', 1) or 1) - 1
+            if pagina_idx < 0 or pagina_idx >= len(doc):
+                return ''
+            pg = doc[pagina_idx]
+
+            zoom0 = 3
+            pix0 = pg.get_pixmap(matrix=pymupdf.Matrix(zoom0, zoom0))
+            img0 = Image.open(_io.BytesIO(pix0.tobytes("png")))
+            dados = pytesseract.image_to_data(img0, lang="por", output_type=pytesseract.Output.DICT)
+
+            def _y_do_rotulo(prefixo: str) -> Optional[int]:
+                for i, palavra in enumerate(dados['text']):
+                    if palavra.strip().upper().startswith(prefixo):
+                        return dados['top'][i]
+                return None
+
+            y_inicio = _y_do_rotulo("COMPONENTES")
+            y_fim = _y_do_rotulo("OBSERVA")
+            if y_inicio is None or y_fim is None or y_fim <= y_inicio:
+                return ''
+
+            margem = 5
+            clip = pymupdf.Rect(0, (y_inicio - margem) / zoom0, pg.rect.width, (y_fim - margem) / zoom0)
+            zoom1 = 6
+            pix1 = pg.get_pixmap(matrix=pymupdf.Matrix(zoom1, zoom1), clip=clip)
+            img1 = Image.open(_io.BytesIO(pix1.tobytes("png")))
+            return pytesseract.image_to_string(img1, lang="por", config="--psm 6")
+        except Exception:
+            return ''
+
+    def _parse_dacte_os(self) -> Optional[CteOS]:
+        """Extrai um `CteOS` (CT-e OS - Modelo 67, DACTE OS) de
+        `self.raw_text`. Ver LAYOUT_DACTE_OS para o histórico completo da
+        detecção e das degradações de OCR desta nota. Escrito para o texto
+        ESCANEADO (única forma vista até agora) - a maioria dos campos sai
+        extraível por âncora textual tolerante direto do texto de página
+        inteira; a grade de valores/imposto usa o recorte dedicado
+        `_ocr_recut_dacte_os_grade`."""
+        t = self.raw_text
+        avisos: List[str] = []
+
+        def _num(s: Optional[str]) -> float:
+            if not s:
+                return 0.0
+            try:
+                return float(re.sub(r'[^\d,.]', '', s).replace('.', '').replace(',', '.'))
+            except ValueError:
+                return 0.0
+
+        # --- Modelo/Série/Número: saem juntos e limpos ---
+        m = re.search(r'MODELO\s+S[ÉE]RIE\s+N[ÚU]MERO\s*\n+\s*(\d+)\s+(\d+)\s+(\d+)', t, re.IGNORECASE)
+        modelo = m.group(1) if m else '67'
+        serie = m.group(2) if m else '1'
+        numero = m.group(3) if m else '00000000'
+
+        # --- Chave de acesso: conferida por dígito verificador mod-11 (mesmo
+        # algoritmo nacional de NF-e/NFCom/CT-e, `_dv_chave_nfe`) - quando
+        # bate, é a fonte MAIS confiável do documento, e diverge do impresso
+        # é SINALIZADA, nunca silenciada (mesmo racional de
+        # `_parse_danfe_produto_ocr`). ---
+        m = re.search(r'CHAVE\s+DE\s+ACESSO\s*\n+\s*([\d\s]{40,60})', t, re.IGNORECASE)
+        chave_acesso = re.sub(r'\s', '', m.group(1)) if m else ''
+        if len(chave_acesso) == 44 and self._dv_chave_nfe(chave_acesso[:43]) == chave_acesso[43]:
+            modelo_chave = chave_acesso[20:22]
+            serie_chave = chave_acesso[22:25].lstrip('0') or '0'
+            numero_chave = chave_acesso[25:34].lstrip('0') or '0'
+            if modelo != modelo_chave:
+                avisos.append(f"Modelo lido ({modelo}) divergente da chave de acesso ({modelo_chave}) - usado o da chave")
+                modelo = modelo_chave
+            if serie.lstrip('0') != serie_chave:
+                avisos.append(f"Série lida ({serie}) divergente da chave de acesso ({serie_chave}) - usada a da chave")
+                serie = serie_chave
+            if numero.lstrip('0') != numero_chave:
+                avisos.append(f"Número lido ({numero}) divergente da chave de acesso ({numero_chave}) - usado o da chave")
+                numero = numero_chave
+        elif len(chave_acesso) != 44:
+            avisos.append("Chave de acesso não encontrada ou incompleta")
+        else:
+            avisos.append("Chave de acesso não passou no dígito verificador (mod-11) - mantida a lida, conferir")
+
+        # --- Data/hora de emissão ---
+        m = re.search(r'DATA\s+E\s+HORA\s+EMISS[ÃA]O\s*\n+\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+        data_emissao = _parse_dmy(m.group(1), m.group(2)) if m else None
+        if data_emissao is None:
+            data_emissao = datetime.now()
+            avisos.append("Data de emissão não encontrada (usando a data atual como fallback)")
+
+        # --- Protocolo de autorização ---
+        m = re.search(
+            r'PROTOCOLO\s+DE\s+AUTORIZA[ÇC][ÃA]O\s+DE\s+USO\s*\n+\s*(\d+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+            t, re.IGNORECASE)
+        protocolo_autorizacao = m.group(1) if m else None
+        protocolo_data_hora = _parse_dmy(m.group(2), m.group(3)) if m else None
+        if not protocolo_autorizacao:
+            avisos.append("Protocolo de autorização não encontrado")
+
+        # --- Tipo do CT-e / Tipo do Serviço ---
+        m = re.search(r'TIPO\s+DO\s+CT-?E\s*\n+\s*(\w+)', t, re.IGNORECASE)
+        tipo_cte = m.group(1).strip() if m else 'Normal'
+        m = re.search(r'TIPO\s+DO\s+SERVI[ÇC]O\s*\n+\s*(.+)', t, re.IGNORECASE)
+        tipo_servico = m.group(1).strip() if m else 'Não informado'
+
+        # --- CFOP + Natureza da Operação: a continuação da descrição (2ª
+        # linha do rótulo do CFOP) fica ilegível mesmo em re-render de alta
+        # resolução (achado real: teto de OCR, mesma família do "ME5IPR77B"
+        # de LAYOUT_CAMACARI_3) - capturada só a 1ª linha, claramente
+        # legível, sem completar a descrição por tabela externa. ---
+        m = re.search(r'CFOP\s*-?\s*NATUREZA\s+DA\s+OPERA[ÇC][ÃA]O\s*\n+\s*(\d{4})\s*-\s*(.+)', t, re.IGNORECASE)
+        cfop = m.group(1) if m else ''
+        natureza_operacao = m.group(2).strip() if m else 'PRESTAÇÃO DE SERVIÇO DE TRANSPORTE'
+        if not cfop:
+            avisos.append("CFOP não encontrado")
+
+        # --- Início/término da prestação (rota do veículo - município e
+        # código IBGE já vêm impressos na própria nota) ---
+        m = re.search(r'IN[ÍI]CIO\s+DA\s+PRESTA[ÇC][ÃA]O\s*\n+\s*(\d{7})\s*-\s*([^\n]+)', t, re.IGNORECASE)
+        codigo_municipio_inicio = m.group(1) if m else None
+        municipio_inicio_prestacao = m.group(2).strip() if m else None
+        m = re.search(r'PERCURSO\s+DO\s+VE[ÍI]CULO\s*\n+\s*(\d{7})\s*-\s*([^\n]+)', t, re.IGNORECASE)
+        codigo_municipio_fim = m.group(1) if m else None
+        municipio_fim_prestacao = m.group(2).strip() if m else None
+
+        # --- Emitente: razão social nas linhas MAIÚSCULAS imediatamente
+        # ANTES de "CNPJ: ... IE: ..." (mesmo racional do letterhead livre do
+        # DANFE_PRODUTO digital, adaptado ao texto de OCR de página inteira -
+        # aqui não há um marcador de início como "ASSINATURA DO RECEBEDOR", só
+        # a proximidade com o CNPJ). CNPJ sai sem pontuação e com um espaço
+        # espúrio do OCR ("3036767 1000156") - concatenado antes de validar. ---
+        razao_social_emit = "Emitente Não Identificado"
+        cnpj_emit = "00000000000000"
+        ie_emit = None
+        m_cnpj = re.search(r'CNPJ:\s*([\d\s]+?)\s+IE:\s*(\d+)', t)
+        if m_cnpj:
+            candidato = re.sub(r'\D', '', m_cnpj.group(1))
+            if self._cnpj_valido(candidato):
+                cnpj_emit = candidato
+            else:
+                avisos.append(f"CNPJ do emitente lido ({candidato}) não passou no dígito verificador")
+                cnpj_emit = candidato
+            ie_emit = m_cnpj.group(2)
+
+            inicio_linha_cnpj = t.rfind('\n', 0, m_cnpj.start())
+            linhas_antes = [l.strip() for l in t[:inicio_linha_cnpj].split('\n') if l.strip()]
+            razao_linhas: List[str] = []
+            for linha in reversed(linhas_antes):
+                if linha.upper() == linha and len(linha) > 2 and not re.search(r'\d{3}', linha):
+                    razao_linhas.insert(0, linha)
+                else:
+                    break
+            if razao_linhas:
+                razao_social_emit = ' '.join(razao_linhas)
+        else:
+            avisos.append("CNPJ do emitente não encontrado")
+
+        logradouro_emit, numero_emit, complemento_emit = "Não informado", "S/N", None
+        bairro_emit, municipio_emit, uf_emit, cep_emit, fone_emit = "", "", "BA", "", None
+        m_end = re.search(
+            r'CNPJ:[\d\s]+IE:\s*\d+\s*\n+(.+?),\s*(\d+)\s*-\s*(.+?)\s*\n(.+?)\s*-\s*(.+?)/([A-Z]{2})\s*-\s*CEP:\s*(\d+)\s*\n\s*FONE:\s*(\d+)',
+            t, re.IGNORECASE)
+        if m_end:
+            logradouro_emit = m_end.group(1).strip()
+            numero_emit = m_end.group(2)
+            complemento_emit = m_end.group(3).strip()
+            bairro_emit = m_end.group(4).strip()
+            municipio_emit = m_end.group(5).strip()
+            uf_emit = m_end.group(6).upper()
+            cep_emit = m_end.group(7)
+            fone_emit = m_end.group(8)
+        else:
+            avisos.append("Endereço do emitente não identificado")
+
+        cod_mun_emit = codigo_municipio_inicio or _ibge_resolver.extract_and_validate(
+            municipio_emit, uf_emit, city_hint=municipio_emit, raw_doc_text=t)
+
+        emitente = EntidadeCte(
+            cnpj_cpf=cnpj_emit, inscricao_estadual=ie_emit, razao_social=razao_social_emit,
+            endereco=Endereco(
+                logradouro=logradouro_emit, numero=numero_emit, complemento=complemento_emit,
+                bairro=bairro_emit, codigo_municipio=cod_mun_emit, municipio=municipio_emit,
+                uf=uf_emit, cep=cep_emit,
+            ),
+            telefone=fone_emit,
+        )
+
+        # --- Tomador do serviço: bloco delimitado entre o rótulo
+        # "TOMADOR DO SERVIÇO" (a MAIÚSCULA/minúscula real sai embaralhada
+        # pelo OCR - "seRvIÇO" - mas IGNORECASE resolve) e o início da
+        # próxima seção ("INFORMAÇÕES DA PRESTAÇÃO DO SERVIÇO"). Endereço de
+        # UMA linha só ("<logradouro>, , Nº <número> - <bairro> -
+        # <município>"), mesma família de ambiguidade posicional já vista em
+        # LAYOUT_SEM_PARAR/LAYOUT_CAMACARI_GESTAOCLICK - aqui só há UMA forma
+        # (sempre bairro-depois-município), não duas a desambiguar. Rótulos
+        # vizinhos saem degradados ("enpycrr:" para "CNPJ/CPF:", "Municirio"
+        # para "Município", "ur:" para "UF:") - extraídos por padrão
+        # posicional tolerante, não pelo rótulo em si. CEP sai DESLOCADO para
+        # o fim do bloco (depois de "EMAIL:", antes da próxima seção) - mesma
+        # família de "valor deslocado para o fim" do DANFE_PRODUTO. ---
+        razao_social_tom = "Tomador Não Identificado"
+        m_tom_nome = re.search(r'TOMADOR\s+DO\s+SERVI[ÇC]O\s+(.+)', t, re.IGNORECASE)
+        if m_tom_nome:
+            razao_social_tom = m_tom_nome.group(1).strip()
+        else:
+            avisos.append("Tomador do serviço não encontrado")
+
+        m_bloco = re.search(
+            r'TOMADOR\s+DO\s+SERVI[ÇC]O.*?(?=INFORMA[ÇC][ÕO]ES\s+DA\s+PRESTA[ÇC][ÃA]O\s+DO\s+SERVI[ÇC]O)',
+            t, re.IGNORECASE | re.DOTALL)
+        bloco_tom = m_bloco.group(0) if m_bloco else ''
+
+        logradouro_tom, numero_tom, bairro_tom, municipio_tom = "Não informado", "S/N", "", ""
+        m = re.search(r'ENDERE[ÇC]O:\s*(.+)', bloco_tom, re.IGNORECASE)
+        if m:
+            m_addr = re.search(r'([^,]+?),\s*,?\s*N[ºo°]\s*(\S+)\s*-\s*([^-]+?)\s*-\s*(.+)', m.group(1).strip())
+            if m_addr:
+                logradouro_tom = m_addr.group(1).strip()
+                numero_tom = m_addr.group(2).strip()
+                bairro_tom = m_addr.group(3).strip()
+                municipio_tom = m_addr.group(4).strip()
+        if not municipio_tom:
+            avisos.append("Endereço do tomador não identificado")
+
+        cnpj_tom = "00000000000000"
+        m = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', bloco_tom)
+        if m:
+            candidato = re.sub(r'\D', '', m.group(1))
+            if len(candidato) == 14 and not self._cnpj_valido(candidato):
+                avisos.append(f"CNPJ do tomador lido ({candidato}) não passou no dígito verificador")
+            cnpj_tom = candidato
+        else:
+            avisos.append("CNPJ/CPF do tomador não encontrado")
+
+        m = re.search(r'IE\s*\n*\s*:?\s*(\d[\d.\-]*)', bloco_tom, re.IGNORECASE)
+        ie_tom = m.group(1) if m else None
+
+        m = re.search(r'\bu[rf]\s*:\s*([A-Z]{2})\b', bloco_tom, re.IGNORECASE)
+        uf_tom = m.group(1).upper() if m else uf_emit
+
+        m = re.search(r'(\d{8})\s*\n+\s*INFORMA[ÇC][ÕO]ES\s+DA\s+PRESTA[ÇC][ÃA]O\s+DO\s+SERVI[ÇC]O', t, re.IGNORECASE)
+        cep_tom = m.group(1) if m else ''
+
+        cod_mun_tom = _ibge_resolver.extract_and_validate(municipio_tom, uf_tom, city_hint=municipio_tom, raw_doc_text=t)
+
+        tomador = EntidadeCte(
+            cnpj_cpf=cnpj_tom, inscricao_estadual=ie_tom, razao_social=razao_social_tom,
+            endereco=Endereco(
+                logradouro=logradouro_tom, numero=numero_tom, bairro=bairro_tom or "Não informado",
+                codigo_municipio=cod_mun_tom, municipio=municipio_tom, uf=uf_tom,
+                cep=cep_tom or "00000000",
+            ),
+        )
+
+        # --- Quantidade + descrição do serviço ---
+        m = re.search(r'QUANTIDADE\s+DESCRI[ÇC][ÃA]O\s+DO\s+SERVI[ÇC]O\s+PRESTADO\s*\n+\s*(\d+)\s+(.+)', t, re.IGNORECASE)
+        quantidade_servico = _num(m.group(1)) if m else 0.0
+        descricao_servico = m.group(2).strip() if m else "Não informado"
+
+        # --- Grade de valores/imposto: recorte dedicado
+        # (`_ocr_recut_dacte_os_grade`) - o texto de página inteira não serve
+        # (ver LAYOUT_DACTE_OS). ---
+        texto_grade = self._ocr_recut_dacte_os_grade()
+
+        # A grade "COMPONENTES DO VALOR DA PRESTAÇÃO DE SERVIÇO" imprime o
+        # rótulo "VALOR TOTAL DA PRESTAÇÃO DO SERVIÇO" numa caixa destacada,
+        # mas o OCR (mesmo no recorte dedicado) intercala uma linha de outra
+        # coluna ("R$ 6.739,50 6.517,10") entre o rótulo e o valor de fato -
+        # o valor sai isolado só na linha seguinte, imediatamente ANTES do
+        # rótulo "VALOR A RECEBER" (que por sua vez tem o SEU valor logo
+        # depois). Ancorar no par "<total>\nVALOR A RECEBER\n<a receber>" é
+        # mais confiável que tentar casar o rótulo do total diretamente.
+        valor_total_prestacao, valor_a_receber = 0.0, 0.0
+        m = re.search(r'([\d.,]+)\s*\n+\s*VALOR\s+A\s+RECEBER\s*\n+\s*([\d.,]+)', texto_grade, re.IGNORECASE)
+        if m:
+            valor_total_prestacao = _num(m.group(1))
+            valor_a_receber = _num(m.group(2))
+        else:
+            avisos.append("Valor total da prestação de serviço não encontrado")
+
+        base_calculo_icms = aliquota_icms = valor_icms = percentual_reducao_bc = valor_icms_st = 0.0
+        m = re.search(
+            r'BASE\s+DE\s+C[ÁA]LCULO\s+AL\s+ICMS\s*\(%\)\s+VALOR\s+ICMS\s+%\s*RED\.?\s*BC\.?\s*C[ÁA]LC\.?\s+ICMS\s+ST'
+            r'\s*\n+\s*([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)',
+            texto_grade, re.IGNORECASE)
+        if m:
+            base_calculo_icms = _num(m.group(1))
+            aliquota_icms = _num(m.group(2))
+            valor_icms = _num(m.group(3))
+            percentual_reducao_bc = _num(m.group(4))
+            valor_icms_st = _num(m.group(5))
+        else:
+            avisos.append("Grade de ICMS não encontrada")
+
+        valor_pis = valor_cofins = valor_ir = valor_inss = valor_csll = 0.0
+        m = re.search(
+            r'VALOR\s+DO\s+PIS\s+VALOR\s+COFINS\s+VALOR\s+DO\s+IMPOSTO\s+DE\s+RENDA\s+VALOR\s+DO\s+INSS\s+VALOR\s+DO\s+CSLL'
+            r'\s*\n+\s*([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)',
+            texto_grade, re.IGNORECASE)
+        if m:
+            valor_pis = _num(m.group(1))
+            valor_cofins = _num(m.group(2))
+            valor_ir = _num(m.group(3))
+            valor_inss = _num(m.group(4))
+            valor_csll = _num(m.group(5))
+
+        # Conferência (não preenchimento): Valor Total - retenções federais
+        # deve bater com o Valor a Receber impresso - achado real desta nota
+        # (6.739,50 - 222,40 = 6.517,10, exato).
+        retencoes_totais = valor_pis + valor_cofins + valor_ir + valor_inss + valor_csll
+        if valor_total_prestacao and valor_a_receber and abs(
+                (valor_total_prestacao - retencoes_totais) - valor_a_receber) > 0.01:
+            avisos.append(
+                "Valor a Receber não bate com Valor Total da Prestação menos as retenções lidas - conferir")
+
+        imposto = ImpostoCte(
+            base_calculo_icms=base_calculo_icms, aliquota_icms=aliquota_icms, valor_icms=valor_icms,
+            percentual_reducao_bc=percentual_reducao_bc, valor_icms_st=valor_icms_st,
+            valor_pis=valor_pis, valor_cofins=valor_cofins, valor_ir=valor_ir,
+            valor_inss=valor_inss, valor_csll=valor_csll,
+        )
+
+        # --- Observações + número do pedido ---
+        observacoes = None
+        m = re.search(r'OBSERVA[ÇC][ÕO]ES\s*\n+\s*(.+?)\n+\s*NOME\s+DA\s+SEGURADORA', t, re.IGNORECASE | re.DOTALL)
+        if m:
+            observacoes = re.sub(r'\n+', ' ', m.group(1).strip())
+        m2 = re.search(r'NUMERO\s+DO\s+PEDIDO\s*:\s*-?\s*(\S+)', t, re.IGNORECASE)
+        numero_pedido = m2.group(1) if m2 else None
+
+        # --- Modal rodoviário ---
+        modal_rodoviario = None
+        m = re.search(
+            r'PLACA\s+DO\s+VE[ÍI]CULO\s+RENAVAN?\s+DO\s+VE[ÍI]CULO\s*\n+\s*(\d+)\s+([A-Z0-9]{6,8})\s+(\d+)',
+            t, re.IGNORECASE)
+        m_uf = re.search(
+            r'UF\s+DE\s+LICENCIAMENTO\s+DO\s+VE[ÍI]CULO\s+CNPJ\s*/\s*CPF\s*\n+\s*([A-Z]{2})\s+(\d{11,14})',
+            t, re.IGNORECASE)
+        if m or m_uf:
+            modal_rodoviario = ModalRodoviario(
+                registro_estadual=m.group(1) if m else None,
+                placa_veiculo=m.group(2) if m else None,
+                renavam=m.group(3) if m else None,
+                uf_licenciamento=m_uf.group(1) if m_uf else None,
+                cnpj_cpf_responsavel=m_uf.group(2) if m_uf else None,
+            )
+
+        return CteOS(
+            chave_acesso=chave_acesso, numero=numero, serie=serie, modelo=modelo,
+            tipo_cte=tipo_cte, tipo_servico=tipo_servico, cfop=cfop,
+            natureza_operacao=natureza_operacao, data_emissao=data_emissao,
+            protocolo_autorizacao=protocolo_autorizacao, protocolo_data_hora=protocolo_data_hora,
+            municipio_inicio_prestacao=municipio_inicio_prestacao,
+            codigo_municipio_inicio=codigo_municipio_inicio,
+            municipio_fim_prestacao=municipio_fim_prestacao,
+            codigo_municipio_fim=codigo_municipio_fim,
+            emitente=emitente, tomador=tomador,
+            quantidade_servico=quantidade_servico, descricao_servico=descricao_servico,
+            valor_total_prestacao=valor_total_prestacao, valor_a_receber=valor_a_receber,
+            imposto=imposto, modal_rodoviario=modal_rodoviario,
+            observacoes=observacoes, numero_pedido=numero_pedido,
+            avisos=avisos,
+        )
+
     def _extrair_municipio_incidencia_override(self) -> Optional[str]:
         """Quando a própria nota indica que o ISSQN é devido em OUTRO
         município (serviço de construção civil prestado fora da sede do
@@ -19263,7 +19670,7 @@ class SPPdfExtractor:
 
         return None
 
-    def parse_multiple(self) -> List[Union[Nfse, NfeProduto]]:
+    def parse_multiple(self) -> List[Union[Nfse, NfeProduto, CteOS]]:
         """Extrai múltiplas notas do mesmo PDF, fatiando blocos de texto por heurística de início de nota."""
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
 
@@ -19596,6 +20003,19 @@ class SPPdfExtractor:
                 # digital/estrutural, sem o mesmo risco de falso-negativo de
                 # nome que a trava abaixo cobre para NFS-e escaneada).
                 if isinstance(nfse, NfeProduto):
+                    key = f"{nfse.numero}_{nfse.emitente.cnpj_cpf}"
+                    if key in seen_numbers and nfse.numero != '00000000':
+                        continue
+                    nfse.pagina_origem = page_idx
+                    seen_numbers.add(key)
+                    results.append(nfse)
+                    continue
+
+                # CteOS (DACTE OS/CT-e Modelo 67) - mesmo racional do
+                # NfeProduto acima: usa `emitente`, não `prestador`, e a
+                # mesma trava antilixo de NFS-e escaneada não se aplica
+                # (detecção 100% estrutural, ver LAYOUT_DACTE_OS).
+                if isinstance(nfse, CteOS):
                     key = f"{nfse.numero}_{nfse.emitente.cnpj_cpf}"
                     if key in seen_numbers and nfse.numero != '00000000':
                         continue

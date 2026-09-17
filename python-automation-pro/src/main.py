@@ -2,20 +2,27 @@ from .extractors.pdf_extractor import SPPdfExtractor
 from .transformers.abrasf_transformer import Abrasf201Transformer
 from .transformers.nfe_transformer import NfeTransformer
 from .transformers.nfe_produto_transformer import NfeProdutoTransformer
+from .transformers.cte_transformer import CteTransformer
 from .transformers.contrato_transformer import ContratoLocacaoTransformer
 from .models.contrato_locacao_model import ContratoLocacao
 from .models.nfe_produto_models import NfeProduto
+from .models.cte_os_model import CteOS
 import os
 
 
 def _pick_transformer(nfse_obj, output_format: str):
     """Escolhe o transformer pelo TIPO real do objeto extraído, não só pelo
     dropdown escolhido: um `NfeProduto` (DANFE Estadual genuíno, ver
-    LAYOUT_DANFE_PRODUTO) sempre usa o transformer de produto real, mesmo que
-    o usuário tenha deixado o dropdown em "abrasf" - não há XML ABRASF de
-    serviço possível para um documento de mercadoria."""
+    LAYOUT_DANFE_PRODUTO) ou um `CteOS` (CT-e OS/DACTE OS, ver
+    LAYOUT_DACTE_OS) sempre usam seu transformer real (ICMS/estadual), mesmo
+    que o usuário tenha deixado o dropdown em "abrasf" - não há XML ABRASF de
+    serviço possível para um documento de mercadoria nem para um CT-e, e um
+    CT-e (Modelo 67) não é uma NF-e de produto (Modelo 55) - usar as tags de
+    uma para representar a outra seria uma inverdade estrutural."""
     if isinstance(nfse_obj, NfeProduto):
         return NfeProdutoTransformer()
+    if isinstance(nfse_obj, CteOS):
+        return CteTransformer()
     return Abrasf201Transformer() if output_format == "abrasf" else NfeTransformer()
 
 
