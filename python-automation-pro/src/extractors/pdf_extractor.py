@@ -6270,7 +6270,18 @@ class SPPdfExtractor:
             r'^(E-mail|CNPJ|CPF|Inscri[cç]|Endere[cç]|Tel[eé]fone|Munic[ií]|'
             r'CEP|Simples|Regime|Bairro|Logradouro|Complemento|N[uú]mero|UF|'
             r'Fornecedor|Tomador|Cliente|Prestador|Emitente|Discrimina|'
-            r'Valor|ISS|Aliq|Base|Código|C[oó]d\.?|Item|Competên|Data|NFS-e|Responsável|Autenticidade|Chave|Consulte|Fone)',
+            # "Valor" sozinho rejeitaria uma razão social real que começa com
+            # essa palavra (achado real, nota nº 46345/33908, VALOR COMÉRCIO E
+            # SERVIÇOS DE INFORMÁTICA LTDA — razão social legítima capturada
+            # corretamente pelo regex primário, mas descartada aqui e
+            # substituída pelo próprio endereço da nota pelo fallback
+            # seguinte). Restrito às continuações típicas de RÓTULO de campo
+            # monetário ("Valor Total", "Valor Líquido", "Valor dos
+            # Serviços", "Valor (R$)", "Valor:", ou "Valor" isolado no fim da
+            # linha) — nenhuma dessas continuações aparece no início de uma
+            # razão social real deste corpus.
+            r'Valor\s*(?:Total|L[ií]quido|Bruto|Uni[ti]|dos?\s+Servi|ISS|Retid|\(|:|$)|'
+            r'Aliq|Base|Código|C[oó]d\.?|Item|Competên|Data|NFS-e|Responsável|Autenticidade|Chave|Consulte|Fone)',
             re.IGNORECASE
         )
 
@@ -13169,7 +13180,18 @@ class SPPdfExtractor:
             # monetário, então é seguro tratá-lo aqui como equivalente a ".":
             # normaliza para "." antes de `_parse_valor` (mesma função usada
             # em todo o resto do arquivo, sem alterá-la).
-            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*[=:]\s*R\$?\s*([\d./,]+)', t, re.IGNORECASE)
+            # "FISCAL" opcional depois de "NOTA" e separador flexível (achado
+            # real, nota nº 46345/33908, VALOR COMÉRCIO E SERVIÇOS DE
+            # INFORMÁTICA LTDA): esta nota imprime "VALOR TOTAL DA NOTA
+            # FISCAL R$ 583,00" — sem "=" nem ":" entre o rótulo e "R$", só
+            # espaço, e com a palavra "FISCAL" no meio (variante do template
+            # não vista nas notas Salvador já catalogadas). O regex antigo
+            # exigia "=" ou ":" logo após "NOTA", então esta nota inteira
+            # caía com Valor dos Serviços/Base de Cálculo zerados mesmo com o
+            # valor limpo e legível na própria linha — confirmado pelo
+            # próprio Domínio ("Valor contábil zerado para nota com situação
+            # diferente de cancelada").
+            m_val = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s*(?:FISCAL\s*)?[=:]?\s*R\$?\s*([\d./,]+)', t, re.IGNORECASE)
             val_serv = self._parse_valor(m_val.group(1).replace('/', '.')) if m_val else 0.0
 
             # Grade "Valor INSS / PIS / COFINS / IR / CSLL / Outras Retenções /
@@ -13236,24 +13258,64 @@ class SPPdfExtractor:
                     iss = self._parse_valor(m_grid5.group(4))
                 else:
                     deducoes, base, aliq, iss = 0.0, val_serv, 0.0, 0.0
-                    # Achado real, nota nº 00000080/UFFICIO: quando há um
-                    # Valor dos Serviços de verdade (nota emitida, não
-                    # "quota profissional") mas a grade de 5 valores não
-                    # bateu, Alíquota/ISS zerados aqui são FALTA de leitura,
-                    # não um "não se aplica" real — mesmo princípio já usado
-                    # em Camaçari (`_camacari_aliquota_iss_zerada`): preferir
-                    # avisar o usuário a deixar o zero passar em silêncio
-                    # como se fosse um dado confiável.
-                    if val_serv > 0.0:
-                        self._salvador_aliquota_iss_zerada = True
-                    # Recorte dedicado da célula "Base de Cálculo" (ver
-                    # `_ocr_recut_base_calculo_grade_salvador`, chamado em
-                    # `_ocr_page`) — só consultado quando a grade de 5
-                    # valores falhou inteira acima; nunca sobrescreve uma
-                    # leitura já bem-sucedida de `m_grid5`.
-                    m_base_recut = re.search(r'BASE_CALCULO_RECUPERADA:\s*([\d\.,]+)', t)
-                    if m_base_recut:
-                        base = self._parse_valor(m_base_recut.group(1))
+                    # Variante de grade com 4 colunas, sem "Crédito": "Valor
+                    # Total Deduções (R$); Base de Cálculo (R$): Alíquota
+                    # (%) Valor ISS (R$):" — achado real, nota nº 46345/
+                    # 33908, VALOR COMÉRCIO E SERVIÇOS DE INFORMÁTICA LTDA:
+                    # grade genuinamente diferente da de 5 colunas acima
+                    # (não tem "Crédito" nem "das" entre "Total" e
+                    # "Deduções"), então `m_grid5` nunca bate aqui. A
+                    # própria Alíquota sai sem a vírgula decimal ("415" em
+                    # vez de "4,15") — só aceita a reinterpretação "últimos
+                    # 2 dígitos são a casa decimal" quando ela bate com o
+                    # Valor do ISS já lido na MESMA linha (identidade Base
+                    # × Alíquota = ISS, mesmo princípio já usado em
+                    # Camaçari) — sem essa validação, um percentual inteiro
+                    # legítimo (ex. "5%") seria lido errado como "0,05%".
+                    NUM4 = r'(\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,4})'
+                    m_grid4 = re.search(
+                        r'Valor\s+Total\s+Dedu[çc][õo]es\s*\(R\$\)\s*[;:]?\s*\|?\s*'
+                        r'Base\s+de\s+C[áa]lculo\s*\(R[\$S]\)\s*:?\s*'
+                        r'Al[íi]quota\s*\(%\)\s*'
+                        r'Valor\s+ISS\s*\(R\$\)\s*:?\s*\n\s*'
+                        + NUM4 + r'\s+' + NUM4 + r'\s+' + NUM4 + r'\s+' + NUM4,
+                        t, re.IGNORECASE
+                    )
+                    grid4_confiavel = False
+                    if m_grid4:
+                        ded4 = self._parse_valor(m_grid4.group(1))
+                        base4 = self._parse_valor(m_grid4.group(2))
+                        iss4 = self._parse_valor(m_grid4.group(4))
+                        aliq_raw = m_grid4.group(3)
+                        if ',' in aliq_raw:
+                            aliq4 = self._parse_valor(aliq_raw) / 100
+                        elif len(aliq_raw) > 2:
+                            aliq4 = self._parse_valor(aliq_raw[:-2] + ',' + aliq_raw[-2:]) / 100
+                        else:
+                            aliq4 = self._parse_valor(aliq_raw) / 100
+                        if base4 > 0 and abs(base4 * aliq4 - iss4) < 0.05:
+                            deducoes, base, aliq, iss = ded4, base4, aliq4, iss4
+                            grid4_confiavel = True
+                    if not grid4_confiavel:
+                        # Achado real, nota nº 00000080/UFFICIO: quando há um
+                        # Valor dos Serviços de verdade (nota emitida, não
+                        # "quota profissional") mas nenhuma das grades acima
+                        # bateu, Alíquota/ISS zerados aqui são FALTA de
+                        # leitura, não um "não se aplica" real — mesmo
+                        # princípio já usado em Camaçari
+                        # (`_camacari_aliquota_iss_zerada`): preferir avisar
+                        # o usuário a deixar o zero passar em silêncio como
+                        # se fosse um dado confiável.
+                        if val_serv > 0.0:
+                            self._salvador_aliquota_iss_zerada = True
+                        # Recorte dedicado da célula "Base de Cálculo" (ver
+                        # `_ocr_recut_base_calculo_grade_salvador`, chamado em
+                        # `_ocr_page`) — só consultado quando nenhuma grade
+                        # bateu acima; nunca sobrescreve uma leitura já
+                        # bem-sucedida de `m_grid5`/`m_grid4`.
+                        m_base_recut = re.search(r'BASE_CALCULO_RECUPERADA:\s*([\d\.,]+)', t)
+                        if m_base_recut:
+                            base = self._parse_valor(m_base_recut.group(1))
 
             # "VALOR TOTAL DA NOTA" é uma leitura de UMA linha só; "Base de
             # Cálculo" vem de uma grade PRÓPRIA. Quando Deduções = 0,
