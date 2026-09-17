@@ -106,7 +106,9 @@ LAYOUT_FF_LOCACAO = 'ff_locacao'  # F&F Comércio e Serviços de Telecomunicaç�
 LAYOUT_BROTAS_MACAUBAS = 'brotas_macaubas_ba'  # Prefeitura de Brotas de Macaúbas/BA (CNPJ 13.797.600/0001-74, plataforma nfservico.com.br - mesma da IAÇU) - NFS-e tributada, escaneada (JPG/foto, tipicamente de cabeça para baixo). Reaproveita o parser de entidade do Iaçu (mesmos rótulos/estrutura), com 2 ajustes tolerantes: "|" (OCR de "Nº") colado no endereço do prestador, e nome/CREA do engenheiro colado na razão social do tomador. Caixa de cabeçalho via o MESMO recorte dedicado do Iaçu (_ocr_header_box_iacu, agora com suporte a ângulo de rotação); número/valores/discriminação com âncoras próprias (grade de valores sem o campo "Valor total das deduções" que o Iaçu tem). Código de serviço fixo "0702" (mapeado do CNAE 4391-6/00 impresso na nota - a nota traz "Item da lista de serviços: 0", que não é um código LC116 válido; decisão do usuário)
 LAYOUT_GUARULHOS = 'guarulhos_sp'  # Prefeitura Municipal de Guarulhos/SP (plataforma Ginfes, guarulhos.ginfes.com.br) - NFS-e tributada, escaneada (foto/CamScanner). Grade densa de células cinza (baixo contraste) faz a leitura padrão perder o Código de Verificação, o Local da Prestação e toda a grade "Cálculo do ISSQN devido no Município" - recuperados via `_ocr_recut_guarulhos` (3 recortes em zoom alto + binarização, mesmo racional do Camaçari). Serviço de construção civil (item 7.02) prestado em OUTRO município (campos "Local da Prestação" + "Natureza Operação: Tributação fora do município"/"ISS a reter: Não" na própria nota) - decisão do usuário: a incidência do ISSQN vai para o município da obra (Cuiabá/MT), não para o do prestador (Guarulhos), via `Nfse.municipio_incidencia_override`
 LAYOUT_CAMACARI_SISLOC = 'camacari_sisloc'  # Camaçari/BA via plataforma SISLOC (sisloc.com) + "NFS-e Easy" da Benefix (webenefix.com.br) - PDF DIGITAL (não escaneado), mas o gerador do PDF desenha rótulos e valores como blocos de texto separados; o `pdfminer.extract_text()` padrão despeja TODOS os valores concatenados num blob único no fim do documento, sem relação de proximidade com o rótulo. Corrigido reconstruindo o texto por COORDENADA de caractere (`_reconstruir_texto_por_coordenadas`: agrupa `LTChar` por linha/Y, ordena por X dentro da linha) em vez de usar a ordem de leitura padrão do pdfminer - técnica nova, para PDF digital com ordem de leitura quebrada (distinta de OCR/coluna-intercalada). Detectado pela marca da PLATAFORMA (SISLOC/Benefix), não pelo município, para não colidir com os Camaçari via CPqD (LAYOUT_CAMACARI/CAMACARI_2) nem futuras notas de outras plataformas no mesmo município. Município de prestação vem com código IBGE explícito na própria nota ("Cód. de Município IBGE: ..."). Item de tributação "9901" não é código LC116 válido (mesma convenção de Barreiras/PJB) - mapeado para "0000"
-LAYOUT_MONTE_SANTO = 'monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, em texto livre "OBJETO DO CONTRATO"/"OBRA: ..., <CIDADE>/<UF>") - `municipio_incidencia_override` implementado (revisão 2026-08-10): a linha "OBRA:" sempre termina no formato ", <CIDADE>/<UF>", âncora confiável o suficiente; incidência do ISSQN vai para o município da obra quando presente, senão permanece no do prestador (Monte Santo)
+LAYOUT_CAMACARI_GESTAOCLICK = 'camacari_gestaoclick'  # Camaçari/BA via plataforma GestãoClick (gestaoclick.com.br) - NFS-e ESCANEADA. TERCEIRA plataforma do mesmo município, ao lado do CPqD (LAYOUT_CAMACARI/_2/_3) e do SISLOC/Benefix (LAYOUT_CAMACARI_SISLOC), e como aquela é detectada pela marca da PLATAFORMA, não pelo município. Template próprio: cabeçalho "PREFEITURA DE CAMAÇARI" (sem o "MUNICIPAL" que o marcador do CPqD exige), blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com rótulos "Nome:"/"Razão Social:", "CNPJ:", "Endereço:" e "Município: ... UF: ...". O endereço vem numa ÚNICA linha no formato "<logradouro>, <nº> (<bairro>) - <MUNICÍPIO> - <CEP>", diferente dos campos separados do CPqD
+LAYOUT_SEM_PARAR = 'sem_parar_fatura'  # SEM PARAR INSTITUIÇÃO DE PAGAMENTOS LTDA (CNPJ raiz 04.088.208, Pinheiros/São Paulo-SP) - "NOTA FISCAL FATURA DE SERVIÇOS" de pedágio/tag veicular, ESCANEADA. Detecção pelo CNPJ RAIZ do emitente (casa qualquer filial), NÃO pelo município: a fatura cita a cidade do CLIENTE, e era exatamente isso que a desviava para o layout municipal homônimo. Bloco do cliente rotulado "Nome:"/"CNPJ:"/"Endereço:"/"Bairro:"/"CEP:"/"Cidade/UF:" sob o título "EMPRESAS"
+LAYOUT_MONTE_SANTO ='monte_santo_ba'  # Prefeitura Municipal de Monte Santo/BA - NFS-e tributada, PDF DIGITAL (texto embutido limpo, sem OCR), construída sobre o padrão nacional da NFS-e ("Chave de Acesso", "Série da DPS") mas com template/grade de campos própria do município ("PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO"). Detecção precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (esta nota também traz esse rótulo). O pdfminer despeja os rótulos das entidades em blocos separados dos valores (padrão "labels dumped, depois values dumped", mesmo racional de Guarulhos/Campinas) - extração por âncoras posicionais fixas, não por par rótulo=valor na mesma linha. Serviço de construção civil (item 07.02) com dedução de materiais da base de cálculo do ISS ("Valor Total das Deduções" = "Valor Total dos Materiais"; Base de Cálculo = Valor Total da Nota - Deduções); ISS retido pelo TOMADOR ("Responsável pelo Pagamento do imposto: Contratante"); INSS retido na fonte (grade "Tributação Federal"). Nota traz "Local do Serviço: Fora do Município" (obra em outro município, em texto livre "OBJETO DO CONTRATO"/"OBRA: ..., <CIDADE>/<UF>") - `municipio_incidencia_override` implementado (revisão 2026-08-10): a linha "OBRA:" sempre termina no formato ", <CIDADE>/<UF>", âncora confiável o suficiente; incidência do ISSQN vai para o município da obra quando presente, senão permanece no do prestador (Monte Santo)
 LAYOUT_NFCOM_SALVADOR = 'nfcom_salvador'  # Empresa Baiana de Jornalismo S.A. (EBJ, CNPJ 14.583.041/0001-62, Salvador/BA) - NFCom (Nota Fiscal de Serviço de Comunicação Eletrônica), PDF DIGITAL, template nacional hospedado no portal SVRS (dfe-portal.svrs.rs.gov.br/NfCom), estruturalmente distinto de uma NFS-e ABRASF: tributado por ICMS (não ISS), chave de acesso de 44 dígitos própria do padrão NFCom/NF-e mod. 62. Detectado pelo CNPJ do emitente (específico, não pela marca genérica do documento - decisão do usuário, para não capturar futuras NFCom de outros emitentes/UFs sem revisão). Precisa vir ANTES do fallback amplo "Chave de Acesso" -> LAYOUT_NACIONAL (a chave de acesso desta nota também casaria esse rótulo, e o parser DANFSe não serve pra ela - achado real, nota EBJ nº 624, nov/2025: caía no LAYOUT_NACIONAL e saía com o valor zerado, ItemListaServico incompatível e o tomador com a razão social vazada do rótulo "Nº TELEFONE"). Prestador é FIXO (mesmo emitente sempre, endereço da própria EBJ hardcoded - mesmo racional de LAYOUT_PJB_LOCACAO/LAYOUT_FF_LOCACAO); tomador extraído dinamicamente do bloco "NOME DO DESTINATÁRIO"/"END."/"CPF/CNPJ" (rótulos e valores em ordem PARCIALMENTE invertida: o valor do endereço vem ANTES do valor da razão social, apesar do rótulo "NOME DO DESTINATÁRIO" vir primeiro). ValorServicos/ValorLiquidoNfse = "TOTAL A PAGAR (R$)"; BaseCalculo/Aliquota/ValorIss mantidos em 0,00 propositalmente (decisão do usuário: nota tributada por ICMS, não por ISS - sinalizado em `Nfse.avisos`, não fabricado). ItemListaServico/CodigoTributacaoMunicipio = "0000" (não é item real da LC116, mesma convenção de não-incidência já usada em Barreiras/CAMACARI_SISLOC)
 LAYOUT_NFCOM_LOTEC_FIBRA = 'nfcom_lotec_fibra'  # Lotec Fibra LTDA (CNPJ 63.333.320/0001-83, Santa Teresinha/BA), NFCom (Nota Fiscal Fatura de Serviços de Comunicação Eletrônica), ESCANEADO, MESMO template nacional do portal SVRS já usado por LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR ("NOTA FISCAL FATURA DE SERVIÇOS DE COMUNICAÇÃO ELETRÔNICA", chave de acesso de 44 dígitos modelo 62), mas de um emitente DIFERENTE - gated pelo CNPJ deste emitente especificamente (mesma decisão do usuário aplicada à EBJ/RLGR: não capturar automaticamente futuras NFCom de outros emitentes/UFs sem revisão dedicada; regex tolerante ao "6"/"8" trocado pelo OCR no 1º dígito do CNPJ, achado real desta nota). Achado real, nota nº 17041 (SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA, R$119,90): sem esta detecção a nota caía no fallback genérico e saía com o CNPJ do tomador IGUAL ao do prestador (ambos sentinela), endereço com o resto do documento inteiro despejado no campo "Número", Valor dos Serviços zerado e Código de Verificação vazio. Prestador é FIXO (mesmo emitente sempre, endereço do próprio letterhead hardcoded - mesmo racional de LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR), município Santa Teresinha/BA. Tomador extraído dinamicamente do bloco "CLIENTE:"/"CNPJ:"/"ENDEREÇO:" (ordem direta rótulo→valor, como no RLGR) - o CNPJ do SINDICATO sai ilegível em toda combinação de zoom/PSM testada (nunca bate o dígito verificador) e é substituído pelo valor real já confirmado nesta base (mesma técnica de contraparte conhecida já usada para BONI TRANSPORTES/GUARAJUBA SHOPPING em `_extrair_entidade`, aplicada aqui de forma dedicada). Um recorte da coluna direita do cabeçalho (`_ocr_recut_nfcom_lotec_fibra_coluna_direita`) corrige a Data de Emissão (a leitura de página inteira lê "28" em vez do "29" real) e mantém número/série/protocolo legíveis. Chave de Acesso tem os 2 primeiros dígitos (cUF) forçados para "29" (Bahia - prestador fixo, nunca varia) quando a leitura de OCR não bate, validado por decodificação estrutural da própria chave (CNPJ do emitente nas posições 6:20 e número da nota nas posições 25:34 já batem exatamente). ValorServicos/ValorLiquidoNfse = "TOTAL A PAGAR: R$"; BaseCalculo/Aliquota/ValorIss mantidos em 0,00 propositalmente (tributado por ICMS, não ISS - mesmo aviso do NFCOM_SALVADOR/NFCOM_RLGR). ItemListaServico/CodigoTributacaoMunicipio = "0000" (mesma convenção de não-incidência).
 LAYOUT_NFCOM_RLGR = 'nfcom_rlgr'  # Rlgr Telefonia LTDA (CNPJ 57.675.896/0001-26, Barueri/SP) - NFCom (Nota Fiscal Fatura de Serviços de Comunicação Eletrônica), PDF DIGITAL, MESMO template nacional do portal SVRS já usado por LAYOUT_NFCOM_SALVADOR ("NOTA FISCAL FATURA DE SERVIÇOS DE COMUNICAÇÃO ELETRÔNICA", chave de acesso de 44 dígitos modelo 62), mas de um emitente DIFERENTE — gated pelo CNPJ deste emitente especificamente (mesma decisão do usuário aplicada à EBJ: não capturar automaticamente futuras NFCom de outros emitentes/UFs sem revisão dedicada). Achado real, nota nº 7271 (SINDICATO DOS DELEGADOS DE POLICIA DO ESTADO DA BAHIA ADPE, R$71,37 de Serviço de Terminação de Tráfego de Voz/STTV): sem esta detecção a nota caía no fallback genérico e saía com o CNPJ do tomador IGUAL ao do prestador, a razão social do tomador vazada do rótulo "REFERÊNCIA (ANO/MÊS)", valores todos zerados e o Código de Verificação em branco. Prestador é FIXO (mesmo emitente sempre, endereço do próprio letterhead hardcoded - mesmo racional de LAYOUT_NFCOM_SALVADOR/PJB_LOCACAO/FF_LOCACAO), município Barueri/SP (já em IBGEResolver.KNOWN_CITIES). Tomador extraído dinamicamente do bloco "NOME:"/"CPF/CNPJ:"/"ENDEREÇO:" - ao contrário do NFCOM_SALVADOR, aqui rótulo e valor NÃO vêm invertidos (ordem direta rótulo→valor) e o ENDEREÇO traz o CEP embutido inline ("Barris , 40070190 - Salvador, BA"), então o CEP do tomador é extraído de verdade (não fica no default "00000000" como no NFCOM_SALVADOR, que não imprime esse campo). ValorServicos/ValorLiquidoNfse = "TOTAL A PAGAR"; BaseCalculo/Aliquota/ValorIss mantidos em 0,00 propositalmente (tributado por ICMS, não ISS - mesmo aviso do NFCOM_SALVADOR). ItemListaServico/CodigoTributacaoMunicipio = "0000" (mesma convenção de não-incidência do NFCOM_SALVADOR).
@@ -474,6 +476,27 @@ class SPPdfExtractor:
         # "NFS-e Easy"/"Benefix" são marcas exclusivas dessa plataforma.
         if re.search(r'SISLOC|NFS-?e\s+Easy|webenefix', t, re.IGNORECASE):
             return LAYOUT_CAMACARI_SISLOC
+        # Camaçari via GestãoClick — MESMO racional do SISLOC logo acima, e a
+        # TERCEIRA plataforma do município. Precisa vir antes de qualquer
+        # marca municipal por dois motivos independentes: (a) o cabeçalho
+        # desta nota é "PREFEITURA DE CAMAÇARI", sem o "MUNICIPAL" que o
+        # marcador do CPqD exige, então ela nem casaria lá; (b) o rodapé é a
+        # única marca exclusiva da plataforma ("emitida no GestãoClick —
+        # www.gestaoclick.com.br"), e o OCR às vezes insere um espaço no
+        # domínio ("gestaoclick. com.br"), por isso casamos só o nome.
+        if re.search(r'gest[aã]oclick', t, re.IGNORECASE):
+            return LAYOUT_CAMACARI_GESTAOCLICK
+        # Fatura Sem Parar ANTES de qualquer marca municipal: o emitente é de
+        # São Paulo/SP e o documento cita a cidade do CLIENTE ("Cidade/UF:
+        # Simoes Filho - BA"), que é justamente o que desviava a fatura
+        # inteira para o layout municipal homônimo (ver o fallback solto de
+        # "Simões Filho" mais abaixo neste mesmo detector). Detecção pelo
+        # CNPJ RAIZ do emitente, convenção já usada em toda a família de
+        # faturas — casa qualquer filial e não depende do município.
+        if re.search(r'04\.?088\.?208', t) or (
+                re.search(r'SEM\s+PARAR', t, re.IGNORECASE)
+                and re.search(r'NOTA\s+FISCAL\s+FATURA\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)):
+            return LAYOUT_SEM_PARAR
         # PJB Construção (Fatura de Locação de máquinas): detectada bem no TOPO
         # da cadeia porque o texto cita "SIMÕES FILHO", "CAMAÇARI" e "MONTE
         # GORDO" (cidade do emitente / do tomador) — se deixada para depois,
@@ -717,7 +740,30 @@ class SPPdfExtractor:
             return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
             return LAYOUT_ISBET
-        if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE):
+        # Rede de segurança do Simões Filho, para notas cujo cabeçalho
+        # "PREFEITURA MUNICIPAL DE SIMÕES FILHO" (checado bem acima) não
+        # sobreviveu ao OCR. Exige o nome da cidade **E** um marcador
+        # ESTRUTURAL do template — sem a segunda condição, bastava o nome da
+        # cidade aparecer em qualquer lugar do texto.
+        #
+        # Isso não era teórico: a STAUMMAQ, TOMADORA de todas as notas dos
+        # lotes deste usuário, fica em Simões Filho/BA, então a cidade aparece
+        # em TODA nota desses lotes, venha de qualquer emitente. Achado real
+        # 2026-09-14 ("STAUMMAQ - SCAN 2.pdf"): uma fatura Sem Parar de São
+        # Paulo/SP e uma NFS-e de Camaçari/GestãoClick eram sequestradas para
+        # cá — layout cujos rótulos elas não têm — e o usuário via
+        # "Tomador Não Identificado", um sintoma que aponta para a extração
+        # quando o defeito está na detecção.
+        #
+        # Os marcadores abaixo saem da grade e dos rótulos exclusivos deste
+        # template (RPS, exigibilidade do ISS, serviço nacional, desconto
+        # incondicional), tolerando os garbles já vistos em nota real
+        # ("Exigibilidade de 155" com "ISS" lido como "155"). Barreiras
+        # compartilha o mesmo template, mas é checada ANTES deste ponto.
+        if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE) and re.search(
+                r'S[eé]rie?\s+RPS|N[uú]mero\s+RPS|Exigibilidade\s+de\s+(?:ISS|1?55)'
+                r'|SERVI[ÇC]O\s+NACIONAL|DESCONTO\s+INCONDICIONAL',
+                t, re.IGNORECASE):
             return LAYOUT_SIMOES_FILHO
         if re.search(r'Ribeir[aã]o Pires', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PIRES
@@ -869,6 +915,27 @@ class SPPdfExtractor:
         # "NFS-e Easy"/"Benefix" são marcas exclusivas dessa plataforma.
         if re.search(r'SISLOC|NFS-?e\s+Easy|webenefix', t, re.IGNORECASE):
             return LAYOUT_CAMACARI_SISLOC
+        # Camaçari via GestãoClick — MESMO racional do SISLOC logo acima, e a
+        # TERCEIRA plataforma do município. Precisa vir antes de qualquer
+        # marca municipal por dois motivos independentes: (a) o cabeçalho
+        # desta nota é "PREFEITURA DE CAMAÇARI", sem o "MUNICIPAL" que o
+        # marcador do CPqD exige, então ela nem casaria lá; (b) o rodapé é a
+        # única marca exclusiva da plataforma ("emitida no GestãoClick —
+        # www.gestaoclick.com.br"), e o OCR às vezes insere um espaço no
+        # domínio ("gestaoclick. com.br"), por isso casamos só o nome.
+        if re.search(r'gest[aã]oclick', t, re.IGNORECASE):
+            return LAYOUT_CAMACARI_GESTAOCLICK
+        # Fatura Sem Parar ANTES de qualquer marca municipal: o emitente é de
+        # São Paulo/SP e o documento cita a cidade do CLIENTE ("Cidade/UF:
+        # Simoes Filho - BA"), que é justamente o que desviava a fatura
+        # inteira para o layout municipal homônimo (ver o fallback solto de
+        # "Simões Filho" mais abaixo neste mesmo detector). Detecção pelo
+        # CNPJ RAIZ do emitente, convenção já usada em toda a família de
+        # faturas — casa qualquer filial e não depende do município.
+        if re.search(r'04\.?088\.?208', t) or (
+                re.search(r'SEM\s+PARAR', t, re.IGNORECASE)
+                and re.search(r'NOTA\s+FISCAL\s+FATURA\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)):
+            return LAYOUT_SEM_PARAR
         # PJB Construção (Fatura de Locação): no TOPO — o texto cita "SIMÕES
         # FILHO"/"CAMAÇARI"/"MONTE GORDO", que senão disparariam os layouts
         # municipais homônimos antes. Exige marca do emitente E marcador
@@ -1083,7 +1150,30 @@ class SPPdfExtractor:
             return LAYOUT_BRASILIA
         if re.search(r'NOTA DE CONTRIBUIÇÃO SOLIDÁRIA|ISBET', t, re.IGNORECASE):
             return LAYOUT_ISBET
-        if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE):
+        # Rede de segurança do Simões Filho, para notas cujo cabeçalho
+        # "PREFEITURA MUNICIPAL DE SIMÕES FILHO" (checado bem acima) não
+        # sobreviveu ao OCR. Exige o nome da cidade **E** um marcador
+        # ESTRUTURAL do template — sem a segunda condição, bastava o nome da
+        # cidade aparecer em qualquer lugar do texto.
+        #
+        # Isso não era teórico: a STAUMMAQ, TOMADORA de todas as notas dos
+        # lotes deste usuário, fica em Simões Filho/BA, então a cidade aparece
+        # em TODA nota desses lotes, venha de qualquer emitente. Achado real
+        # 2026-09-14 ("STAUMMAQ - SCAN 2.pdf"): uma fatura Sem Parar de São
+        # Paulo/SP e uma NFS-e de Camaçari/GestãoClick eram sequestradas para
+        # cá — layout cujos rótulos elas não têm — e o usuário via
+        # "Tomador Não Identificado", um sintoma que aponta para a extração
+        # quando o defeito está na detecção.
+        #
+        # Os marcadores abaixo saem da grade e dos rótulos exclusivos deste
+        # template (RPS, exigibilidade do ISS, serviço nacional, desconto
+        # incondicional), tolerando os garbles já vistos em nota real
+        # ("Exigibilidade de 155" com "ISS" lido como "155"). Barreiras
+        # compartilha o mesmo template, mas é checada ANTES deste ponto.
+        if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE) and re.search(
+                r'S[eé]rie?\s+RPS|N[uú]mero\s+RPS|Exigibilidade\s+de\s+(?:ISS|1?55)'
+                r'|SERVI[ÇC]O\s+NACIONAL|DESCONTO\s+INCONDICIONAL',
+                t, re.IGNORECASE):
             return LAYOUT_SIMOES_FILHO
         if re.search(r'Ribeir[aã]o Pires', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PIRES
@@ -4494,6 +4584,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_camacari_sisloc(is_prestador)
+
+        if self.layout in (LAYOUT_CAMACARI_GESTAOCLICK, LAYOUT_SEM_PARAR):
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_rotulada(is_prestador)
 
         if self.layout == LAYOUT_MONTE_SANTO:
             if is_intermediario:
@@ -10444,6 +10539,289 @@ class SPPdfExtractor:
             ),
         )
 
+    # Município do EMITENTE de cada layout atendido por
+    # `_extrair_entidade_rotulada`, usado como default quando o próprio
+    # documento não o imprime. Existe para não cair no fallback silencioso de
+    # Salvador/BA do `IBGEResolver`, que desloca `OrgaoGerador` e
+    # `MunicipioIncidencia` sem avisar ninguém.
+    _EMITENTE_PADRAO_ROTULADO = {
+        LAYOUT_CAMACARI_GESTAOCLICK: ('2905701', 'Camaçari', 'BA'),
+        LAYOUT_SEM_PARAR: ('3550308', 'São Paulo', 'SP'),
+    }
+
+    @staticmethod
+    def _sem_acento_maiusculo(s: str) -> str:
+        """Normaliza para comparar nomes de município entre fontes que grafam
+        diferente na MESMA nota ("SIMOES FILHO" na linha de endereço,
+        "Simões Filho" no rótulo próprio)."""
+        import unicodedata
+        s = unicodedata.normalize('NFKD', s or '')
+        return ''.join(c for c in s if not unicodedata.combining(c)).upper().strip()
+
+    def _ocr_cabecalho_sem_parar(self) -> str:
+        """Recorte dedicado do cabeçalho do EMITENTE na fatura Sem Parar.
+
+        Por que existe: no OCR de página inteira as duas primeiras linhas do
+        cabeçalho saem fundidas com a coluna da direita e ilegíveis — na nota
+        real, `Av. Dra. Ruth Cardoso, 7221, Andares 17, 18, 19 e 26 parte` e a
+        razão social viraram `Av ra, Cain E2 nara AEAMENTO LTDA. NOTA FISCAL
+        FATURA DE SERVIÇOS`. Da 3ª linha em diante (CEP/bairro/cidade, CNPJ,
+        Inscrição Municipal) o OCR de página lê tudo limpo, então o recorte é
+        usado SÓ para razão social e logradouro.
+
+        A faixa é ancorada no rótulo `CNPJ/MF` localizado por
+        `image_to_data` — nunca em fração fixa de altura, que muda de emitente
+        para emitente. A rotação é redescoberta aqui (0° e 180°) porque estas
+        páginas chegam de cabeça para baixo e este método pode rodar sem o
+        estado da busca de rotação do `_ocr_page`.
+
+        Devolve '' em qualquer falha (sem PDF, sem página, rótulo não achado):
+        é um recorte ADITIVO, o chamador mantém o que já tinha."""
+        pagina = getattr(self, '_pagina_hint', None)
+        if not pagina:
+            return ''
+        try:
+            import os
+            import pymupdf
+            import pytesseract
+            from pytesseract import Output
+            from PIL import Image
+
+            tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            if os.path.exists(tess_path):
+                pytesseract.pytesseract.tesseract_cmd = tess_path
+
+            doc = pymupdf.open(self.pdf_path)
+            try:
+                idx = pagina - 1
+                if not (0 <= idx < len(doc)):
+                    return ''
+                pix = doc[idx].get_pixmap(dpi=300)
+                base = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
+            finally:
+                doc.close()
+
+            for angulo in (0, 180):
+                img = base.rotate(-angulo, expand=True) if angulo else base
+                dados = pytesseract.image_to_data(img, lang='por', output_type=Output.DICT)
+                alvo = None
+                for i, palavra in enumerate(dados['text']):
+                    if 'CNPJ' in palavra.strip().upper():
+                        alvo = (dados['top'][i], dados['height'][i])
+                        break
+                if not alvo:
+                    continue
+                y, h = alvo
+                larg, alt = img.size
+                # 4 linhas acima do CNPJ (razão social, logradouro, CEP/cidade)
+                # e a coluna da esquerda até 64% da largura — depois disso
+                # começa o título do documento, que sangraria para dentro.
+                caixa = (int(larg * 0.20), max(0, y - int(h * 5)),
+                         int(larg * 0.64), min(alt, y + int(h * 1.5)))
+                rec = img.crop(caixa)
+                rec = rec.resize((rec.width * 2, rec.height * 2), Image.LANCZOS)
+                texto = pytesseract.image_to_string(rec, lang='por', config='--psm 6')
+                if re.search(r'CNPJ', texto, re.IGNORECASE):
+                    return texto
+            return ''
+        except Exception:
+            return ''
+
+    def _extrair_entidade_rotulada(self, is_prestador: bool) -> Entidade:
+        """Extrai prestador e tomador das notas cujos blocos vêm rotulados
+        campo a campo — hoje o Camaçari/GestãoClick
+        (`LAYOUT_CAMACARI_GESTAOCLICK`) e a fatura Sem Parar
+        (`LAYOUT_SEM_PARAR`), achados no lote "STAUMMAQ - SCAN 2.pdf".
+
+        Os dois templates pedem delimitadores de bloco diferentes, mas os
+        rótulos de campo coincidem o bastante para a leitura ser compartilhada:
+
+        - GestãoClick: `PRESTADOR DE SERVIÇOS` / `TOMADOR DE SERVIÇOS` /
+          `DISCRIMINAÇÃO DOS SERVIÇOS`, com o endereço inteiro numa ÚNICA
+          linha e município/UF repetidos em rótulos próprios.
+        - Sem Parar: o emitente é o cabeçalho (início do texto até `EMPRESAS`)
+          e o cliente vem sob `EMPRESAS`, com um rótulo por campo.
+
+        ⚠️ O endereço de uma linha só é AMBÍGUO e não pode ser lido por
+        posição. Os dois exemplos reais da mesma nota:
+
+            VIA URBANA, 01 (CIA-SUL) - SIMOES FILHO - 43700-000   (tomador)
+            Rua Arembepe, 488 (sala 101) - Bela Vista - 42809-326 (prestador)
+
+        No tomador o parêntese é o BAIRRO e o campo seguinte é o MUNICÍPIO; no
+        prestador o parêntese é o COMPLEMENTO e o campo seguinte é o BAIRRO —
+        mesma forma, significados trocados. O desempate é o rótulo
+        `Município:` do próprio bloco: se o campo seguinte for igual a ele, é
+        município; se não for, é bairro."""
+        t = self.raw_text
+        cod_padrao, mun_padrao, uf_padrao = self._EMITENTE_PADRAO_ROTULADO.get(
+            self.layout, ('', 'Não informado', 'BA'))
+        placeholder = ('Prestador Não Identificado' if is_prestador
+                       else 'Tomador Não Identificado')
+
+        def _vazia() -> Entidade:
+            return Entidade(
+                cnpj_cpf='00000000000000', razao_social=placeholder,
+                endereco=Endereco(
+                    logradouro='Não informado', numero='S/N', bairro='Não informado',
+                    codigo_municipio=cod_padrao, municipio=mun_padrao, uf=uf_padrao,
+                    cep='00000000'),
+            )
+
+        if self.layout == LAYOUT_SEM_PARAR:
+            m_emp = re.search(r'\bEMPRESAS\b', t)
+            if is_prestador:
+                bloco = t[:m_emp.start()] if m_emp else t
+            else:
+                if not m_emp:
+                    return _vazia()
+                m_fim = re.search(r'N[ºo°]\s*da\s+Fatura', t, re.IGNORECASE)
+                fim = m_fim.start() if (m_fim and m_fim.start() > m_emp.end()) else len(t)
+                bloco = t[m_emp.end():fim]
+        else:
+            m_ini = re.search(
+                r'PRESTADOR\s+DE\s+SERVI[ÇC]OS' if is_prestador else r'TOMADOR\s+DE\s+SERVI[ÇC]OS',
+                t, re.IGNORECASE)
+            m_fim = re.search(
+                r'TOMADOR\s+DE\s+SERVI[ÇC]OS' if is_prestador
+                else r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+            if not m_ini:
+                return _vazia()
+            fim = m_fim.start() if (m_fim and m_fim.start() > m_ini.end()) else len(t)
+            bloco = t[m_ini.end():fim]
+
+        # ------------------------------------------------------ razão social
+        # O corte de ruído remove só tokens de UM caractere no fim da linha
+        # (achado real, pág. 9: "...MAQUINAS LTDA o"); nenhuma razão social
+        # termina numa letra solta, e a regra não toca em "LTDA - ME" nem em
+        # nomes em Title Case, cujo último token é sempre maior que isso.
+        def _limpa_razao(v: str) -> str:
+            return re.sub(r'(?:\s+\S)+$', '', (v or '').strip()).strip(' .:|-')
+
+        m_razao = re.search(r'(?:Raz[ãa]o\s+Social|Nome)\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+        razao = _limpa_razao(m_razao.group(1)) if m_razao else ''
+
+        # ------------------------------------------------------------- CNPJ
+        # Checksum obrigatório: um dígito corrompido pelo OCR vira sentinela +
+        # aviso em vez de um CNPJ plausível-porém-errado (mesma decisão do
+        # prestador no `_extrair_entidade_camacari3`).
+        cnpj = ''
+        for m_cnpj in re.finditer(
+                r'(?:CPF\s*/\s*)?CNPJ(?:\s*/\s*MF)?\s*:?\s*(\d{2}[.,\s]?\d{3}[.,\s]?\d{3}/?\d{4}-?\d{2})',
+                bloco, re.IGNORECASE):
+            candidato = re.sub(r'\D', '', m_cnpj.group(1))
+            if self._validate_cnpj_cpf(candidato):
+                cnpj = candidato
+                break
+
+        m_im = re.search(r'Insc(?:ri[çc][ãa]o|\.)?\s*Municipal\s*n?[ºo°]?\s*:?\s*([\d][\d.\-]*)',
+                         bloco, re.IGNORECASE)
+        inscricao = m_im.group(1).strip(' .-') if m_im else None
+
+        logradouro = numero = complemento = bairro = cep = ''
+        municipio = uf = ''
+
+        # Rótulo próprio de município — fonte preferida e, no endereço de uma
+        # linha só, o desempate entre bairro e município (ver docstring).
+        m_mun = re.search(r'Munic[íi]pio\s*:\s*([^\n]+?)\s*(?:UF\s*:\s*([A-Z]{2})\b|$)',
+                          bloco, re.IGNORECASE)
+        if not m_mun:
+            m_mun = re.search(r'Cidade\s*/\s*UF\s*:\s*([^\n]+?)\s*-\s*([A-Z]{2})\b',
+                              bloco, re.IGNORECASE)
+        municipio_rotulo = m_mun.group(1).strip(' .:|-') if m_mun else ''
+        if m_mun:
+            municipio = municipio_rotulo
+            uf = (m_mun.group(2) or '').upper()
+
+        # 1ª forma — endereço todo numa linha (GestãoClick).
+        m_linha = re.search(
+            r'Endere[çc]o\s*:\s*([^\n,]+?)\s*,\s*([^\s,(]+)\s*\(([^)\n]*)\)\s*-\s*'
+            r'([^\n-]+?)\s*-\s*(\d{5}-?\d{3})',
+            bloco, re.IGNORECASE)
+        if m_linha:
+            logradouro = m_linha.group(1).strip()
+            numero = m_linha.group(2).strip()
+            entre_parenteses = m_linha.group(3).strip()
+            campo_seguinte = m_linha.group(4).strip()
+            cep = re.sub(r'\D', '', m_linha.group(5))
+            if (municipio_rotulo and self._sem_acento_maiusculo(campo_seguinte)
+                    == self._sem_acento_maiusculo(municipio_rotulo)):
+                bairro = entre_parenteses          # "(CIA-SUL) - SIMOES FILHO"
+            else:
+                complemento = entre_parenteses     # "(sala 101) - Bela Vista"
+                bairro = campo_seguinte
+        else:
+            # 2ª forma — um rótulo por campo (cliente da fatura Sem Parar).
+            m_end = re.search(r'Endere[çc]o\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_end:
+                bruto = m_end.group(1).strip()
+                m_num = re.search(r'^(.*?),\s*([0-9]+[A-Za-z]?|S/?N)\s*$', bruto, re.IGNORECASE)
+                if m_num:
+                    logradouro, numero = m_num.group(1).strip(), m_num.group(2).strip()
+                else:
+                    logradouro = bruto
+            m_bairro = re.search(r'Bairro\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
+            if m_bairro:
+                bairro = m_bairro.group(1).strip()
+            m_cep = re.search(r'CEP\s*:?\s*(\d{5}-?\d{3})', bloco, re.IGNORECASE)
+            if m_cep:
+                cep = re.sub(r'\D', '', m_cep.group(1))
+
+        if self.layout == LAYOUT_SEM_PARAR and is_prestador:
+            # O cabeçalho do emitente não tem rótulo "Endereço:"/"Bairro:": a
+            # 3ª linha é "05425-902 - Pinheiros - São Paulo/SP", e a razão
+            # social e o logradouro só saem legíveis no recorte dedicado.
+            m_cab = re.search(
+                r'(\d{5}-?\d{3})\s*-\s*([^\n\-]+?)\s*-\s*([^\n/]+?)\s*/\s*([A-Z]{2})\b', bloco)
+            if m_cab:
+                cep = re.sub(r'\D', '', m_cab.group(1))
+                bairro = m_cab.group(2).strip()
+                municipio = m_cab.group(3).strip()
+                uf = m_cab.group(4).upper()
+
+            recorte = self._ocr_cabecalho_sem_parar()
+            for linha in (recorte or '').split('\n'):
+                linha = linha.strip()
+                if not razao and re.search(r'SEM\s*PARAR', linha, re.IGNORECASE):
+                    # Corta a sangria da coluna da direita ("... LTDA. NOS").
+                    razao = re.sub(r'\s+N[OoºÍ\[“”\'"´`]+\S*\s*$', '', linha).strip(' .:|-')
+                m_via = re.match(
+                    r'^((?:Av|Avenida|R|Rua|Rod|Rodovia|Pra[çc]a|Al|Alameda|Trav|Travessa)\b[^,]*)'
+                    r',\s*(\d+[A-Za-z]?)\s*,?\s*(.*)$', linha, re.IGNORECASE)
+                if m_via and not logradouro:
+                    logradouro = m_via.group(1).strip()
+                    numero = m_via.group(2).strip()
+                    resto = re.sub(r'\s*-\s*\S*$', '', m_via.group(3)).strip(' .,-')
+                    if resto:
+                        complemento = resto
+            if not razao:
+                # Reserva dentro do PRÓPRIO documento: a frase antifraude do
+                # rodapé nomeia o emitente por extenso e sai limpa no OCR de
+                # página ("...o beneficiário é SEM PARAR ... , com o CNPJ").
+                m_rod = re.search(r'benefici[áa]rio\s+[ée]\s+(.+?)\s*,\s*com\s+o\s+CNPJ',
+                                  t, re.IGNORECASE)
+                if m_rod:
+                    razao = _limpa_razao(m_rod.group(1))
+
+        cod_mun = _ibge_resolver.extract_and_validate(
+            municipio, uf or uf_padrao, city_hint=municipio) if municipio else ''
+
+        return Entidade(
+            cnpj_cpf=cnpj or '00000000000000',
+            razao_social=razao or placeholder,
+            inscricao_municipal=inscricao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=numero or 'S/N',
+                complemento=complemento or None,
+                bairro=bairro or 'Não informado',
+                codigo_municipio=cod_mun or cod_padrao,
+                municipio=municipio or mun_padrao,
+                uf=uf or uf_padrao,
+                cep=cep or '00000000',
+            ),
+        )
+
     def _extrair_entidade_monte_santo(self, is_prestador: bool) -> Optional[Entidade]:
         """Extrai prestador/tomador da NFS-e de Monte Santo/BA (PDF digital).
 
@@ -10999,6 +11377,117 @@ class SPPdfExtractor:
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
+
+        if self.layout == LAYOUT_CAMACARI_GESTAOCLICK:
+            # Grade em duas faixas de "rótulos numa linha, valores na linha
+            # seguinte":
+            #   DEDUÇÕES | DESCONTOS | B. CÁLCULO | ISS | ISS RETIDO | COFINS
+            #   PIS | CSLL | IR | INSS | VALOR DOS SERVIÇOS
+            # e, abaixo, "VALOR LÍQUIDO DA NOTA: R$ ...".
+            #
+            # NÃO se lê por posição de coluna: na nota real o rótulo "ISS"
+            # saiu do OCR como "E)" (conferido no pixel que é mesmo "ISS"), e
+            # uma grade lida por índice quebraria em silêncio a cada rótulo
+            # perdido. Cada valor é ancorado no que ele tem de próprio — a
+            # alíquota vem entre parênteses logo depois do ISS, o valor dos
+            # serviços é o ÚLTIMO da 2ª faixa, o líquido tem rótulo só dele.
+            def _num(s: str) -> float:
+                return self._parse_valor(s) if s else 0.0
+
+            def _valores_da_linha_apos(rotulo: str) -> List[str]:
+                m = re.search(rotulo + r'[^\n]*\n\s*([^\n]+)', t, re.IGNORECASE)
+                return re.findall(r'R\$\s*([\d.]+,\d{2})', m.group(1)) if m else []
+
+            # 2ª faixa: PIS/CSLL/IR/INSS e, por último, VALOR DOS SERVIÇOS.
+            faixa2 = _valores_da_linha_apos(r'VALOR\s+DOS\s+SERVI[ÇC]OS')
+            valor_servicos = _num(faixa2[-1]) if faixa2 else 0.0
+            valor_pis = _num(faixa2[0]) if len(faixa2) >= 5 else 0.0
+            valor_csll = _num(faixa2[1]) if len(faixa2) >= 5 else 0.0
+            valor_ir = _num(faixa2[2]) if len(faixa2) >= 5 else 0.0
+            valor_inss = _num(faixa2[3]) if len(faixa2) >= 5 else 0.0
+
+            # 1ª faixa: o ISS é o R$ imediatamente ANTES do percentual entre
+            # parênteses — âncora que não depende do rótulo sobreviver.
+            valor_iss = aliquota = 0.0
+            m_iss = re.search(r'R\$\s*([\d.]+,\d{2})\s*\(\s*([\d.]+,\d+)\s*%\s*\)', t)
+            if m_iss:
+                valor_iss = _num(m_iss.group(1))
+                aliquota = self._parse_valor(m_iss.group(2)) / 100.0
+
+            faixa1 = _valores_da_linha_apos(r'DEDU[ÇC][ÕO]ES')
+            valor_deducoes = _num(faixa1[0]) if len(faixa1) >= 3 else 0.0
+            desconto_incondicionado = _num(faixa1[1]) if len(faixa1) >= 3 else 0.0
+            base_calculo = _num(faixa1[2]) if len(faixa1) >= 3 else 0.0
+            valor_cofins = _num(faixa1[-1]) if len(faixa1) >= 4 else 0.0
+
+            m_liq = re.search(r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NOTA\s*:?\s*R\$\s*([\d.]+,\d{2})',
+                              t, re.IGNORECASE)
+            valor_liquido = _num(m_liq.group(1)) if m_liq else valor_servicos
+
+            # "ISS RETIDO" é NÃO/SIM, não um valor — vem na 1ª faixa entre o
+            # ISS e o COFINS, então é lido pelo próprio rótulo.
+            m_ret = re.search(r'ISS\s+RETIDO[^\n]*\n\s*([^\n]+)', t, re.IGNORECASE)
+            iss_retido = bool(m_ret and re.search(r'\bSIM\b', m_ret.group(1), re.IGNORECASE))
+
+            # Identidade contábil como CONFERÊNCIA, nunca como preenchimento:
+            # a base só é recomposta quando a capturada é implausível (menor
+            # que serviços - deduções), mesma regra já usada no Camaçari/CPqD.
+            # Aqui ela confere de primeira (2.500,00 x 4,52% = 113,00), então
+            # nada é recomposto na nota de referência.
+            if base_calculo < (valor_servicos - valor_deducoes) - 0.01:
+                base_calculo = round(valor_servicos - valor_deducoes, 2)
+
+            return Valores(
+                valor_servicos=valor_servicos,
+                valor_deducoes=valor_deducoes,
+                valor_pis=valor_pis, valor_cofins=valor_cofins,
+                valor_inss=valor_inss, valor_ir=valor_ir, valor_csll=valor_csll,
+                iss_retido=iss_retido,
+                valor_iss=valor_iss,
+                valor_iss_retido=valor_iss if iss_retido else 0.0,
+                base_calculo=base_calculo,
+                aliquota=aliquota,
+                valor_liquido_nfse=valor_liquido,
+                desconto_incondicionado=desconto_incondicionado,
+            )
+
+        if self.layout == LAYOUT_SEM_PARAR:
+            # Esta fatura NÃO traz grade de ISS: a página não imprime base de
+            # cálculo, alíquota nem valor do imposto em lugar nenhum (é a
+            # "Página 1/5" de um documento cujas demais páginas não estão no
+            # PDF do usuário). O que ela imprime é um resumo de cobrança —
+            # "Subtotal" das linhas de uso das tags e "Outras Arrec." —
+            # fechando num "TOTAL" que o OCR de página NÃO recupera (a linha
+            # fica sobre faixa cinza; conferido no pixel: R$ 3.844,86, e
+            # nenhuma combinação de recorte/zoom/PSM testada a lê).
+            #
+            # O valor dos serviços é composto das PARCELAS que a própria nota
+            # declara, e só quando as duas são lidas — somar rubricas
+            # impressas para chegar ao total impresso é ler a aritmética do
+            # documento, não inventá-la. Se qualquer uma faltar, fica zerado:
+            # não existe "meio total".
+            m_sub = re.search(r'Subtotal\s*R?\$?\s*([\d.]+,\d{2})', t, re.IGNORECASE)
+            m_arrec = re.search(r'Outras\s*Arrec[^\n]*\n\s*([^\n]+)', t, re.IGNORECASE)
+            total = 0.0
+            if m_sub:
+                subtotal = self._parse_valor(m_sub.group(1))
+                arrec = 0.0
+                if m_arrec:
+                    # A linha de valores sai sem pontuação decimal confiável
+                    # ("2730D" para 27,30 D); o "D" de débito cola no número.
+                    nums = re.findall(r'(\d[\d.]*),?(\d{2})\s*D\b', m_arrec.group(1))
+                    if nums:
+                        arrec = self._parse_valor('%s,%s' % nums[0])
+                total = round(subtotal + arrec, 2)
+            # Base/alíquota/ISS ficam ZERADOS: a nota não os imprime, e
+            # derivá-los do total seria inventar a tributação. Mesma convenção
+            # já usada em toda a família de faturas sem ISS (ex.: locação).
+            # O aviso correspondente é emitido em `parse()`.
+            return Valores(
+                valor_servicos=total, valor_deducoes=0.0,
+                base_calculo=0.0, aliquota=0.0, valor_iss=0.0,
+                valor_liquido_nfse=total,
+            )
 
         if self.layout == LAYOUT_SP_SKYTEF:
             # Bloco final (Código do Serviço/PIS/COFINS/IR/INSS/CSLL/B.Cálculo/
@@ -17672,6 +18161,33 @@ class SPPdfExtractor:
                 "Eletrônica), não sujeito a ISS - campos de Base de Cálculo/"
                 "Alíquota/Valor do ISS mantidos zerados propositalmente"
             )
+        if self.layout == LAYOUT_SEM_PARAR:
+            # Esta fatura não imprime base de cálculo, alíquota nem ISS em
+            # lugar nenhum, e o valor entregue é COMPOSTO das rubricas que ela
+            # declara — o usuário precisa saber as duas coisas para conferir.
+            avisos.append(
+                "Fatura Sem Parar: o documento não imprime Base de Cálculo, "
+                "Alíquota nem Valor do ISS - esses campos ficam ZERADOS "
+                "propositalmente, não foram calculados"
+            )
+            if valores.valor_servicos:
+                # Formata só o NÚMERO no padrão brasileiro; aplicar a troca de
+                # separadores na frase inteira estraga a pontuação do texto.
+                valor_br = (f"{valores.valor_servicos:,.2f}"
+                            .replace(',', '#').replace('.', ',').replace('#', '.'))
+                avisos.append(
+                    f"Valor dos serviços (R$ {valor_br}) COMPOSTO pela soma das "
+                    "rubricas impressas na própria fatura (Subtotal + Outras "
+                    "Arrec.): a linha do TOTAL fica sobre faixa cinza e não "
+                    "sobrevive ao OCR - confira contra o TOTAL impresso"
+                )
+            m_pag = re.search(r'P[áa]gina\s*(\d+)\s*/\s*(\d+)', self.raw_text, re.IGNORECASE)
+            if m_pag and m_pag.group(1) != m_pag.group(2):
+                avisos.append(
+                    f"Somente a página {m_pag.group(1)} de {m_pag.group(2)} desta "
+                    "fatura está no PDF - retenções e demais páginas não foram lidas"
+                )
+
         if self.layout == LAYOUT_ROTAEXATA_LOCACAO:
             retencoes = re.findall(r'\b(IRRF|CSLL|PIS|COFINS)\s*:\s*([\d.,]+\s*%)',
                                    self.raw_text, re.IGNORECASE)
