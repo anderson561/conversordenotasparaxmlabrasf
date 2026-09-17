@@ -573,18 +573,30 @@ def main(page: ft.Page):
                         wrap=True,
                     )
 
+                    # Achado real 2026-09-16 (PDF "STAUMMAQ - SCAN.pdf", 8 notas
+                    # válidas): a tela de seleção de páginas não aparecia para
+                    # PDFs com poucas notas (<=8), só para os com muitas (>8) —
+                    # exatamente os dois casos em que `height` do Container ficava
+                    # `None` (sem seleção) x `420` (fixo). Suspeita: `height=None`
+                    # dentro de um `AlertDialog` deixa a Column sem altura limitada
+                    # para o layout engine calcular no backend desktop do Flet,
+                    # colapsando o diálogo a altura zero/invisível em vez de
+                    # dimensionar pelo conteúdo. Corrigido dando SEMPRE uma altura
+                    # explícita (escalada pela quantidade de notas, com piso e teto)
+                    # em vez de deixar `None` para listas curtas.
+                    altura_conteudo = min(420, max(160, 90 + 36 * len(nfse_list)))
                     col_content = ft.Column(
                         [ft.Text("O PDF possui mais de uma nota válida. Marque as páginas que deseja converter:")]
                         + page_checkboxes
                         + [ft.Divider(), acoes],
                         tight=True,
-                        scroll=ft.ScrollMode.AUTO if len(nfse_list) > 8 else ft.ScrollMode.NONE,
+                        scroll=ft.ScrollMode.AUTO,
                     )
                     dialog = ft.AlertDialog(
                         title=ft.Text("Selecionar páginas para conversão"),
                         content=ft.Container(
                             content=col_content,
-                            height=420 if len(nfse_list) > 8 else None,
+                            height=altura_conteudo,
                             width=380,
                         ),
                     )
@@ -593,8 +605,17 @@ def main(page: ft.Page):
                     page.update()
                     return
             except Exception as ex:
-                pass # se der erro, deixa o do_run processar e mostrar no log
-                
+                # Antes: `pass` silencioso — qualquer exceção na pré-checagem
+                # (ex.: falha de OCR ao pré-analisar o PDF) fazia a tela de
+                # seleção de páginas nunca aparecer, SEM nenhum aviso, e o
+                # usuário só via o PDF ser convertido inteiro sem chance de
+                # escolher páginas — indistinguível de "não tem mais de uma
+                # nota válida" (achado real 2026-09-16, PDF "STAUMMAQ - SCAN.pdf",
+                # 8 páginas). Agora loga o erro real para o usuário poder
+                # diagnosticar, e o fluxo continua para `do_run()` (conversão
+                # completa, sem seleção) como já fazia.
+                add_log(f"[AVISO] Não foi possível pré-analisar as páginas do PDF para oferecer seleção: {ex}", "orange")
+
         do_run()
 
     process_btn = ft.ElevatedButton(
