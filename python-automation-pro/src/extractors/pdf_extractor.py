@@ -10474,11 +10474,29 @@ class SPPdfExtractor:
         # NA NFS" sobrevive INTEGRALMENTE em ambas as linhas garbladas (é a
         # frase de status do checkbox, não o rótulo em si) — usado como
         # marcador de fim mais resiliente, adicional aos já existentes.
+        # Achado real 2026-09-16 (nota nº 59, DANFSe v2.0/Campo Grande-MS,
+        # Marcos Antonio da Silva Borges -> tomador não identificado): quando
+        # o PRÓPRIO tomador não é identificado, o cabeçalho "TOMADOR /
+        # ADQUIRENTE" é seguido, na mesma respiração, por "DA OPERAÇÃO NÃO
+        # IDENTIFICADO NA NFS-e\nDESTINATÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA
+        # NFS-e" — e o marcador de fim resiliente "IDENTIFICADO NA NFS"
+        # (achado da nota nº 5/SBS acima) casa DENTRO dessa MESMA frase,
+        # cortando `bloco` do tomador a quase nada (' DA OPERAÇÃO NÃO ') e
+        # perdendo o Endereço real impresso logo abaixo. Pula esse preâmbulo
+        # fixo (quando presente) antes de procurar o fim de verdade.
+        inicio_fim = m_tom.end() if m_tom else 0
+        if m_tom:
+            m_preambulo = re.match(
+                r'\s*(?:DA\s+OPERA[ÇC][ÃA]O\s+)?N[ÃA]O\s+IDENTIFICADO\s+NA\s+NFS-?e\s*\n+'
+                r'\s*DESTINAT[ÁA]RIO\s+DA\s+OPERA[ÇC][ÃA]O\s+N[ÃA]O\s+IDENTIFICADO\s+NA\s+NFS-?e',
+                t[m_tom.end():], re.IGNORECASE)
+            if m_preambulo:
+                inicio_fim = m_tom.end() + m_preambulo.end()
         m_fim = re.search(
             r'(?:DESTINAT[ÁA]RIO|INTERMEDI[ÁA]RIO)\s+DA\s+OPERA[ÇC][ÃA]O|SERVI[ÇC]O\s+PRESTADO|'
             r'IDENTIFICADO\s+NA\s+NFS',
-            t[m_tom.end():] if m_tom else t, re.IGNORECASE)
-        fim = (m_tom.end() + m_fim.start()) if (m_tom and m_fim) else len(t)
+            t[inicio_fim:] if m_tom else t, re.IGNORECASE)
+        fim = (inicio_fim + m_fim.start()) if (m_tom and m_fim) else len(t)
 
         if is_intermediario:
             # A v1.0 dizia "INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA
@@ -10499,13 +10517,41 @@ class SPPdfExtractor:
                 return None
             m_nome = re.search(r'Nome\s*/\s*Nome\s+Empresarial\s*\n+\s*([^\n]+)', bloco_int, re.IGNORECASE)
             # O <Intermediario> do ABRASF 2.01 carrega só CpfCnpj, Inscrição
-            # Municipal e Razão Social — endereço não é emitido, por isso não
-            # tentamos reconstruí-lo aqui.
+            # Municipal e Razão Social — endereço não é emitido, por isso o
+            # transformer nunca lê `endereco` deste objeto NESSE papel. Mesmo
+            # assim capturamos Município/Sigla UF e Código IBGE/CEP (a v2.0
+            # imprime os dois no próprio bloco do intermediário, sem
+            # "Endereço" - este layout não tem logradouro para intermediário)
+            # porque esta mesma Entidade pode ser PROMOVIDA a tomador logo
+            # abaixo, e aí o endereço passa a valer — ver a promoção
+            # intermediário->tomador em `parse_multiple`.
+            m_mun_int = re.search(
+                r'Munic[íi]pio\s*/\s*Sigla\s+UF\s*\n+\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*/\s*([A-Za-z]{2})\s*\n',
+                bloco_int, re.IGNORECASE)
+            m_ibge_int = re.search(
+                r'C[óo]digo\s+IBGE\s*/\s*CEP\s*\n+\s*([\d.]{5,12})\s*/\s*([\d.\-]{8,12})',
+                bloco_int, re.IGNORECASE)
+            municipio_int, uf_int = ('', '')
+            cod_mun_int, cep_int = ('', '00000000')
+            if m_mun_int:
+                municipio_int = re.sub(r'\s+', ' ', m_mun_int.group(1)).strip()
+                uf_int = m_mun_int.group(2).upper()
+            if m_ibge_int:
+                ibge_int = re.sub(r'\D', '', m_ibge_int.group(1))
+                cep_cand_int = re.sub(r'\D', '', m_ibge_int.group(2))
+                if len(ibge_int) == 7:
+                    cod_mun_int = ibge_int
+                if len(cep_cand_int) == 8:
+                    cep_int = cep_cand_int
+            if not cod_mun_int and municipio_int:
+                cod_mun_int = _ibge_resolver.extract_and_validate(
+                    municipio_int, uf_int, city_hint=municipio_int, raw_doc_text=t) or ''
             return Entidade(
                 cnpj_cpf=re.sub(r'\D', '', m_doc.group(1)),
                 razao_social=(m_nome.group(1).strip() if m_nome else 'Intermediário Não Identificado'),
                 endereco=Endereco(logradouro='Não informado', numero='S/N', bairro='Não informado',
-                                  codigo_municipio='', municipio='Não informado', uf='', cep='00000000'),
+                                  codigo_municipio=cod_mun_int, municipio=municipio_int or 'Não informado',
+                                  uf=uf_int, cep=cep_int),
             )
 
         if is_prestador:
@@ -10515,7 +10561,22 @@ class SPPdfExtractor:
         idx = 0 if is_prestador else 1
 
         # Região onde ficam as colunas despejadas das DUAS entidades.
-        regiao = t[m_prest.start():fim] if m_prest else t[:fim]
+        #
+        # Achado real 2026-09-16 (nota nº 59, DANFSe v2.0/Campo Grande-MS):
+        # o INTERMEDIÁRIO pode vir ENTRE prestador e tomador na ordem de
+        # leitura desta nota (PRESTADOR -> INTERMEDIÁRIO -> TOMADOR), ordem
+        # diferente da usual assumida aqui (PRESTADOR -> TOMADOR ->
+        # INTERMEDIÁRIO). Sem excluir o próprio bloco do intermediário desta
+        # região, a contagem ordinal de Município/Sigla UF e Código IBGE/CEP
+        # pega a 2ª ocorrência = a do INTERMEDIÁRIO (aqui, Salvador/BA), não
+        # a do tomador (que nesta nota nem tem essas colunas próprias) — o
+        # tomador saía com o código IBGE/CEP do intermediário, um valor
+        # plausível-porém-errado (pior que deixar em branco).
+        m_int_meio = re.search(r'INTERMEDI[ÁA]RIO\s+DA\s+OPERA[ÇC][ÃA]O', t[:fim], re.IGNORECASE) if m_prest else None
+        if m_prest and m_tom and m_int_meio and m_prest.start() < m_int_meio.start() < m_tom.start():
+            regiao = t[m_prest.start():m_int_meio.start()] + t[m_tom.start():fim]
+        else:
+            regiao = t[m_prest.start():fim] if m_prest else t[:fim]
 
         def _colher(label_re, aceita):
             """Um item por OCORRÊNCIA do rótulo (None quando o campo vem em
@@ -18989,13 +19050,22 @@ class SPPdfExtractor:
 
         # DANFSe Nacional: quando o TOMADOR vem "não identificado" na própria nota
         # (o documento imprime, em tarja de largura total, "TOMADOR DO SERVIÇO NÃO
-        # IDENTIFICADO NA NFS-e") mas há um INTERMEDIÁRIO identificado, promover o
+        # IDENTIFICADO NA NFS-e"/"TOMADOR/ADQUIRENTE DA OPERAÇÃO NÃO IDENTIFICADO
+        # NA NFS-e") mas há um INTERMEDIÁRIO identificado, promover o
         # intermediário a tomador. Regra de negócio (decisão do usuário 2026-08-04,
         # nota nº 44 pág.18 do lote Guarajuba Suítes: o MEI prestador lançou a PH
         # Gestão como intermediário e deixou o tomador em branco; para a
         # contabilidade, a PH Gestão é o tomador efetivo). Esvazia o
-        # <Intermediario> — a mesma entidade não fica nos dois papéis.
-        if self.layout == LAYOUT_NACIONAL and intermediario is not None:
+        # <Intermediario> — a mesma entidade não fica nos dois papéis. Quando o
+        # tomador VEM identificado, ele tem prioridade e este bloco não dispara —
+        # caso excepcional de AMBOS preenchidos mantém o tomador de verdade.
+        #
+        # Estendida para LAYOUT_NACIONAL_REFORMA (DANFSe v2.0) em 2026-09-16
+        # (pedido explícito do usuário, nota nº 59, Campo Grande/MS: tomador não
+        # identificado, intermediário ELOS ESTUDIO E SERVICOS LTDA identificado)
+        # — mesma regra de negócio, mesma condição de tomador não identificado
+        # (CNPJ sentinela OU razão social com a tarja "NÃO IDENTIFICADO").
+        if self.layout in (LAYOUT_NACIONAL, LAYOUT_NACIONAL_REFORMA) and intermediario is not None:
             tomador_nao_ident = (
                 tomador is None
                 or (tomador.cnpj_cpf or '').startswith('00000000000')
