@@ -92,6 +92,10 @@ class IBGEResolver:
         # Feira de Santana/BA (já cadastrada acima) - as duas entidades
         # cairiam no MESMO código por motivos diferentes.
         "RIBEIRAO PRETO": "3543402", "RIBEIRÃO PRETO": "3543402",
+        # Dias d'Ávila/BA - município do tomador da nota SETE CONNECT
+        # (LAYOUT_NFCOM_SETE_CONNECT, nota nº 18770, achado real 2026-09-17).
+        # Sem esta entrada caía no fallback silencioso de Salvador/BA.
+        "DIAS DAVILA": "2910057", "DIAS DÁVILA": "2910057",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
