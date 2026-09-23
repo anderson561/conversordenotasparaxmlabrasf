@@ -15023,7 +15023,43 @@ class SPPdfExtractor:
             # quando esta linha não é encontrada. `\d{4}` depois da vírgula
             # da quantidade é o discriminador seguro contra falso-positivo
             # (nenhum valor monetário da grade usa 4 casas decimais).
-            m_item = re.search(r'(\d+),\d{4}\s+([\d\.,]+)\s+([\d\.,]+)', t)
+            #
+            # GRADE COM MÚLTIPLOS ITENS (achado real, nota nº 1359, GRAFICA E
+            # EDITORA ITACIMIRIM LTDA -> STAUMMAQ, lote "STAUMMAQ - NFSe
+            # TERCEIROS.pdf" pág. 3): quando a nota discrimina VÁRIOS itens de
+            # serviço na mesma grade (aqui, 4 linhas — R$500 + R$500 + R$750 +
+            # R$950 = R$2.700,00), este regex via `re.search` só acha a
+            # PRIMEIRA linha que casa por inteiro (as demais quebram o padrão
+            # por ruído de OCR na coluna do unitário — ex. "so,007" em vez de
+            # "50,00" na 1ª linha, "1,90 J" colado em vez de "1,90" na 4ª) e
+            # usa SÓ o total dessa UMA linha como se fosse o valor da nota
+            # inteira (saía 500,00 em vez de 2.700,00). Ao contrário da nota
+            # nº 148 (item ÚNICO, onde a linha do item é mais confiável que a
+            # célula da grade), aqui é a CÉLULA da grade que já vem correta
+            # ("Valor dos Serviços (R$) 2.700,00" — o próprio CPqD já soma os
+            # itens ao imprimir a nota) e é a linha de UM item isolado que é
+            # enganosa. Regra generalizável (não depende de a nota ter
+            # exatamente 4 itens): contamos quantas linhas de item TOTALMENTE
+            # legíveis (total com vírgula+2 casas e valor > 0 — descarta tanto
+            # linhas de preenchimento "0,0000 0,00 0,00"/"2,0000 0,00 0,00"
+            # quanto capturas degeneradas como "2," sem dígito de centavo)
+            # existem na grade; se houver MAIS DE UMA, a nota tem múltiplos
+            # itens e nenhuma linha isolada pode representar o total sozinha
+            # — o override por linha de item é desligado e o valor cai para a
+            # célula "Valor dos Serviços (R$)" da grade (ou, se essa célula
+            # também falhar, para os fallbacks existentes abaixo).
+            def _total_de_item_valido(mm) -> bool:
+                total = mm.group(3)
+                if not re.search(r',\d{2}$', total):
+                    return False
+                return _parse_valor_camacari(total) > 0.0
+
+            _itens_validos = [
+                mm for mm in re.finditer(r'(\d+),\d{4}\s+([\d\.,]+)\s+([\d\.,]+)', t)
+                if _total_de_item_valido(mm)
+            ]
+            m_item = _itens_validos[0] if _itens_validos else None
+            multiplos_itens_na_grade = len(_itens_validos) > 1
             m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(=\)\s*([\d\.,]+)', t, re.IGNORECASE)
             # "Al.?quota" tolera o "í" de "Alíquota" ser lido pelo OCR como "i" comum
             # ou até como o caractere de substituição Unicode "�" (falha total de
@@ -15070,7 +15106,7 @@ class SPPdfExtractor:
             )
             val_serv_item = (
                 _parse_valor_camacari(m_item.group(3))
-                if m_item and ',' in m_item.group(3)
+                if m_item and ',' in m_item.group(3) and not multiplos_itens_na_grade
                 else 0.0
             )
             if (
