@@ -205,6 +205,7 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
   - Exemplo: `5300010812249298570001590000000001182260517794 14799` (após limpeza: `530001081224929857000159000000000118226051779414799`)
 - **Data de Competência**: Busca do rótulo `Data de Competência` ou `Data de Geração de NFS-e`
 - **Entidades**: Suporte completo a extração de Prestador, Tomador e dados de serviço
+- **Valores (nota ESCANEADA/OCR)**: âncora dedicada na linha "Base de Cálculo: R$ X Alíquota: Y% Vl. ISSQN: R$ Z" da seção "IMPOSTO SOBRE SERVIÇO DE QUALQUER NATUREZA - ISSQN" (3 colunas na mesma linha, ordem de leitura do OCR). Corrige um achado real (2026-09-23, Scan2026-09-23_090227.pdf pág. 3): sem esta âncora, o Valor ISS saía **zerado (0,00)** — a regex genérica de ISS do fallback casava a palavra "iss" dentro da URL fixa de consulta impressa em TODA nota deste layout ("https://iss.fazenda.df.gov.br/online/"), que o OCR às vezes degrada para "https:/liss,fazenda,df,gov..." (a vírgula cai na classe de caracteres do fallback). Tolerante a "Vl."/"VI." (OCR troca "l" minúsculo por "I" maiúsculo). Não é um layout novo — o `brasilia_df` já existia; apenas ganhou um branch de extração de valores dedicado, ausente até então nesta função.
 - **Status**: ✅ Suportado nativamente
 
 ### 11. Simões Filho/BA — `simoes_filho_ba`
