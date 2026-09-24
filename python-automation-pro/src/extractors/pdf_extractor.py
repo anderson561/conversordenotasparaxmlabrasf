@@ -89,6 +89,19 @@ LAYOUT_LOCONTAINERS = 'locontainers' # Locontainers (Vidal Locação de Containe
 LAYOUT_TELECOM_COMUNICACAO = 'telecom_comunicacao' # NF-e Fatura de Serviço de Comunicação Eletrônica
 LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrônica de Repasse (NF-R), ex: iFood Benefícios
 LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
+# João Pessoa/PB - NFS-e oficial da Secretaria da Receita Municipal ("Nota
+# Fiscal de Serviços Eletrônica NFSe - Prestador"). PDF ESCANEADO (OCR).
+# Mesma grade "rótulos numa linha, valores na seguinte, vários campos por
+# linha" do LAYOUT_CAMPINAS (inclusive a MESMA grade "CÁLCULO DO ISSQN" /
+# "VALOR TOTAL", reaproveitada tal e qual em `_extrair_valores`), mas com
+# quirks de OCR próprios (separador "/" saindo como "!", "@" do e-mail
+# saindo como "(" + letra maiúscula, endereço quebrado em 2 linhas de
+# valor, item da LC116 "14.06" lido como "1408" no zoom padrão) - ver
+# `_extrair_entidade_joao_pessoa` e `_ocr_recut_item_lc116_joao_pessoa`.
+# Achado real: nota nº 1001671, ESPACO A COMERCIO DE MOVEIS LTDA (João
+# Pessoa/PB) -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVIÇOS - EIRELI
+# (Salvador/BA).
+LAYOUT_JOAO_PESSOA = 'joao_pessoa_pb'
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # NFS-e eNotas Gateway (Lauro de Freitas/BA) - nome do layout mantido por retrocompatibilidade, mas cobre MÚLTIPLOS emitentes na mesma plataforma: PASSWORD Sistemas Eletronicos (CNPJ 04.021.023/0001-33) e INFOMIX Soluções em Tecnologia (CNPJ 29.869.622/0001-32) - cada um detectado pelo próprio CNPJ, nunca pela marca genérica "eNotas", para não colidir com futuros emitentes do mesmo provedor. Extração de entidades/valores é genérica o bastante para servir ambos sem ramos dedicados, exceto 2 diferenças pontuais na estrutura de texto (código do serviço com nº de dígitos variável após a barra; rótulos "NOME/RAZÃO SOCIAL"+"E-MAIL" do tomador podem vir despejados juntos antes dos 2 valores)
@@ -805,6 +818,12 @@ class SPPdfExtractor:
             return LAYOUT_OSASCO_REPASSE
         if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
             return LAYOUT_CAMPINAS
+        # João Pessoa/PB (NFSe oficial da Secretaria da Receita Municipal) -
+        # marca exclusiva do cabeçalho oficial, checada antes de qualquer
+        # fallback amplo por ser específica o bastante ("Prefeitura
+        # Municipal de <cidade>" é comum, mas o nome do município é único).
+        if re.search(r'Prefeitura\s+Municipal\s+de\s+Jo[aã]o\s+Pessoa', t, re.IGNORECASE):
+            return LAYOUT_JOAO_PESSOA
         # Monte Santo/BA ANTES do fallback amplo "Chave de Acesso" abaixo -
         # esta nota (construída sobre o padrão nacional da NFS-e) também traz
         # esse rótulo, e cairia erradamente no LAYOUT_NACIONAL sem esta marca
@@ -1246,6 +1265,12 @@ class SPPdfExtractor:
             return LAYOUT_OSASCO_REPASSE
         if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
             return LAYOUT_CAMPINAS
+        # João Pessoa/PB (NFSe oficial da Secretaria da Receita Municipal) -
+        # marca exclusiva do cabeçalho oficial, checada antes de qualquer
+        # fallback amplo por ser específica o bastante ("Prefeitura
+        # Municipal de <cidade>" é comum, mas o nome do município é único).
+        if re.search(r'Prefeitura\s+Municipal\s+de\s+Jo[aã]o\s+Pessoa', t, re.IGNORECASE):
+            return LAYOUT_JOAO_PESSOA
         # Monte Santo/BA ANTES do fallback amplo "Chave de Acesso" abaixo -
         # esta nota (construída sobre o padrão nacional da NFS-e) também traz
         # esse rótulo, e cairia erradamente no LAYOUT_NACIONAL sem esta marca
@@ -1346,6 +1371,17 @@ class SPPdfExtractor:
         t = self.raw_text
         layout = self.layout or LAYOUT_GENERICO
         result: Optional[datetime] = None
+
+        if layout == LAYOUT_JOAO_PESSOA:
+            # Mesma grade de 3 campos por linha da emissão/número (ver
+            # `_extrair_data_emissao`) — "Competência" é o 2º valor
+            # ("08/2026" entre a data/hora de emissão e o número da nota).
+            m = re.search(
+                r'Data\s+e\s+hora\s+de\s+emiss[ãa]o\s+Compet[êe]ncia\s+N[úu]mero\s*\n+\s*'
+                r'\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\s+(\d{2})/(\d{4})',
+                t, re.IGNORECASE)
+            if m:
+                result = datetime(int(m.group(2)), int(m.group(1)), 1)
 
         if layout == LAYOUT_SANTOS:
             # "Competência\n\n07/2026" — rótulo e valor NÃO adjacentes (grade
@@ -1615,6 +1651,19 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
+        if self.layout == LAYOUT_JOAO_PESSOA:
+            # Grade "Data e hora de emissão / Competência / Número" numa
+            # linha só, valores na linha seguinte ("14/08/2026 15:27:19
+            # 08/2026 1001671") — mesmo racional dos demais campos deste
+            # layout, ver `_extrair_entidade_joao_pessoa`.
+            m = re.search(
+                r'Data\s+e\s+hora\s+de\s+emiss[ãa]o\s+Compet[êe]ncia\s+N[úu]mero\s*\n+\s*'
+                r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+                t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2))
+                if res: return res
+
         if self.layout == LAYOUT_RIBEIRAO_PRETO:
             # A leitura de página inteira só recupera "RPS: 261 - Data:
             # 03/08/2026", sem horário. A data COM horário
@@ -2287,6 +2336,15 @@ class SPPdfExtractor:
 
     def _extrair_numero(self) -> str:
         t = self.raw_text
+
+        if self.layout == LAYOUT_JOAO_PESSOA:
+            # Mesma grade de 3 campos por linha da emissão/competência (ver
+            # `_extrair_data_emissao`) — "Número" é o 3º e último valor.
+            m = re.search(
+                r'Data\s+e\s+hora\s+de\s+emiss[ãa]o\s+Compet[êe]ncia\s+N[úu]mero\s*\n+\s*'
+                r'\d{2}/\d{2}/\d{4}\s+\d{2}:\d{2}:\d{2}\s+\d{2}/\d{4}\s+(\d+)',
+                t, re.IGNORECASE)
+            if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_LAURO_FREITAS:
             # "3ª variante" do template oficial (ver `_ocr_recut_lauro_freitas_v3`):
@@ -2971,6 +3029,33 @@ class SPPdfExtractor:
 
     def _extrair_discriminacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_JOAO_PESSOA:
+            # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO" (sem parêntese de nota
+            # explicativa, ao contrário do Campinas — por isso não
+            # reaproveita `LAYOUT_CAMPINAS` aqui). Abaixo do texto real há
+            # uma grande faixa em branco no documento até a próxima seção,
+            # que às vezes carrega ruído de OCR (carimbo "LANÇADO"/rabisco a
+            # mão — achado real, nota nº 1001671: linhas soltas "Fathd" / "8"
+            # / "TIO 10 efto AO"). Paramos na PRIMEIRA linha em branco após
+            # o início do texto real, em vez de juntar tudo até o próximo
+            # marcador de seção, para não poluir a discriminação com esse
+            # ruído.
+            m = re.search(
+                r'DESCRI[ÇC][AÃ]O\s+DO\s+SERVI[ÇC]O\s+PRESTADO\s*\n+(.*?)'
+                r'(?=TRIBUTA[ÇC][AÃ]O\s+MUNICIPAL|C[ÁA]LCULO\s+DO\s+ISSQN|INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES|$)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                linhas = []
+                for ln in m.group(1).split('\n'):
+                    ln_clean = ln.strip()
+                    if not ln_clean:
+                        if linhas:
+                            break
+                        continue
+                    linhas.append(ln_clean)
+                if linhas:
+                    return " ".join(linhas)
+
         if self.layout == LAYOUT_RIBEIRAO_PRETO:
             # A célula "| Descrição do Serviço\n| Honorários" carrega um "|"
             # de borda de tabela colado à esquerda do valor.
@@ -3807,8 +3892,13 @@ class SPPdfExtractor:
             if m:
                 return m.group(1)[-4:]
 
-        if self.layout == LAYOUT_CAMPINAS:
-            # Seção "Serviço" traz o item da LC 116/03 no formato "13.02 - FONOGRAFIA...".
+        if self.layout in (LAYOUT_CAMPINAS, LAYOUT_JOAO_PESSOA):
+            # Seção "Serviço" traz o item da LC 116/03 no formato "13.02 - FONOGRAFIA..."
+            # (Campinas) / "14.06 - INSTALAÇÃO..." (João Pessoa, após o
+            # recorte dedicado de `_ocr_recut_item_lc116_joao_pessoa` corrigir
+            # a leitura de página inteira, que confunde "14.06" com "1408" —
+            # SEM ponto decimal, por isso nunca casa com este regex e nunca
+            # produz um item errado por conta própria).
             # O CNAE ("5920-1/00-00") aparece antes, mas tem formato distinto (\d{4}-\d)
             # e não casa com \d{2}\.\d{2}.
             m = re.search(r'\b(\d{2})\.(\d{2})\s*-\s*[A-Za-zÀ-ú]', t)
@@ -3968,6 +4058,15 @@ class SPPdfExtractor:
         existir."""
         t = self.raw_text
 
+        if self.layout == LAYOUT_JOAO_PESSOA:
+            # "CNAE / CBO\n3329-5/01-02 - SERVICOS DE MONTAGEM..." — subclasse
+            # oficial "NNNN-N/NN" antes do primeiro "-" descritivo (o "-02"
+            # final não faz parte do CNAE de subclasse; é o CBO/detalhamento
+            # da própria plataforma, fora do escopo deste campo).
+            m = re.search(r'CNAE\s*/\s*CBO\s*\n+\s*(\d{4})-(\d)\s*/\s*(\d{2})', t, re.IGNORECASE)
+            if m:
+                return m.group(1) + m.group(2) + m.group(3)
+
         if self.layout == LAYOUT_CUIABA:
             # ISSNet Cuiabá, template PÓS-REFORMA TRIBUTÁRIA: a seção "DADOS DO
             # SERVIÇO PRESTADO" traz "Atividade Municipal: 14330-4/05 Aplicação
@@ -3994,6 +4093,16 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_JOAO_PESSOA:
+            # "Código de Verificação\n\n2yYFj8Icd" — ao contrário dos demais
+            # layouts desta família, o código é ALFANUMÉRICO DE CAIXA MISTA
+            # (maiúsculas E minúsculas fazem parte do valor), por isso NÃO
+            # normalizamos para upper() como os outros branches desta função.
+            m = re.search(
+                r'C[óo]digo\s+de\s+Verifica[çc][ãa]o\s*\n+\s*([A-Za-z0-9]{6,20})',
+                t, re.IGNORECASE)
+            if m: return m.group(1).strip()
+
         if self.layout == LAYOUT_RIBEIRAO_PRETO:
             m = re.search(
                 r'C[óo]digo\s+de\s+verifica[çc][ãa]o[^\n]{0,4}\n+\s*([A-Z0-9]{6,12})',
@@ -4804,6 +4913,11 @@ class SPPdfExtractor:
             if is_intermediario:
                 return None
             return self._extrair_entidade_guarulhos(is_prestador)
+
+        if self.layout == LAYOUT_JOAO_PESSOA:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_joao_pessoa(is_prestador)
 
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             if is_intermediario:
@@ -11981,6 +12095,256 @@ class SPPdfExtractor:
             telefone=telefone,
         )
 
+    # Tipos de logradouro conhecidos (abreviados e por extenso) que o OCR ou
+    # o próprio cadastro municipal às vezes imprime DUAS VEZES seguidas no
+    # início do logradouro (ex. "RUA RUA ARTHUR DE AZEVEDO MACHADO" em vez de
+    # "RUA ARTHUR DE AZEVEDO MACHADO") - achado real, NFS-e de João Pessoa/PB
+    # nº 1001671, endereço do TOMADOR (confirmado no texto OCR bruto da
+    # página 5 de "Scan2026-09-23_090227.pdf": a duplicação já vem assim no
+    # OCR, não é um rótulo de cabeçalho colado pelo parser). Genérico e
+    # reutilizável por qualquer layout, não hardcoded a esta nota.
+    _TIPOS_LOGRADOURO_DUPLICAVEIS = frozenset({
+        'RUA', 'R', 'AV', 'AVENIDA', 'TRAVESSA', 'TRAV', 'ALAMEDA', 'AL',
+        'PRACA', 'PRAÇA', 'PC', 'RODOVIA', 'ROD', 'ESTRADA', 'EST', 'LARGO',
+        'VIA', 'VIELA', 'LADEIRA', 'LOTEAMENTO', 'LOT', 'QUADRA', 'QD',
+        'VILA', 'CONJUNTO', 'CJ', 'RESIDENCIAL',
+    })
+
+    @classmethod
+    def _remover_tipo_logradouro_duplicado(cls, logradouro: str) -> str:
+        """Colapsa um tipo de logradouro repetido nas 2 primeiras palavras
+        do texto capturado (ex. "RUA RUA X" -> "RUA X", "AV AVENIDA X" não é
+        alterado - tipos DIFERENTES não contam como duplicata). Restrito à
+        lista de tipos de logradouro conhecidos acima, para não colapsar uma
+        palavra legitimamente repetida no nome de uma rua/bairro."""
+        partes = logradouro.split()
+        if (len(partes) >= 2
+                and partes[0].upper() == partes[1].upper()
+                and partes[0].upper() in cls._TIPOS_LOGRADOURO_DUPLICAVEIS):
+            partes = partes[1:]
+        return ' '.join(partes)
+
+    def _extrair_entidade_joao_pessoa(self, is_prestador: bool) -> Entidade:
+        """Extrai EMITENTE PRESTADOR / TOMADOR do layout oficial de João
+        Pessoa/PB (Secretaria da Receita Municipal, "NFSe - Prestador").
+
+        Mesma estrutura de grade "rótulos numa linha, valores na seguinte,
+        vários campos por linha" do Campinas/SP (`_extrair_entidade_campinas`),
+        mas com 3 quirks de OCR PRÓPRIOS desta nota (nº 1001671, ESPACO A
+        COMERCIO DE MOVEIS LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E
+        SERVIÇOS - EIRELI, achado real 2026-09-23), por isso um parser
+        dedicado em vez de reaproveitar o de Campinas:
+
+          1. O separador "/" do cabeçalho "CPF / CNPJ / NIF" às vezes sai
+             como "!" no bloco do PRESTADOR ("CPF! CNPJ/NIF") — regex do
+             cabeçalho tolera "/", "!" ou "|".
+          2. O "@" do e-mail sai colado como "(" + 1 letra maiúscula solta
+             ("escritorio(Despacoamoveis.com.br" em vez de
+             "escritorio@espacoamoveis.com.br") — mesma família de ruído de
+             `_corrigir_arroba_ocr`, mas com o parêntese extra antes da
+             letra; como aqui o e-mail vem no MESMO token do rótulo "Nome /
+             Nome Empresarial" (linha "RAZÃO SOCIAL email(Ddominio.com.br"),
+             a divisão usa a CAIXA do token (razão social sempre vem em
+             MAIÚSCULAS neste template; o e-mail é a única parte com letra
+             minúscula) em vez de assumir que o local-part é o token
+             anterior ao domínio — essa suposição (válida em Campinas)
+             quebra aqui porque local-part e domínio saem GRUDADOS num único
+             token, sem espaço.
+          3. A linha de valor "Endereço / Município / CEP" às vezes quebra
+             em DUAS linhas físicas (logradouro numa, "Município / UF BRASIL
+             CEP" na seguinte) em vez de sair numa só — coletamos até 2
+             linhas de valor, parando ao achar um CEP.
+        """
+        t = self.raw_text
+
+        if is_prestador:
+            m_bloco = re.search(
+                r'EMITENTE\s+PRESTADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=TOMADOR\s+DO\s+SERVI[CÇ]O|$)',
+                t, re.IGNORECASE | re.DOTALL)
+        else:
+            m_bloco = re.search(
+                r'TOMADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=SERVI[CÇ]O\s+PRESTADO|CNAE\s*/\s*CBO|$)',
+                t, re.IGNORECASE | re.DOTALL)
+
+        bloco = m_bloco.group(1) if m_bloco else ''
+        linhas = [ln.strip() for ln in bloco.split('\n')]
+
+        _HEADER_RE = re.compile(
+            r'(CPF\s*[/!|]?\s*CNPJ|Inscri[cç][aã]o\s+Municipal|Telefone|'
+            r'Nome\s*/\s*Nome|E-?mail|Endere[cç]o|Munic[ií]pio|CEP)',
+            re.IGNORECASE)
+
+        def valor_apos(header_re: str) -> str:
+            """Primeira linha não-vazia após o rótulo que não seja outro cabeçalho."""
+            for i, ln in enumerate(linhas):
+                if re.search(header_re, ln, re.IGNORECASE):
+                    for j in range(i + 1, len(linhas)):
+                        cand = linhas[j].strip()
+                        if not cand:
+                            continue
+                        if _HEADER_RE.search(cand):
+                            return ''
+                        return cand
+                    return ''
+            return ''
+
+        # 1. CNPJ/CPF, Inscrição Municipal e Telefone (linha "doc  IM  telefone").
+        # Separador do cabeçalho tolerante a "!" (achado nº 1 do docstring).
+        linha_doc = valor_apos(r'CPF\s*[/!|]?\s*CNPJ')
+        cnpj = '00000000000000'
+        m_doc = re.search(r'(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})', linha_doc)
+        if m_doc:
+            pure = re.sub(r'\D', '', m_doc.group(1))
+            if self._validate_cnpj_cpf(pure):
+                cnpj = pure
+
+        insc = None
+        telefone = None
+        if m_doc:
+            resto = linha_doc[m_doc.end():].strip()
+            m_im = re.search(r'([\d][\d.\-/]{3,})', resto)
+            if m_im:
+                insc_dig = re.sub(r'\D', '', m_im.group(1))
+                if insc_dig:
+                    insc = insc_dig
+                    resto = resto[m_im.end():].strip()
+            m_tel = re.search(r'\(?\d{2}\)?\s*[\d.\-\s]{7,}', resto)
+            if m_tel:
+                tel_dig = re.sub(r'\D', '', m_tel.group(0))
+                if 8 <= len(tel_dig) <= 13:
+                    telefone = tel_dig
+
+        # 2. Razão social + e-mail (linha após "Nome / Nome Empresarial").
+        # Divisão por CAIXA (achado nº 2 do docstring), não por posição de token.
+        linha_nome = valor_apos(r'Nome\s*/\s*Nome')
+        razao = ''
+        email = None
+        if linha_nome:
+            tokens = linha_nome.split()
+            idx_email = None
+            for k, tok in enumerate(tokens):
+                if not any(c.isalpha() for c in tok):
+                    continue
+                if tok != tok.upper():
+                    idx_email = k
+                    break
+            if idx_email is not None:
+                razao = ' '.join(tokens[:idx_email]).strip()
+                email_raw = ' '.join(tokens[idx_email:])
+                # Local-part minúsculo + ruído (parêntese/letra maiúscula
+                # solta, ambos ficam de pé no lugar do "@" corrompido) +
+                # domínio minúsculo terminado em TLD conhecido.
+                m_email = re.match(
+                    r'^([a-z0-9._-]+)[^a-z0-9]*[A-Z]?([a-z0-9-]+\.(?:com|net|org|gov)(?:\.br)?)$',
+                    email_raw)
+                if m_email:
+                    email = f'{m_email.group(1)}@{m_email.group(2)}'
+            else:
+                razao = linha_nome.strip()
+            razao = re.sub(r'[\s/!|:.-]+$', '', razao).strip()
+
+        if not razao:
+            razao = 'Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'
+
+        # 3. Endereço (linha após o cabeçalho "Endereço ... Município ... CEP"),
+        # coletando até 2 linhas de valor físicas (achado nº 3 do docstring).
+        idx_header_end = None
+        for i, ln in enumerate(linhas):
+            if re.search(r'Endere[cç]o', ln, re.IGNORECASE):
+                idx_header_end = i
+                break
+        partes_end: List[str] = []
+        if idx_header_end is not None:
+            for j in range(idx_header_end + 1, len(linhas)):
+                cand = linhas[j].strip()
+                if not cand:
+                    continue
+                if _HEADER_RE.search(cand):
+                    break
+                partes_end.append(cand)
+                if re.search(r'\d{5}-?\d{3}', cand) or len(partes_end) >= 2:
+                    break
+        linha_end = ' '.join(partes_end)
+
+        end_data = {
+            'logradouro': 'Não informado', 'numero': 'S/N', 'bairro': 'Não informado',
+            'municipio': 'Não informado',
+            'codigo_municipio': _ibge_resolver.default_code,
+            'uf': _ibge_resolver.default_uf, 'cep': '00000000',
+        }
+        if linha_end:
+            raw_end = linha_end
+
+            m_cep = re.search(r'(\d{5}-?\d{3})\s*$', raw_end)
+            if m_cep:
+                end_data['cep'] = re.sub(r'\D', '', m_cep.group(1))
+                raw_end = raw_end[:m_cep.start()].strip()
+
+            raw_end = re.sub(r'\bBRASIL\b\s*$', '', raw_end, flags=re.IGNORECASE).strip()
+
+            # Município / UF: "<MUNICIPIO> / SP" / "<MUNICIPIO> | BA" (pipe é
+            # troca comum do OCR) / "<MUNICIPIO> ! PB" (achado real desta
+            # nota: "JOAO PESSOA ! PB", "!" no lugar da barra).
+            m_mun = re.search(
+                r'([A-Za-zÀ-ú]+(?:\s+[A-Za-zÀ-ú]+){0,2})\s*[/|!]\s*([A-Z]{2})\b',
+                raw_end)
+            municipio_hint = None
+            if m_mun:
+                municipio_hint = m_mun.group(1).strip()
+                end_data['uf'] = m_mun.group(2).strip().upper()
+                raw_end = raw_end[:m_mun.start()].strip()
+
+            municipio_final = municipio_hint or ''
+            bairro_do_hint = ''
+            if municipio_hint:
+                palavras = municipio_hint.split()
+                for start in range(len(palavras)):
+                    cand = ' '.join(palavras[start:])
+                    if re.sub(r'[^\w\s]', '', cand).strip().upper() in _ibge_resolver.KNOWN_CITIES:
+                        municipio_final = cand
+                        bairro_do_hint = ' '.join(palavras[:start]).strip()
+                        break
+                else:
+                    municipio_final = palavras[-1]
+                    bairro_do_hint = ' '.join(palavras[:-1]).strip()
+            end_data['municipio'] = municipio_final or 'Não informado'
+            if bairro_do_hint:
+                end_data['bairro'] = bairro_do_hint
+
+            if raw_end:
+                m_num = None
+                for cand in re.finditer(r'\b(\d{1,6})\b(?![º°ªo])', raw_end):
+                    m_num = cand
+                    if len(cand.group(1)) >= 2:
+                        break
+                if m_num:
+                    end_data['logradouro'] = self._remover_tipo_logradouro_duplicado(
+                        raw_end[:m_num.start()].strip(' ,.-')) or 'Não informado'
+                    end_data['numero'] = m_num.group(1)
+                    complemento = raw_end[m_num.end():].strip(' ,.-;')
+                    if complemento:
+                        end_data['complemento'] = complemento
+                        if not bairro_do_hint:
+                            end_data['bairro'] = complemento
+                            end_data.pop('complemento', None)
+                else:
+                    end_data['logradouro'] = self._remover_tipo_logradouro_duplicado(
+                        raw_end.strip(' ,.-'))
+
+            end_data['codigo_municipio'] = _ibge_resolver.extract_and_validate(
+                raw_end, detected_uf=end_data['uf'],
+                city_hint=end_data['municipio'], raw_doc_text=None
+            )
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=insc,
+            razao_social=razao,
+            endereco=Endereco(**end_data),
+            email=email,
+            telefone=telefone,
+        )
+
     @staticmethod
     def _split_endereco_campinas(raw_end: str) -> dict:
         """Quebra a linha de endereço do Campinas (sem município, já removido) em
@@ -14533,7 +14897,17 @@ class SPPdfExtractor:
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
             )
 
-        if self.layout == LAYOUT_CAMPINAS:
+        if self.layout in (LAYOUT_CAMPINAS, LAYOUT_JOAO_PESSOA):
+            # João Pessoa/PB reaproveita ESTE MESMO bloco: a NFS-e oficial do
+            # município usa a IDÊNTICA grade "CÁLCULO DO ISSQN" / "VALOR
+            # TOTAL" (mesmos 6 e 5 campos, mesma ordem) do Campinas — achado
+            # real confirmado byte a byte contra a nota nº 1001671 (ESPACO A
+            # COMERCIO DE MOVEIS LTDA): "R$ 9.864,92 R$ 0,00 R$ 0,00
+            # R$9.864,92  5,000000 R$ 493,24" seguido de "R$ 9.864,92 R$ 0,00
+            # R$ 0,00 R$ 0,00 R$ 9.864,92" — a mesma lógica de âncora e
+            # truncamento de "5,000000" (aliquota) descrita abaixo já produz
+            # os valores corretos sem nenhuma adaptação.
+            #
             # Duas grades rótulo-em-cima / valores-embaixo:
             #  CÁLCULO DO ISSQN: [Valor total, Deduções, Desc. incond., Base de
             #                     cálculo, Alíquota (%), Valor do ISSQN]
@@ -15193,6 +15567,81 @@ class SPPdfExtractor:
                 valor_pis=pis, valor_cofins=cofins, valor_inss=inss,
                 valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
             )
+
+        if self.layout == LAYOUT_BRASILIA:
+            # Achado real 2026-09-23 (Scan2026-09-23_090227.pdf, pág. 3,
+            # ESCANEADA/OCR — FLUIR PRODUCOES DE EVENTOS LTDA -> NÁUTICA
+            # INDÚSTRIA E COMÉRCIO DE MÓVEIS LTDA): a seção "IMPOSTO SOBRE
+            # SERVIÇO DE QUALQUER NATUREZA - ISSQN" imprime, numa ÚNICA linha
+            # (3 colunas lado a lado na ordem de leitura do OCR), "Base de
+            # Cálculo: R$ 4.931,50 Alíquota: 2,01% Vl. ISSQN: R$ 99,12".
+            # LAYOUT_BRASILIA nunca teve um branch dedicado nesta função — caía
+            # direto no fallback genérico abaixo, que quebra de duas formas
+            # aqui:
+            # (1) a regex genérica de ISS (`ISS(?:QN)?...`) busca a PRIMEIRA
+            #     ocorrência da palavra "ISS" no texto inteiro. Toda nota
+            #     deste layout imprime, no rodapé do cabeçalho, a URL fixa de
+            #     consulta "...acessando o site: https://iss.fazenda.df.gov.
+            #     br/online/" — texto de TEMPLATE, não específico desta nota —
+            #     que o OCR aqui degradou para "https:/liss,fazenda,df,gov...".
+            #     A vírgula que sobra no lugar do ponto cai dentro da classe de
+            #     caracteres `[\d\.,]+` do fallback, que casa "iss," e devolve
+            #     Valor ISS = 0,00 SEMPRE — mesmo com o Vl. ISSQN real e
+            #     não-zero (R$ 99,12) presente mais adiante no texto. Um valor
+            #     ERRADO e plausível, sem nenhum aviso ao usuário — justamente
+            #     o padrão que a extração deve evitar (sentinela + aviso é
+            #     preferível a um número sem lastro, ver `_extrair_codigo_
+            #     autenticidade_brasilia`, que já segue esse princípio para o
+            #     código de verificação).
+            # (2) mesmo quando a Alíquota é lida certa pelo fallback (2,01%),
+            #     o ISS já saiu zerado antes — nenhuma consistência
+            #     Base×Alíquota é aplicada para este layout.
+            #
+            # Âncora dedicada nas 3 colunas desta seção específica, tolerando
+            # o rótulo "Vl."/"VI." (OCR troca "l" minúsculo por "I" maiúsculo
+            # com frequência) antes de "ISSQN". Só retorna quando a âncora
+            # bate: nas variantes de texto DIGITAL (pdfminer, sem OCR) já
+            # cobertas por `test_brasilia_tomador_elos_estudio_endereco_e_
+            # contato` e por `test_extract_brasilia_full_nfse`, a ordem/rótulo
+            # das colunas é outra e este padrão não casa, caindo no fallback
+            # genérico como antes (comportamento inalterado nelas).
+            m_issqn_brasilia = re.search(
+                r'Base\s+de\s+C[áa]lculo\s*:?\s*R\$\s*([\d\.,]+)\s*'
+                r'Al[íi]quota\s*:?\s*([\d\.,]+)\s*%\s*'
+                r'V[l1I]\.?\s*ISSQN\s*:?\s*R\$\s*([\d\.,]+)',
+                t, re.IGNORECASE
+            )
+            if m_issqn_brasilia:
+                base_bsb = self._parse_valor(m_issqn_brasilia.group(1))
+                aliq_bsb = self._parse_valor(m_issqn_brasilia.group(2)) / 100
+                iss_bsb = self._parse_valor(m_issqn_brasilia.group(3))
+                # Mesma salvaguarda já usada em outros layouts: uma alíquota
+                # implausível (>100%) denuncia célula(s) ilegível(is) — prefere-se
+                # zerar Alíquota/ISS a fabricar um número sem lastro no documento.
+                if aliq_bsb > 1.0:
+                    aliq_bsb = 0.0
+                    iss_bsb = 0.0
+
+                m_val_serv_bsb = re.search(
+                    r'V[l1I]\.\s+do\s+Servi[çc]o\s*:?\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+                val_serv_bsb = self._parse_valor(m_val_serv_bsb.group(1)) if m_val_serv_bsb else base_bsb
+
+                m_ded_bsb = re.search(r'Valor\s+Dedu[çc][ãa]o\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
+                deducoes_bsb = self._parse_valor(m_ded_bsb.group(1)) if m_ded_bsb else 0.0
+
+                iss_retido_bsb = bool(re.search(
+                    r'Tipo\s+de\s+Reten[çc][ãa]o\s*:\s*Retido\b', t, re.IGNORECASE))
+
+                return Valores(
+                    valor_servicos=val_serv_bsb,
+                    valor_deducoes=deducoes_bsb,
+                    base_calculo=base_bsb,
+                    aliquota=aliq_bsb,
+                    valor_iss=iss_bsb,
+                    iss_retido=iss_retido_bsb,
+                    valor_iss_retido=iss_bsb if iss_retido_bsb else 0.0,
+                    valor_liquido_nfse=val_serv_bsb - deducoes_bsb,
+                )
 
         val_serv, base, aliq, iss = 0.0, 0.0, 0.0, 0.0
         pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
@@ -16265,6 +16714,21 @@ class SPPdfExtractor:
                     if len(recut_ff.strip()) > len(best_text.strip()):
                         best_text = recut_ff
 
+                # João Pessoa/PB (NFSe oficial): a leitura de página inteira
+                # (zoom 3x padrão) confunde o "6" de "14.06" (item da LC116,
+                # seção "Serviço") com "8" e engole o ponto/traço
+                # decimais ("1408\"" em vez de "14.06 -") — achado real, nota
+                # nº 1001671, ESPACO A COMERCIO DE MOVEIS LTDA. Sem ponto
+                # decimal, `_extrair_codigo_servico` nunca casa esse valor
+                # corrompido (regra deliberada: nunca produzir um item
+                # plausível-porém-errado), então SEM o recorte o campo fica
+                # vazio em vez de errado — mas com ele fica correto. Recorte
+                # dedicado (zoom 6x, PSM linha única) prepended ao texto base.
+                if re.search(r'Prefeitura\s+Municipal\s+de\s+Jo[aã]o\s+Pessoa', best_text, re.IGNORECASE):
+                    recut_jp_item = self._ocr_recut_item_lc116_joao_pessoa(page)
+                    if recut_jp_item.strip():
+                        best_text = f"{recut_jp_item}\n{best_text}"
+
                 # NF-e de Serviço de Comunicação (Telecom): achado real (nota
                 # F&F Comunicações nº 31696) — a leitura padrão (zoom 3x)
                 # desta nota perde a COLUNA DIREITA inteira do cabeçalho:
@@ -16455,6 +16919,68 @@ class SPPdfExtractor:
             pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_item_lc116_joao_pessoa(page) -> str:
+        """Recorta e reprocessa em zoom alto a linha do item da lista de
+        serviços (LC116) da NFS-e oficial de João Pessoa/PB (seção
+        "Serviço", logo abaixo do rótulo homônimo), que na leitura de
+        página inteira (zoom 3x padrão) confunde o "6" de "14.06" com "8" e
+        engole o ponto/traço decimais ("1408\\"" em vez de "14.06 -") —
+        achado real, nota nº 1001671, ESPACO A COMERCIO DE MOVEIS LTDA.
+
+        Testado e validado que zoom 6x com PSM 7 (linha única) recupera o
+        valor correto ("14.06 - INSTALAÇÃO E MONTAGEM..."); zoom 10x
+        REINTRODUZ o mesmo erro (troca o "6" por "8" na leitura mais
+        agressiva), então o zoom não pode simplesmente subir mais — 6x é o
+        ponto validado, não um valor arbitrário.
+
+        Localiza o rótulo "Serviço" dinamicamente via `image_to_data` (zoom
+        3x, mesma técnica de `_ocr_recut_grade_valores_sao_paulo`) — a
+        cedilha costuma cair no OCR de baixa resolução, saindo como
+        "Servi" — em vez de coordenadas fixas, e recorta a faixa entre ele e
+        o próximo rótulo ("Local da prestação do serviço")."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            zoom_locate = 3.0
+            pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
+            img_l = Image.frombytes('RGB', [pix_l.width, pix_l.height], pix_l.samples)
+            data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
+
+            y_label_bottom = None
+            y_next_top = None
+            for i, txt in enumerate(data['text']):
+                limpo = txt.strip()
+                if not limpo:
+                    continue
+                if y_label_bottom is None and data['top'][i] > 900 \
+                        and re.match(r'(?i)^servi[çc]?o?$', limpo):
+                    y_label_bottom = data['top'][i] + data['height'][i]
+                    continue
+                if y_label_bottom is not None and re.match(r'(?i)^local$', limpo):
+                    y_next_top = data['top'][i]
+                    break
+
+            if y_label_bottom is None:
+                return ""
+            if y_next_top is None or y_next_top <= y_label_bottom:
+                y_next_top = y_label_bottom + int(60 * zoom_locate / 3.0)
+
+            largura_pt = pix_l.width / zoom_locate
+            clip = pymupdf.Rect(
+                0, y_label_bottom / zoom_locate,
+                largura_pt * 0.65, y_next_top / zoom_locate,
+            )
+            zoom_recut = 6.0
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom_recut, zoom_recut), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_string(img, lang='por', config='--psm 7')
         except Exception:
             return ""
 
