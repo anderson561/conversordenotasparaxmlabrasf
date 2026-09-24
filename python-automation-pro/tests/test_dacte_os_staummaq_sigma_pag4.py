@@ -301,11 +301,18 @@ def test_endereco_emitente_vem_antes_da_linha_do_cnpj(nota):
 
 def test_tomador_staummaq_mesmo_cnpj_das_paginas_1_a_3(nota):
     """CNPJ 02.370.080/0001-00 - o MESMO CNPJ da STAUMMAQ já confirmado
-    tomador nas págs. 1-3 deste mesmo lote "STAUMMAQ - NFSe TERCEIROS.pdf"."""
+    tomador nas págs. 1-3 deste mesmo lote "STAUMMAQ - NFSe TERCEIROS.pdf".
+
+    O texto OCR real desta página grafa a razão social como "STAUMMAO"
+    (com "O" no lugar do "Q" - ver MOCK_PAGINA). A extração corrige essa
+    grafia pontual para "STAUMMAQ" com base no CNPJ conhecido deste
+    cliente recorrente - asserção EXATA para travar a correção (uma
+    asserção frouxa tipo `"STAUMMA" in ...` passaria com qualquer
+    grafia, inclusive a errada).
+    """
     tom = nota.tomador
     assert tom.cnpj_cpf == "02370080000100"
-    assert "STAUMMA" in tom.razao_social
-    assert "LTDA" in tom.razao_social
+    assert tom.razao_social == "STAUMMAQ SERV. TEC. AUTO. MOT. E MAQ. LTDA"
     assert tom.inscricao_estadual == "048137340"
 
 

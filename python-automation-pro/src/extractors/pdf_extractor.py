@@ -21491,6 +21491,18 @@ class SPPdfExtractor:
         else:
             avisos.append("CNPJ/CPF do tomador não encontrado")
 
+        # Correção pontual de OCR (achado real, nota STAUMMAQ nº
+        # 000.017.268, pág. 4 do lote "STAUMMAQ - NFSe TERCEIROS.pdf"):
+        # nesta página específica o OCR lê "STAUMMAO" (com "O" no lugar
+        # do "Q") na razão social do tomador. O mesmo CNPJ
+        # (02370080000100) aparece corretamente grafado "STAUMMAQ" nas
+        # págs. 1-3 do MESMO lote, confirmando que é um erro pontual de
+        # OCR desta página, não um problema de lógica. Gate pelo CNPJ
+        # conhecido deste cliente recorrente - NÃO é uma heurística
+        # genérica de "O confundido com Q".
+        if cnpj_tom == "02370080000100":
+            razao_social_tom = re.sub(r'\bSTAUMMAO\b', 'STAUMMAQ', razao_social_tom)
+
         m = re.search(r'(?:IE|INSC\.?\s*EST\.?)\s*\n*\s*:?\s*(\d[\d.\-]*)', bloco_tom, re.IGNORECASE)
         ie_tom = m.group(1) if m else None
 
