@@ -15568,6 +15568,81 @@ class SPPdfExtractor:
                 valor_ir=ir, valor_csll=csll, outras_retencoes=outras,
             )
 
+        if self.layout == LAYOUT_BRASILIA:
+            # Achado real 2026-09-23 (Scan2026-09-23_090227.pdf, pág. 3,
+            # ESCANEADA/OCR — FLUIR PRODUCOES DE EVENTOS LTDA -> NÁUTICA
+            # INDÚSTRIA E COMÉRCIO DE MÓVEIS LTDA): a seção "IMPOSTO SOBRE
+            # SERVIÇO DE QUALQUER NATUREZA - ISSQN" imprime, numa ÚNICA linha
+            # (3 colunas lado a lado na ordem de leitura do OCR), "Base de
+            # Cálculo: R$ 4.931,50 Alíquota: 2,01% Vl. ISSQN: R$ 99,12".
+            # LAYOUT_BRASILIA nunca teve um branch dedicado nesta função — caía
+            # direto no fallback genérico abaixo, que quebra de duas formas
+            # aqui:
+            # (1) a regex genérica de ISS (`ISS(?:QN)?...`) busca a PRIMEIRA
+            #     ocorrência da palavra "ISS" no texto inteiro. Toda nota
+            #     deste layout imprime, no rodapé do cabeçalho, a URL fixa de
+            #     consulta "...acessando o site: https://iss.fazenda.df.gov.
+            #     br/online/" — texto de TEMPLATE, não específico desta nota —
+            #     que o OCR aqui degradou para "https:/liss,fazenda,df,gov...".
+            #     A vírgula que sobra no lugar do ponto cai dentro da classe de
+            #     caracteres `[\d\.,]+` do fallback, que casa "iss," e devolve
+            #     Valor ISS = 0,00 SEMPRE — mesmo com o Vl. ISSQN real e
+            #     não-zero (R$ 99,12) presente mais adiante no texto. Um valor
+            #     ERRADO e plausível, sem nenhum aviso ao usuário — justamente
+            #     o padrão que a extração deve evitar (sentinela + aviso é
+            #     preferível a um número sem lastro, ver `_extrair_codigo_
+            #     autenticidade_brasilia`, que já segue esse princípio para o
+            #     código de verificação).
+            # (2) mesmo quando a Alíquota é lida certa pelo fallback (2,01%),
+            #     o ISS já saiu zerado antes — nenhuma consistência
+            #     Base×Alíquota é aplicada para este layout.
+            #
+            # Âncora dedicada nas 3 colunas desta seção específica, tolerando
+            # o rótulo "Vl."/"VI." (OCR troca "l" minúsculo por "I" maiúsculo
+            # com frequência) antes de "ISSQN". Só retorna quando a âncora
+            # bate: nas variantes de texto DIGITAL (pdfminer, sem OCR) já
+            # cobertas por `test_brasilia_tomador_elos_estudio_endereco_e_
+            # contato` e por `test_extract_brasilia_full_nfse`, a ordem/rótulo
+            # das colunas é outra e este padrão não casa, caindo no fallback
+            # genérico como antes (comportamento inalterado nelas).
+            m_issqn_brasilia = re.search(
+                r'Base\s+de\s+C[áa]lculo\s*:?\s*R\$\s*([\d\.,]+)\s*'
+                r'Al[íi]quota\s*:?\s*([\d\.,]+)\s*%\s*'
+                r'V[l1I]\.?\s*ISSQN\s*:?\s*R\$\s*([\d\.,]+)',
+                t, re.IGNORECASE
+            )
+            if m_issqn_brasilia:
+                base_bsb = self._parse_valor(m_issqn_brasilia.group(1))
+                aliq_bsb = self._parse_valor(m_issqn_brasilia.group(2)) / 100
+                iss_bsb = self._parse_valor(m_issqn_brasilia.group(3))
+                # Mesma salvaguarda já usada em outros layouts: uma alíquota
+                # implausível (>100%) denuncia célula(s) ilegível(is) — prefere-se
+                # zerar Alíquota/ISS a fabricar um número sem lastro no documento.
+                if aliq_bsb > 1.0:
+                    aliq_bsb = 0.0
+                    iss_bsb = 0.0
+
+                m_val_serv_bsb = re.search(
+                    r'V[l1I]\.\s+do\s+Servi[çc]o\s*:?\s*R\$?\s*([\d\.,]+)', t, re.IGNORECASE)
+                val_serv_bsb = self._parse_valor(m_val_serv_bsb.group(1)) if m_val_serv_bsb else base_bsb
+
+                m_ded_bsb = re.search(r'Valor\s+Dedu[çc][ãa]o\s*:?\s*R\$\s*([\d\.,]+)', t, re.IGNORECASE)
+                deducoes_bsb = self._parse_valor(m_ded_bsb.group(1)) if m_ded_bsb else 0.0
+
+                iss_retido_bsb = bool(re.search(
+                    r'Tipo\s+de\s+Reten[çc][ãa]o\s*:\s*Retido\b', t, re.IGNORECASE))
+
+                return Valores(
+                    valor_servicos=val_serv_bsb,
+                    valor_deducoes=deducoes_bsb,
+                    base_calculo=base_bsb,
+                    aliquota=aliq_bsb,
+                    valor_iss=iss_bsb,
+                    iss_retido=iss_retido_bsb,
+                    valor_iss_retido=iss_bsb if iss_retido_bsb else 0.0,
+                    valor_liquido_nfse=val_serv_bsb - deducoes_bsb,
+                )
+
         val_serv, base, aliq, iss = 0.0, 0.0, 0.0, 0.0
         pis, cofins, inss, ir, csll, outras = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         
