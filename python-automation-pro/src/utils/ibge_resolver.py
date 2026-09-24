@@ -96,6 +96,18 @@ class IBGEResolver:
         # (LAYOUT_NFCOM_SETE_CONNECT, nota nº 18770, achado real 2026-09-17).
         # Sem esta entrada caía no fallback silencioso de Salvador/BA.
         "DIAS DAVILA": "2910057", "DIAS DÁVILA": "2910057",
+        # João Pessoa/PB - prestador do LAYOUT_JOAO_PESSOA (nota nº 1001671,
+        # ESPACO A COMERCIO DE MOVEIS LTDA, achado real 2026-09-23). Já era o
+        # fallback de capital de "PB" em DEFAULT_CODES_BY_UF, mas sem esta
+        # entrada em KNOWN_CITIES a busca por CITY_HINT falha e o endereço
+        # cai na lógica de "sufixo conhecido" (usada para separar bairro de
+        # município num endereço de UMA linha só, ex.: "TAMBAUZINHO JOAO
+        # PESSOA" -> bairro "TAMBAUZINHO" + município "JOAO PESSOA") sem
+        # nunca reconhecer "JOAO PESSOA" como cidade de verdade. Código
+        # 2507507 confirmado em 2 fontes oficiais do IBGE (ibge.gov.br/
+        # cidades-e-estados/pb/joao-pessoa.html e geoftp.ibge.gov.br,
+        # "JOÃO PESSOA - PB 2507507").
+        "JOAO PESSOA": "2507507", "JOÃO PESSOA": "2507507",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
