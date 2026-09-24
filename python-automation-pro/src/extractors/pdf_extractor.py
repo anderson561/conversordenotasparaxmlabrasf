@@ -461,8 +461,21 @@ class SPPdfExtractor:
         # fallback amplo da DANFSe) e cita "Simões Filho" como município do
         # TOMADOR (colidiria com o fallback solto de LAYOUT_SIMOES_FILHO,
         # mais abaixo). Ver LAYOUT_DACTE_OS para o histórico completo.
+        # "Eletrônico" tornado OPCIONAL após "Conhecimento de Transporte":
+        # achado real, nota nº 167001000017268 (STAUMMAQ, pág.4 do lote
+        # "STAUMMAQ - NFSe TERCEIROS.pdf") - o OCR de página inteira embaralha
+        # o cabeçalho ("Documento Auxiliar do Conhecimento de Transporte" e
+        # "Eletrônico para Outros Serviços" saem em linhas não-adjacentes,
+        # com outro bloco do formulário no meio), então a frase completa
+        # "Conhecimento de Transporte Eletrônico" nunca fica contígua nesta
+        # página, embora "CT-e OS" sobreviva intacto. "Conhecimento de
+        # Transporte" sozinho já é exclusivo do CT-e/DACTE OS (nenhuma
+        # NFS-e ABRASF ou NF-e/DANFE de produto usa essa frase) - mantê-lo
+        # obrigatório junto com "DACTE OS"/"CT-e OS" preserva a mesma
+        # blindagem contra falso positivo, só afrouxando a adjacência do
+        # sufixo "Eletrônico".
         if re.search(r'DACTE\s+OS|CT-?e\s+OS', t, re.IGNORECASE) \
-                and re.search(r'Conhecimento\s+de\s+Transporte\s+Eletr[ôo]nico', t, re.IGNORECASE):
+                and re.search(r'Conhecimento\s+de\s+Transporte(\s+Eletr[ôo]nico)?', t, re.IGNORECASE):
             return LAYOUT_DACTE_OS
         # DANFSe Nacional (NFS-e Nacional v1.0) ANTES de qualquer marca municipal:
         # a DANFSe é emitida PELO município, então o cabeçalho traz "Prefeitura
@@ -954,9 +967,11 @@ class SPPdfExtractor:
                 and re.search(r'DESTINAT[ÁA]RIO\s*/\s*REMETENTE', t, re.IGNORECASE):
             return LAYOUT_DANFE_PRODUTO
         # CT-e OS (DACTE OS, Modelo 67) - mesmo racional de `_detect_layout`,
-        # ver LAYOUT_DACTE_OS.
+        # "Eletrônico" opcional após "Conhecimento de Transporte" - ver
+        # comentário completo (e o achado real da nota STAUMMAQ pág.4) em
+        # `_detect_layout`, e LAYOUT_DACTE_OS.
         if re.search(r'DACTE\s+OS|CT-?e\s+OS', t, re.IGNORECASE) \
-                and re.search(r'Conhecimento\s+de\s+Transporte\s+Eletr[ôo]nico', t, re.IGNORECASE):
+                and re.search(r'Conhecimento\s+de\s+Transporte(\s+Eletr[ôo]nico)?', t, re.IGNORECASE):
             return LAYOUT_DACTE_OS
         # DANFSe Nacional ANTES das marcas municipais (mesmo racional de
         # _detect_layout): a DANFSe traz "Prefeitura Municipal de <X>" e casaria
@@ -21098,6 +21113,28 @@ class SPPdfExtractor:
                 return None
 
             y_inicio = _y_do_rotulo("COMPONENTES")
+            if y_inicio is None:
+                # Fallback: "COMPONENTES" às vezes não sobrevive como palavra
+                # reconhecível (vira um token curto e de baixíssima confiança,
+                # ex. "a" - achado real, nota STAUMMAQ nº 167001000017268,
+                # pág.4 do lote "STAUMMAQ - NFSe TERCEIROS.pdf": o rabisco de
+                # assinatura em caneta logo acima do título degrada só essa
+                # palavra), mas o restante do MESMO título, "DO VALOR DA
+                # PRESTAÇÃO DE SERVIÇO", sai íntegro por ser maior/mais
+                # afastado do rabisco. Usa essa sequência de palavras
+                # adjacentes (mesma ordem de leitura do `image_to_data`) como
+                # âncora alternativa do início da grade - não depende de qual
+                # padrão específico de degradação atingiu "COMPONENTES".
+                textos = [w.strip().upper() for w in dados['text']]
+                for i in range(len(textos) - 4):
+                    if (textos[i].startswith('VALOR') and textos[i + 1].startswith('DA')
+                            and textos[i + 2].startswith('PRESTA') and textos[i + 3].startswith('DE')
+                            and textos[i + 4].startswith('SERVI')):
+                        idx_inicio = i
+                        if i > 0 and abs(dados['top'][i - 1] - dados['top'][i]) < 15:
+                            idx_inicio = i - 1
+                        y_inicio = dados['top'][idx_inicio]
+                        break
             y_fim = _y_do_rotulo("OBSERVA")
             if y_inicio is None or y_fim is None or y_fim <= y_inicio:
                 return ''
@@ -21130,11 +21167,21 @@ class SPPdfExtractor:
             except ValueError:
                 return 0.0
 
-        # --- Modelo/Série/Número: saem juntos e limpos ---
+        # --- Modelo/Série/Número: saem juntos e limpos no gerador Master
+        # CT-e. No gerador "CT-e Prático"/Bsoft (achado real, nota STAUMMAQ
+        # nº 000.017.268, pág.4 do lote "STAUMMAQ - NFSe TERCEIROS.pdf") não
+        # existe essa grade - série e número saem em rótulos soltos
+        # ("Série: 001" / "Nº: 000.017.268"), conferidos abaixo contra a
+        # chave de acesso de qualquer forma. ---
         m = re.search(r'MODELO\s+S[ÉE]RIE\s+N[ÚU]MERO\s*\n+\s*(\d+)\s+(\d+)\s+(\d+)', t, re.IGNORECASE)
-        modelo = m.group(1) if m else '67'
-        serie = m.group(2) if m else '1'
-        numero = m.group(3) if m else '00000000'
+        if m:
+            modelo, serie, numero = m.group(1), m.group(2), m.group(3)
+        else:
+            modelo = '67'
+            m_serie = re.search(r'S[ée]rie\s*:\s*(\d+)', t, re.IGNORECASE)
+            serie = m_serie.group(1) if m_serie else '1'
+            m_num = re.search(r'\bN[ºo°]\s*:\s*([\d.]{3,20})', t, re.IGNORECASE)
+            numero = re.sub(r'\D', '', m_num.group(1)) if m_num else '00000000'
 
         # --- Chave de acesso: conferida por dígito verificador mod-11 (mesmo
         # algoritmo nacional de NF-e/NFCom/CT-e, `_dv_chave_nfe`) - quando
@@ -21143,6 +21190,25 @@ class SPPdfExtractor:
         # `_parse_danfe_produto_ocr`). ---
         m = re.search(r'CHAVE\s+DE\s+ACESSO\s*\n+\s*([\d\s]{40,60})', t, re.IGNORECASE)
         chave_acesso = re.sub(r'\s', '', m.group(1)) if m else ''
+        if len(chave_acesso) != 44:
+            # Fallback (mesmo racional do DANFE_PRODUTO escaneado - ver
+            # `_parse_danfe_produto_ocr`): o rótulo "CHAVE DE ACESSO" pode
+            # sair bem separado do próprio valor por várias linhas de outro
+            # conteúdo (achado real STAUMMAQ nº 000.017.268 - "Chave de
+            # acesso" e os grupos de 4 dígitos ficam a 5 linhas de
+            # distância, com o cabeçalho do emitente no meio). Varre TODAS
+            # as linhas do texto e só aceita um candidato de 44 dígitos que
+            # seja modelo 67 E passe no dígito verificador mod-11 -
+            # validação ESTRUTURAL, não heurística.
+            for linha in t.split('\n'):
+                digitos = re.sub(r'\D', '', linha)
+                for i in range(max(0, len(digitos) - 43)):
+                    cand = digitos[i:i + 44]
+                    if cand[20:22] == '67' and self._dv_chave_nfe(cand[:43]) == cand[43]:
+                        chave_acesso = cand
+                        break
+                if len(chave_acesso) == 44:
+                    break
         if len(chave_acesso) == 44 and self._dv_chave_nfe(chave_acesso[:43]) == chave_acesso[43]:
             modelo_chave = chave_acesso[20:22]
             serie_chave = chave_acesso[22:25].lstrip('0') or '0'
@@ -21163,25 +21229,58 @@ class SPPdfExtractor:
 
         # --- Data/hora de emissão ---
         m = re.search(r'DATA\s+E\s+HORA\s+EMISS[ÃA]O\s*\n+\s*(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+        if not m:
+            # Fallback: o rótulo "DATA E HORA EMISSÃO" pode sair separado do
+            # próprio valor por várias linhas de outro conteúdo (endereço/
+            # CNPJ do emitente, chave de acesso) - achado real STAUMMAQ nº
+            # 000.017.268. Busca a 1ª data/hora impressa numa janela curta
+            # DEPOIS do rótulo, em vez de exigir adjacência imediata.
+            m_lbl = re.search(r'DATA\s+E\s+HORA\s+EMISS[ÃA]O', t, re.IGNORECASE)
+            if m_lbl:
+                janela = t[m_lbl.end():m_lbl.end() + 400]
+                m = re.search(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', janela)
         data_emissao = _parse_dmy(m.group(1), m.group(2)) if m else None
         if data_emissao is None:
             data_emissao = datetime.now()
             avisos.append("Data de emissão não encontrada (usando a data atual como fallback)")
 
-        # --- Protocolo de autorização ---
+        # --- Protocolo de autorização: um prefixo curto de letras (ruído de
+        # OCR, ex. "Lt " antes do número - achado real STAUMMAQ nº
+        # 000.017.268) pode aparecer entre o rótulo e o próprio número. ---
         m = re.search(
-            r'PROTOCOLO\s+DE\s+AUTORIZA[ÇC][ÃA]O\s+DE\s+USO\s*\n+\s*(\d+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+            r'PROTOCOLO\s+DE\s+AUTORIZA[ÇC][ÃA]O\s+DE\s+USO\s*\n+\s*(?:[A-Za-zÀ-ÿ]{1,4}\s+)?(\d+)\s+(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
             t, re.IGNORECASE)
         protocolo_autorizacao = m.group(1) if m else None
         protocolo_data_hora = _parse_dmy(m.group(2), m.group(3)) if m else None
         if not protocolo_autorizacao:
             avisos.append("Protocolo de autorização não encontrado")
 
-        # --- Tipo do CT-e / Tipo do Serviço ---
+        # --- Tipo do CT-e / Tipo do Serviço: no gerador "CT-e Prático"/Bsoft
+        # os dois rótulos saem na MESMA linha ("TIPO DO CT-E TIPO DO
+        # SERVIÇO", sem quebra entre eles - achado real STAUMMAQ nº
+        # 000.017.268), diferente do Master CT-e (cada rótulo na sua própria
+        # linha, valor logo abaixo). O valor de "TIPO DO SERVIÇO" sai
+        # ilegível nesse gerador (colunas vizinhas fundidas em texto sem
+        # nenhuma palavra reconhecível) - mantido "Não informado" em vez de
+        # fabricado a partir de ruído. ---
         m = re.search(r'TIPO\s+DO\s+CT-?E\s*\n+\s*(\w+)', t, re.IGNORECASE)
-        tipo_cte = m.group(1).strip() if m else 'Normal'
+        if m:
+            tipo_cte = m.group(1).strip()
+        else:
+            m = re.search(r'TIPO\s+DO\s+CT-?E\s+TIPO\s+DO\s+SERVI[ÇC]O\s*\n+\s*(\w+)', t, re.IGNORECASE)
+            tipo_cte = m.group(1).strip() if m else 'Normal'
         m = re.search(r'TIPO\s+DO\s+SERVI[ÇC]O\s*\n+\s*(.+)', t, re.IGNORECASE)
-        tipo_servico = m.group(1).strip() if m else 'Não informado'
+        tipo_servico_bruto = m.group(1).strip() if m else None
+        # Sanidade: um token de 1 letra solto (ex. "d", "r") é assinatura de
+        # ruído de coluna vizinha fundida pelo OCR, não de texto real
+        # (achado real STAUMMAQ nº 000.017.268: "Normal d soas Pr r") - não
+        # fabrica um tipo de serviço a partir disso.
+        if tipo_servico_bruto and not any(len(tok) == 1 for tok in tipo_servico_bruto.split()):
+            tipo_servico = tipo_servico_bruto
+        else:
+            tipo_servico = 'Não informado'
+            if tipo_servico_bruto:
+                avisos.append("Tipo do serviço não identificado com confiança (texto ilegível no OCR)")
 
         # --- CFOP + Natureza da Operação: a continuação da descrição (2ª
         # linha do rótulo do CFOP) fica ilegível mesmo em re-render de alta
@@ -21208,11 +21307,25 @@ class SPPdfExtractor:
         # DANFE_PRODUTO digital, adaptado ao texto de OCR de página inteira -
         # aqui não há um marcador de início como "ASSINATURA DO RECEBEDOR", só
         # a proximidade com o CNPJ). CNPJ sai sem pontuação e com um espaço
-        # espúrio do OCR ("3036767 1000156") - concatenado antes de validar. ---
+        # espúrio do OCR ("3036767 1000156") - concatenado antes de validar.
+        #
+        # Gerador "CT-e Prático"/Bsoft (achado real, nota STAUMMAQ nº
+        # 000.017.268, pág.4 do lote "STAUMMAQ - NFSe TERCEIROS.pdf"):
+        # template estruturalmente diferente do Master CT-e (CIATRANS) -
+        # CNPJ sai PONTUADO ("07.441.083/0001-01"), o rótulo "IE:" degrada
+        # para algo irreconhecível ("1B:", então nunca casa por nome, só por
+        # ser o próximo grupo de dígitos da linha), a razão social sai
+        # FUNDIDA com o título do documento na mesma linha ("SIGMA
+        # TRANSPORTES LTDA DACTE OS" - cortada no sufixo societário, não faz
+        # parte do nome real) e o ENDEREÇO vem ANTES da linha do CNPJ, não
+        # depois (ordem inversa do Master CT-e). ---
         razao_social_emit = "Emitente Não Identificado"
         cnpj_emit = "00000000000000"
         ie_emit = None
-        m_cnpj = re.search(r'CNPJ:\s*([\d\s]+?)\s+IE:\s*(\d+)', t)
+        idx_razao_social_emit: Optional[int] = None
+        linhas_antes: List[str] = []
+        m_cnpj_pontuado = re.search(r'CNPJ:\s*(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})', t, re.IGNORECASE)
+        m_cnpj = m_cnpj_pontuado or re.search(r'CNPJ:\s*([\d\s]+?)\s+IE:\s*(\d+)', t)
         if m_cnpj:
             candidato = re.sub(r'\D', '', m_cnpj.group(1))
             if self._cnpj_valido(candidato):
@@ -21220,7 +21333,17 @@ class SPPdfExtractor:
             else:
                 avisos.append(f"CNPJ do emitente lido ({candidato}) não passou no dígito verificador")
                 cnpj_emit = candidato
-            ie_emit = m_cnpj.group(2)
+
+            if m_cnpj_pontuado:
+                # IE: rótulo pode sair ilegível ("1B:" em vez de "IE:") -
+                # usa o próximo grupo de dígitos da MESMA linha, não o
+                # rótulo em si.
+                fim_linha_cnpj = t.find('\n', m_cnpj.end())
+                resto_linha_cnpj = t[m_cnpj.end():fim_linha_cnpj if fim_linha_cnpj != -1 else len(t)]
+                m_ie = re.search(r'(\d{6,12})', resto_linha_cnpj)
+                ie_emit = m_ie.group(1) if m_ie else None
+            else:
+                ie_emit = m_cnpj.group(2)
 
             inicio_linha_cnpj = t.rfind('\n', 0, m_cnpj.start())
             linhas_antes = [l.strip() for l in t[:inicio_linha_cnpj].split('\n') if l.strip()]
@@ -21232,6 +21355,17 @@ class SPPdfExtractor:
                     break
             if razao_linhas:
                 razao_social_emit = ' '.join(razao_linhas)
+            else:
+                # Fallback do gerador "CT-e Prático": procura, ANTES da linha
+                # do CNPJ, a 1ª linha maiúscula com sufixo societário
+                # (LTDA/EIRELI/S/A/ME) e corta tudo depois dele (remove o
+                # título "DACTE OS"/"CT-e OS" colado na mesma linha).
+                for idx, linha in enumerate(linhas_antes):
+                    m_soc = re.match(r'(.+?\b(?:LTDA|EIRELI|S/?A|ME))\b', linha, re.IGNORECASE)
+                    if m_soc and m_soc.group(1).upper() == m_soc.group(1):
+                        razao_social_emit = m_soc.group(1).strip()
+                        idx_razao_social_emit = idx
+                        break
         else:
             avisos.append("CNPJ do emitente não encontrado")
 
@@ -21249,6 +21383,28 @@ class SPPdfExtractor:
             uf_emit = m_end.group(6).upper()
             cep_emit = m_end.group(7)
             fone_emit = m_end.group(8)
+        elif idx_razao_social_emit is not None:
+            # Template alternativo (endereço ANTES da linha do CNPJ, achado
+            # real STAUMMAQ nº 000.017.268): logradouro/número/complemento
+            # saem na linha seguinte à razão social, CEP/Município/UF numa
+            # das poucas linhas seguintes (tolerando um rótulo de cabeçalho
+            # intercalado no meio, ex. "NÚMERO DATA E HORA EMISSÃO").
+            linhas_seguintes = linhas_antes[idx_razao_social_emit + 1:idx_razao_social_emit + 6]
+            if linhas_seguintes:
+                m_log = re.match(r'(.+?),\s*(\d+)\s*,\s*(.+)', linhas_seguintes[0])
+                if m_log:
+                    logradouro_emit = m_log.group(1).strip()
+                    numero_emit = m_log.group(2).strip()
+                    complemento_emit = m_log.group(3).strip()
+            for linha in linhas_seguintes:
+                m_cep = re.search(r'(\d{5})-?(\d{3})\s*,\s*(.+?)\s*-\s*([A-Z]{2})\s*$', linha, re.IGNORECASE)
+                if m_cep:
+                    cep_emit = m_cep.group(1) + m_cep.group(2)
+                    municipio_emit = m_cep.group(3).strip()
+                    uf_emit = m_cep.group(4).upper()
+                    break
+            if not municipio_emit:
+                avisos.append("Endereço do emitente não identificado")
         else:
             avisos.append("Endereço do emitente não identificado")
 
@@ -21277,23 +21433,46 @@ class SPPdfExtractor:
         # para "Município", "ur:" para "UF:") - extraídos por padrão
         # posicional tolerante, não pelo rótulo em si. CEP sai DESLOCADO para
         # o fim do bloco (depois de "EMAIL:", antes da próxima seção) - mesma
-        # família de "valor deslocado para o fim" do DANFE_PRODUTO. ---
+        # família de "valor deslocado para o fim" do DANFE_PRODUTO.
+        #
+        # Gerador "CT-e Prático"/Bsoft (achado real, nota STAUMMAQ nº
+        # 000.017.268): o rótulo sai "TOMADOR/USUÁRIO DO SERVIÇO:" (com
+        # "/USUÁRIO" e dois-pontos extras - `(?:\s*/\s*USU[ÁA]RIO)?` cobre os
+        # dois formatos) seguido do nome e, na MESMA linha, do rótulo
+        # "Município"/CEP do tomador (cortado antes disso por um lookahead,
+        # não por procurar o fim da linha). O bairro pode conter um HÍFEN
+        # PRÓPRIO ("CIA-SUL") que não é o separador bairro→município - só um
+        # hífen com espaço dos DOIS lados (" - ") conta como separador. O CEP
+        # sai colado ao rótulo "cer:" (degradação de "CEP:") logo após o
+        # município, não deslocado para o fim do bloco. ---
         razao_social_tom = "Tomador Não Identificado"
-        m_tom_nome = re.search(r'TOMADOR\s+DO\s+SERVI[ÇC]O\s+(.+)', t, re.IGNORECASE)
+        m_tom_nome = re.search(
+            r'TOMADOR(?:\s*/\s*USU[ÁA]RIO)?\s+DO\s+SERVI[ÇC]O\s*:?\s*(.+?)(?=\s+Munic|\s*\n|$)',
+            t, re.IGNORECASE)
         if m_tom_nome:
             razao_social_tom = m_tom_nome.group(1).strip()
         else:
             avisos.append("Tomador do serviço não encontrado")
 
         m_bloco = re.search(
-            r'TOMADOR\s+DO\s+SERVI[ÇC]O.*?(?=INFORMA[ÇC][ÕO]ES\s+DA\s+PRESTA[ÇC][ÃA]O\s+DO\s+SERVI[ÇC]O)',
+            r'TOMADOR(?:\s*/\s*USU[ÁA]RIO)?\s+DO\s+SERVI[ÇC]O.*?(?=INFORMA[ÇC][ÕO]ES\s+DA\s+PRESTA[ÇC][ÃA]O\s+DO\s+SERVI[ÇC]O)',
             t, re.IGNORECASE | re.DOTALL)
         bloco_tom = m_bloco.group(0) if m_bloco else ''
 
         logradouro_tom, numero_tom, bairro_tom, municipio_tom = "Não informado", "S/N", "", ""
         m = re.search(r'ENDERE[ÇC]O:\s*(.+)', bloco_tom, re.IGNORECASE)
         if m:
-            m_addr = re.search(r'([^,]+?),\s*,?\s*N[ºo°]\s*(\S+)\s*-\s*([^-]+?)\s*-\s*(.+)', m.group(1).strip())
+            linha_end_tom = m.group(1).strip()
+            m_addr = re.search(r'([^,]+?),\s*,?\s*N[ºo°]\s*(\S+)\s*-\s*([^-]+?)\s*-\s*(.+)', linha_end_tom)
+            if not m_addr:
+                # Fallback: bairro colado ao número (sem hífen separador) e
+                # que pode ele mesmo conter um hífen ("CIA-SUL") - só um
+                # " - " com espaço dos dois lados separa bairro→município;
+                # o trecho termina em "UF:"/"ur:"/"País:" (rótulo seguinte),
+                # não em fim de linha (que aqui traria lixo de outro campo).
+                m_addr = re.search(
+                    r'([^,]+?),\s*,?\s*N[ºo°]\s*(\S+)\s+(.+?)\s+-\s+(.+?)\s*(?:\bu[rf]\s*:|\bpa[íi]s\s*:|$)',
+                    linha_end_tom, re.IGNORECASE)
             if m_addr:
                 logradouro_tom = m_addr.group(1).strip()
                 numero_tom = m_addr.group(2).strip()
@@ -21312,7 +21491,7 @@ class SPPdfExtractor:
         else:
             avisos.append("CNPJ/CPF do tomador não encontrado")
 
-        m = re.search(r'IE\s*\n*\s*:?\s*(\d[\d.\-]*)', bloco_tom, re.IGNORECASE)
+        m = re.search(r'(?:IE|INSC\.?\s*EST\.?)\s*\n*\s*:?\s*(\d[\d.\-]*)', bloco_tom, re.IGNORECASE)
         ie_tom = m.group(1) if m else None
 
         m = re.search(r'\bu[rf]\s*:\s*([A-Z]{2})\b', bloco_tom, re.IGNORECASE)
@@ -21320,6 +21499,13 @@ class SPPdfExtractor:
 
         m = re.search(r'(\d{8})\s*\n+\s*INFORMA[ÇC][ÕO]ES\s+DA\s+PRESTA[ÇC][ÃA]O\s+DO\s+SERVI[ÇC]O', t, re.IGNORECASE)
         cep_tom = m.group(1) if m else ''
+        if not cep_tom:
+            # Fallback: CEP colado ao rótulo "CEP:"/"cer:" (degradação de
+            # OCR) dentro do próprio bloco do tomador, não deslocado para o
+            # fim - achado real STAUMMAQ nº 000.017.268.
+            m = re.search(r'(?:CEP|cer)\s*[:;]?\s*(\d{5})-?(\d{3})', bloco_tom, re.IGNORECASE)
+            if m:
+                cep_tom = m.group(1) + m.group(2)
 
         cod_mun_tom = _ibge_resolver.extract_and_validate(municipio_tom, uf_tom, city_hint=municipio_tom, raw_doc_text=t)
 
