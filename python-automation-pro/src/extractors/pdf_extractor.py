@@ -16477,6 +16477,28 @@ class SPPdfExtractor:
                     if header_iacu.strip():
                         best_text = f"{header_iacu}\n{best_text}"
 
+                # Brasília/DF (Governo do DF, plataforma ISS.NET) escaneada: a
+                # linha de cabeçalho da tabela "Data de Geração da NFS-e /
+                # Data de Competência / Código de Autenticidade" e a caixa
+                # "Número da Nota Fiscal" (topo direito, ao lado do QR Code)
+                # somem por completo na leitura de página inteira (zoom 3x,
+                # PSM automático) — nenhum dos 3 valores da 1ª caixa e nem o
+                # número da 2ª aparecem no texto, em nenhum PSM automático
+                # testado. Um recorte dedicado em zoom alto recupera os 4
+                # campos (achado real 2026-09-23, nota nº 20/FLUIR PRODUCOES
+                # DE EVENTOS LTDA -> NÁUTICA INDÚSTRIA E COMÉRCIO DE MÓVEIS
+                # LTDA, pág. 3 do lote Scan2026-09-23_090227.pdf).
+                # `self.layout` ainda não existe neste ponto do pipeline (a
+                # detecção de layout roda depois) — por isso o portão é sobre
+                # o texto já lido (mesmo padrão usado pelos gates acima), não
+                # sobre `self.layout`. Prependemos, nunca substituímos: o
+                # resto da página (prestador/tomador/discriminação) já sai
+                # legível na leitura de página inteira.
+                if re.search(r'Governo\s+do\s+Distrito\s+Federal', best_text, re.IGNORECASE):
+                    header_brasilia = self._ocr_header_box_brasilia(page)
+                    if header_brasilia.strip():
+                        best_text = f"{header_brasilia}\n{best_text}"
+
                 # Guarulhos/SP (plataforma Ginfes, foto/CamScanner): a leitura
                 # padrão (zoom 3x, PSM automático) só recupera ~850 caracteres
                 # desta nota (perde quase toda a grade). Zoom 4x + PSM 6 (bloco
@@ -19016,6 +19038,103 @@ class SPPdfExtractor:
             pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0), clip=clip)
             img = Image.open(io.BytesIO(pix.tobytes("png"))).convert('L')
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_header_box_brasilia(page) -> str:
+        """Recorta e reprocessa em zoom alto dois pontos da NFS-e de
+        Brasília/DF (Governo do DF, plataforma ISS.NET) ESCANEADA: a faixa do
+        topo (linha de cabeçalho "Data de Geração da NFS-e / Data de
+        Competência / Código de Autenticidade") e a caixa superior direita
+        ("Número da Nota Fiscal", ao lado do QR Code). Na leitura de página
+        inteira (zoom 3x, PSM automático) os 3 valores da 1ª caixa e o número
+        da 2ª somem por completo do texto — testado em todo PSM automático,
+        nenhum recupera esses campos.
+
+        Achado real 2026-09-23 (nota nº 20, pág. 3 do lote
+        Scan2026-09-23_090227.pdf, FLUIR PRODUCOES DE EVENTOS LTDA ->
+        NÁUTICA INDÚSTRIA E COMÉRCIO DE MÓVEIS LTDA): confirmado por recorte
+        manual (fora do código de produção, via pymupdf+pytesseract) que a
+        faixa do topo (0 a 19% da altura, largura inteira) em zoom 4x/PSM 6
+        recupera os 3 valores de forma legível ("24/08/2026 14:50:59",
+        "24/08/2026",
+        "53001081257540290000183000000000002026081787593850"), e a caixa
+        superior direita (78%-100% da largura, 0-10% da altura) em zoom
+        6x/PSM 3-4 recupera "Número da Nota Fiscal\\n20".
+
+        Devolve um bloco de texto CANÔNICO (rótulos agrupados, depois
+        valores agrupados — a mesma ordem que o pdfminer já produz no
+        caminho DIGITAL desta plataforma, ver `MOCK_TEXT_BRASILIA_ELOS` em
+        tests/test_brasilia_layout.py) em vez de repassar cru o texto do
+        OCR: os regexes que consomem esses campos (`_extrair_numero`,
+        `_extrair_data_emissao`, `_extrair_codigo_autenticidade_brasilia`)
+        não são específicos deste recorte — reconstruir o formato canônico
+        garante que casem, mesmo quando o OCR falhar em reproduzir algum
+        rótulo com a grafia exata.
+
+        Cada campo só entra no bloco final quando validado: a Data de
+        Geração exige data+hora juntas (é o único par assim na faixa); a
+        Competência é buscada como a data (sem hora) seguinte à de Geração
+        no restante do texto, nunca a mesma ocorrência; o Código de
+        Autenticidade é a única corrida de 20+ dígitos da faixa. Sem a Data
+        de Geração (o campo mais crítico — sem ele a extração cai no
+        fallback `datetime.now()`, contaminando também a Competência
+        derivada dele), o bloco de datas/código inteiro é descartado."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            w0, h0 = page.rect.width, page.rect.height
+
+            # Faixa do topo, largura inteira: "Data de Geração da NFS-e /
+            # Data de Competência / Código de Autenticidade".
+            pix_top = page.get_pixmap(
+                matrix=pymupdf.Matrix(4.0, 4.0),
+                clip=pymupdf.Rect(0, 0, w0, 0.19 * h0))
+            img_top = Image.open(io.BytesIO(pix_top.tobytes("png")))
+            txt_top = pytesseract.image_to_string(img_top, lang='por', config='--psm 6')
+
+            m_dt = re.search(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', txt_top)
+            m_comp = re.search(r'(\d{2}/\d{2}/\d{4})', txt_top[m_dt.end():]) if m_dt else None
+            m_cod = re.search(r'(\d{20,})', txt_top)
+
+            linhas = []
+
+            # Caixa superior direita: "Número da Nota Fiscal", pequena e
+            # colada ao QR Code — some por completo na leitura de página
+            # inteira. PSM 3 (segmentação automática) e PSM 4 (coluna única)
+            # tentados nessa ordem, mesma calibração já usada pelos outros
+            # recortes de "caixa do número" deste arquivo.
+            pix_num = page.get_pixmap(
+                matrix=pymupdf.Matrix(6.0, 6.0),
+                clip=pymupdf.Rect(0.78 * w0, 0, w0, 0.10 * h0))
+            img_num = Image.open(io.BytesIO(pix_num.tobytes("png")))
+            m_num = None
+            for psm in (3, 4):
+                txt_num = pytesseract.image_to_string(img_num, lang='por', config=f'--psm {psm}')
+                m_num = re.search(
+                    r'N[uú]mero\s+da\s+Nota\s+Fiscal\D{0,10}(\d{1,8})',
+                    txt_num, re.IGNORECASE | re.DOTALL)
+                if m_num:
+                    break
+            if m_num:
+                linhas.append(f"Número da Nota Fiscal\n{m_num.group(1)}\n")
+
+            if m_dt:
+                valores = [f"{m_dt.group(1)} {m_dt.group(2)}"]
+                if m_comp:
+                    valores.append(m_comp.group(1))
+                if m_cod:
+                    valores.append(m_cod.group(1))
+                linhas.append(
+                    "Data de Geração da NFS-e\n\nData de Competência\n\n"
+                    "Código de Autenticidade\n\n" + "\n\n".join(valores) + "\n"
+                )
+
+            return "\n".join(linhas)
         except Exception:
             return ""
 
