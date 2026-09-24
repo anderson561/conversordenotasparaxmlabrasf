@@ -233,5 +233,108 @@ def test_brasilia_tomador_elos_estudio_endereco_e_contato(monkeypatch):
             os.remove(dummy_path)
 
 
+# Texto REAL (OCR/Tesseract, `_ocr_page`, sem qualquer edição) da pág. 3 de
+# Scan2026-09-23_090227.pdf — FLUIR PRODUCOES DE EVENTOS LTDA -> NÁUTICA
+# INDÚSTRIA E COMÉRCIO DE MÓVEIS LTDA, Brasília/DF. Achado real (2026-09-23):
+# Anderson pediu para conferir a extração desta página; o Valor ISS saía
+# ZERADO (0,00) em vez do real R$ 99,12, sem nenhum aviso ao usuário. Causa:
+# LAYOUT_BRASILIA nunca teve um branch dedicado em `_extrair_valores` — caía
+# no fallback genérico, cuja regex de ISS (`ISS(?:QN)?...`) casa a PRIMEIRA
+# ocorrência da palavra "ISS" no texto inteiro. Toda nota deste layout imprime
+# a URL fixa de consulta do cabeçalho ("...acessando o site:
+# https://iss.fazenda.df.gov.br/online/", texto de TEMPLATE, não específico
+# desta nota), que o OCR aqui degradou para "https:/liss,fazenda,df,gov...";
+# a vírgula que sobra no lugar do ponto cai dentro da classe de caracteres do
+# fallback (`[\d\.,]+`), que casa "iss," e devolve Valor ISS = 0,00 SEMPRE —
+# mesmo com "Vl. ISSQN: R$ 99,12" (aqui lido como "VI. ISSQN", "l" minúsculo
+# trocado por "I" maiúsculo pelo OCR) presente mais adiante no texto real.
+MOCK_TEXT_BRASILIA_SCAN_2026_09_23_FLUIR = (
+    "Série do Documento\n\n"
+    "Governo do Distrito Federal a Nota Fiscal de Serviço\n"
+    "Secretaria de Estado de Economia do Distrito Federal 5 nr E Eletrônica - NFS-e\n\n"
+    "nã Coordenação do ISS ppa]\n"
+    "Data de Geração da NFS-e Data de Competência | Código de Autenticidade É\n"
+    "Emitente da NFS-e Número da DPS Data Emissão da DPS\n\n"
+    "Consulte a autenticidade desta nota lendo o QRcode ou acessando o site; "
+    "https:/liss,fazenda,df,gov.br/onlinel\n\n"
+    "IDENTIFICAÇÃO DO PRESTADOR\n"
+    "CNPJ/CPF/NIF: 57.540.290/0001-83 Inscrição Municipal: 0833431000139 Telefone: (61)1996-1101\n"
+    "Nome/Razão Social: FLUIR PRODUCOES DE EVENTOS LTDA\n"
+    "Nome Fantasia: FLUIR PRODUCOES\n"
+    "Endereço: SGCV (ST GARAGENS E CONCES DE VEICULOS) LOTE 22 LOJA: 111 PARTE; CASA, 0 CEP: 71215-100\n"
+    "Cidade: Brasília Estado/Prov./Reg.: Distrito Federal País: Brasil\n"
+    "E-mail: -\n"
+    "Situação Simples Nacional: Optante - Microempresa ou Empresa de Pequeno Porte (ME/EPP) "
+    "Regime Apuração: Regime de apuração dos\n"
+    "tributos federais e municipal pelo SN Regime Especial: Nenhum\n\n"
+    "IDENTIFICAÇÃO DO TOMADOR\n\n"
+    "CNPJ/CPF/NIF: 16.699.869/0001-06 Inscrição Municipal: Telefone:\n"
+    "Nome/Razão Social: NÁUTICA INDÚSTRIA E COMÉRCIO DE MÓVEIS LTDA\n"
+    "Nome Fantasia: NÁUTICA\n\n"
+    "Endereço: Loteamento Fazenda Coutos III, O - Nova Brasília de Valéria CEP: 40750-120\n"
+    "Cidade: Salvador Estado/Prov./Reg.: Bahia País: Brasil\n"
+    "E-mail:\n\n"
+    "INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-E\n"
+    "DESTINATÁRIO É O PRÓPRIO TOMADOR IDENTIFICADO NA NFS-E\n"
+    "DADOS DO SERVIÇO PRESTADO\n"
+    "Cód. Trib. Nacional: 17.10.02 NBS: 1.1806.63.00 Atividade Municipal: 17.10 - Planejamento, "
+    "organização e administração ...\n"
+    "Local da Prestação: Brasília - DF País Resultado da Prestação do Serviço: -\n"
+    "VI. do Serviço: R$ 4.931,50 VI. do Desc. Incondicionado: - VI. do Desc. Condicionado: -\n"
+    "Descrição do Serviço: SERVIÇOS REFERENTE A EVENTOS PRESTADOS\n\n"
+    "IMPOSTO SOBRE SERVIÇO DE QUALQUER NATUREZA - ISSQN\n\n"
+    "Tipo Tributação: Operação tributável Tipo Susp. Exig.: - Nº Proc. Susp.: -\n"
+    "Município de Incidência: Brasília - DF Tipo de Retenção: Não Retido Valor Dedução: R$ 0,00\n"
+    "Base de Cálculo: R$ 4.931,50 Alíquota: 2,01% VI. ISSQN: R$ 99,12\n\n"
+    "TRIBUTAÇÃO NACIONAL\n\n"
+    "CST: Outras Operações\n\n"
+    "Tipo de Retenção: PIS/COFINS/CSLL Não Retidos VI. PIS: - VI. COFINS: -\n\n"
+    "VI. CSLL: - VI. IRRF: - VI. CP Retido: -\n\n"
+    "IMPOSTO E CONTRIBUIÇÃO SOBRE BENS E SERVIÇOS - IBS/ICBS\n\n"
+    "INFORMAÇÕES COMPLEMENTARES\n"
+    '|- "DOCUMENTO EMITIDO POR ME OU EPP OPTANTE PELO SIMPLES NACIONAL", e\n\n'
+    '| - "NÃO GERA DIREITO A CRÉDITO FISCAL DE IPI."\n\n'
+    "• PROCON: TEL 151- SETOR COMERCIAL SUL, QUADRA 8, BLOCO B-60, SALA 240- BRASILIA - DF\n"
+    "ISS.NET - Sistema Nota Control® • www.notacontrol.com.br\n"
+)
+
+
+def test_brasilia_scan_2026_09_23_valor_iss_nao_zerado_pela_url_iss_fazenda():
+    """
+    Achado real 2026-09-23 (Scan2026-09-23_090227.pdf, pág. 3): o Valor ISS
+    saía ZERADO (0,00 em vez do real R$ 99,12) porque a regex genérica de ISS
+    do fallback casava a palavra "iss" dentro da URL de consulta do próprio
+    template ("https://iss.fazenda.df.gov.br/online/", degradada pelo OCR
+    para "https:/liss,fazenda,df,gov...") ANTES de chegar no "Vl. ISSQN: R$
+    99,12" real, mais adiante no texto. Cobre também a Alíquota (2,01%) e a
+    tolerância ao "Vl."/"VI." (OCR troca "l" minúsculo por "I" maiúsculo).
+    """
+    dummy_path = "tests/dummy_brasilia_scan_2026_09_23.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+
+    try:
+        extractor = SPPdfExtractor(dummy_path)
+        extractor.raw_text = MOCK_TEXT_BRASILIA_SCAN_2026_09_23_FLUIR
+        extractor.layout = extractor._detect_layout()
+        assert extractor.layout == LAYOUT_BRASILIA
+
+        nfse = extractor.parse()
+
+        v = nfse.valores
+        assert v.valor_servicos == pytest.approx(4931.50)
+        assert v.base_calculo == pytest.approx(4931.50)
+        assert v.aliquota == pytest.approx(0.0201)
+        # Achado real: sem o fix, este campo saía 0.0 (casava a vírgula da
+        # URL "https:/liss,fazenda,df,gov..." como se fosse o valor do ISS).
+        assert v.valor_iss == pytest.approx(99.12)
+        assert v.valor_deducoes == pytest.approx(0.0)
+        assert v.valor_liquido_nfse == pytest.approx(4931.50)
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
