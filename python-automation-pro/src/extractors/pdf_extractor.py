@@ -327,6 +327,40 @@ class SPPdfExtractor:
             return bool(getattr(self, 'from_ocr', False))
         return bool(flag)
 
+    @staticmethod
+    def _texto_digital_sem_espacos(texto: str) -> bool:
+        """Detecta a patologia de um PDF DIGITAL (não escaneado) cujo
+        `pdfminer.high_level.extract_text()` devolve a página inteira COLADA,
+        sem nenhum espaço entre palavras/rótulos/valores.
+
+        Achado real, DANFSe v2.0 (`LAYOUT_NACIONAL_REFORMA`), nota nº 171/173
+        (SUL&SEG COMERCIO E SERVICOS DE MANUTENCAO ELETRICOS LTDA -> MACEDO
+        COMERCIAL DE CALCADOS LTDA, Lauro de Freitas/BA): a nota é 100%
+        digital (texto embutido, sem OCR necessário para o documento como um
+        todo), mas o gerador de PDF deste emissor/software específico
+        posiciona os glifos sem NENHUM gap detectável entre palavras — testado
+        `LAParams(word_margin=...)` de 0.1 a 2.0, resultado idêntico em todos
+        os casos (zero espaços sempre). Não é um parâmetro de tuning: é como
+        este gerador de DANFSe codifica o texto no PDF. Isso derruba TODA
+        extração baseada em `\\s+` entre rótulo e valor (`_extrair_entidade_
+        nacional_reforma` e as demais regras de `LAYOUT_NACIONAL_REFORMA`/
+        `LAYOUT_NACIONAL`), mesmo a DETECÇÃO de layout continuando a funcionar
+        por acidente (usa `\\s*`, que também casa zero espaços).
+
+        Um texto fiscal de tamanho razoável SEMPRE tem uma fração saudável de
+        espaços (rótulos de várias palavras, "R$ 40,00", "Lauro de Freitas /
+        BA" etc.) — a nota real usada aqui tem 2972 caracteres e ZERO espaços,
+        contra centenas de espaços numa nota digital normal do mesmo layout
+        (ver `tests/test_danfse_nacional_reforma_tomador_nao_identificado_
+        intermediario_no_meio.py`). O limiar de densidade abaixo é GENÉRICO
+        (razão espaços/tamanho do texto) — não depende do CNPJ/emissor desta
+        nota específica, para cobrir qualquer outra nota do mesmo gerador de
+        PDF no futuro."""
+        t = texto.strip()
+        if len(t) < 500:
+            return False
+        return (t.count(' ') / len(t)) < 0.01
+
     def _reconstruir_texto_por_coordenadas(self) -> str:
         """Reconstrói o texto de uma página a partir da posição real de cada
         caractere (`LTChar.x0/y0`), em vez de confiar na ordem de leitura que
@@ -4128,18 +4162,40 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             # DANFSe v2.0: os dois rótulos da v1.0 ("Código de Tributação
             # Nacional" e "... Municipal") foram fundidos num só ("Código de
-            # Tributação Nacional/Municipal") e — pior — o VALOR é impresso
-            # ANTES do rótulo na ordem de leitura ("SERVIÇO PRESTADO\n
-            # 11.02.01/-\n...\nCódigo de Tributação Nacional/Municipal"), de
-            # modo que a âncora rótulo->valor da v1.0 nunca casa. Ancoramos no
-            # cabeçalho da seção "SERVIÇO PRESTADO" e pegamos o primeiro código
-            # no formato "XX.XX.XX" (item da LC 116 + desdobro); usamos os 2
-            # primeiros pares (11.02 -> 1102), mesma convenção da v1.0.
-            m = re.search(
-                r'SERVI[ÇC]O\s+PRESTADO[\s\S]{0,120}?(\d{2})\.(\d{2})\.\d{2}',
-                t, re.IGNORECASE)
-            if m:
-                return m.group(1) + m.group(2)
+            # Tributação Nacional/Municipal"). Em algumas notas (nº 11/nº 59)
+            # o VALOR é impresso ANTES do rótulo na ordem de leitura ("SERVIÇO
+            # PRESTADO\n11.02.01/-\n...\nCódigo de Tributação Nacional/
+            # Municipal"), de modo que uma âncora rótulo->valor direta (como a
+            # da v1.0) nunca casa — por isso ancoramos no cabeçalho da seção
+            # "SERVIÇO PRESTADO" e pegamos o primeiro código no formato
+            # "XX.XX.XX" (item da LC 116 + desdobro) logo depois dele.
+            #
+            # Achado real 2026-09-24 (nota nº 171/173, MACEDO COMERCIAL DE
+            # CALCADOS, via OCR): esta nota inverte a ordem das duas notas
+            # acima — aqui o RÓTULO "Código de Tributação Nacional/Municipal"
+            # vem ANTES de "SERVIÇO PRESTADO", com o código colado logo depois
+            # do próprio rótulo, na mesma linha fundida com "Código da NBS"
+            # ("Código de Tributação Nacional/Municipal Código da NBS\n
+            # 11.02.01/- 1.1802.90.00"). Sem tratamento, nenhuma das duas
+            # âncoras achava o código nesta ordem nova e a extração caía no
+            # default genérico "03115" (código de locação de bens móveis,
+            # nada a ver com o item real 1102 de vigilância desta nota).
+            # **Fix:** usa qualquer uma das duas âncoras que aparecer PRIMEIRO
+            # no texto — mesma janela curta (120 caracteres) de antes —,
+            # generalizando sem regredir os dois casos já cobertos (lá,
+            # "SERVIÇO PRESTADO" sempre aparece primeiro; aqui, o rótulo).
+            m_servico = re.search(r'SERVI[ÇC]O\s+PRESTADO', t, re.IGNORECASE)
+            m_label = re.search(
+                r'C[óo]digo\s+de\s+Tributa[çc][ãa]o\s+Nacional', t, re.IGNORECASE)
+            ancora = None
+            if m_servico and (not m_label or m_servico.start() < m_label.start()):
+                ancora = m_servico
+            elif m_label:
+                ancora = m_label
+            if ancora:
+                m = re.search(r'(\d{2})\.(\d{2})\.\d{2}', t[ancora.end():ancora.end() + 120])
+                if m:
+                    return m.group(1) + m.group(2)
 
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe: "Código de Tributação Nacional ... 16.02.01 - Outros serviços
@@ -9390,16 +9446,21 @@ class SPPdfExtractor:
 
     @staticmethod
     def _corrigir_arroba_ocr(email: str) -> str:
-        """Tesseract lê o '@' como uma letra maiúscula solta quando o e-mail
-        vem colado direto na letra seguinte, sem espaço nenhum ao redor (ex.:
-        "administrativoObiocontrolbahia.com.br" -> o "O" no meio É o '@';
-        achado real, nota BioControl nº 36345, prestador E tomador). Só
-        substitui quando NÃO há '@' já presente e o padrão bate exatamente
-        (minúsculas, 1 maiúscula solta, minúsculas, domínio) - não mexe em
-        e-mails que já vieram corretos outros layouts."""
+        """Tesseract lê o '@' como uma ou mais letras maiúsculas soltas quando
+        o e-mail vem colado direto na letra seguinte, sem espaço nenhum ao
+        redor (ex.: "administrativoObiocontrolbahia.com.br" -> o "O" no meio
+        É o '@'; achado real, nota BioControl nº 36345, prestador E tomador).
+        Uma segunda nota real (DANFSe v2.0, nº 171/173, MACEDO COMERCIAL DE
+        CALCADOS) leu o mesmo '@' como DUAS maiúsculas soltas
+        ("valmirGQmaxcalcados.com.br") — `[A-Z]` singular não casava, e o
+        e-mail saía como texto colado sem `_corrigir_arroba_ocr` conseguir
+        normalizá-lo. `[A-Z]+` generaliza para qualquer corrida de 1+
+        maiúsculas. Só substitui quando NÃO há '@' já presente e o padrão bate
+        exatamente (minúsculas, maiúscula(s) solta(s), minúsculas, domínio) -
+        não mexe em e-mails que já vieram corretos de outros layouts."""
         if '@' in email:
             return email
-        m = re.match(r'^([a-z0-9._-]+)[A-Z]([a-z0-9-]+\.(?:com|net|org|gov)(?:\.br)?)$', email)
+        m = re.match(r'^([a-z0-9._-]+)[A-Z]+([a-z0-9-]+\.(?:com|net|org|gov)(?:\.br)?)$', email)
         if m:
             return f"{m.group(1)}@{m.group(2)}"
         return email
@@ -11265,10 +11326,31 @@ class SPPdfExtractor:
             return e if re.match(r'^[^@\s]+@[^@\s]+\.[A-Za-z][^@\s]*$', e) else None
 
         def _ac_telefone(l):
-            return l if re.match(r'^\(?\d{2}\)?\s*\d{4,5}-?\s?\d{4}$', l) else None
+            # Achado real 2026-09-24 (nota nº 171/173, tomador MACEDO
+            # COMERCIAL DE CALCADOS): quando o cabeçalho funde 3+ colunas
+            # numa única linha ("TOMADOR / ADQUIRENTE CNPJ/CPF/NIF Indicador
+            # Municipal (Inscrição) Telefone"), a linha de VALOR correspondente
+            # também funde os 3 valores ("04.074.648/0003-25 - (71)
+            # 3342-4542") — o telefone deixa de ocupar a linha inteira. Busca
+            # (`search`) o padrão de telefone como SUBSTRING em vez de exigir
+            # a linha inteira (`match` + `$`); CNPJ/IM nunca colidem com esse
+            # padrão (CNPJ tem pontos/barra dentro do MESMO token, sem os
+            # parênteses/hífen na posição certa de telefone).
+            m = re.search(r'\(?\d{2}\)?\s*\d{4,5}-?\s?\d{4}', l)
+            return m.group(0) if m else None
 
         def _ac_im(l):
-            return l if re.match(r'^\d{4,}$', l) else None
+            # Mesmo achado acima, para o Indicador Municipal: no valor fundido
+            # do PRESTADOR ("10030574 -", colunas "Indicador Municipal
+            # (Inscrição) Telefone"), o IM é só o 1º token da linha, não a
+            # linha inteira. Pega o primeiro token puramente numérico (>= 4
+            # dígitos) — um CNPJ ou telefone formatado nunca é um token
+            # puramente numérico (sempre carregam pontuação dentro do próprio
+            # token, já que `l.split()` separa por espaço).
+            for tok in l.split():
+                if re.match(r'^\d{4,}$', tok):
+                    return tok
+            return None
 
         mun_uf = _pega(_colher(r'Munic[íi]pio\s*/\s*Sigla\s+UF(?!\s*/)', _ac_municipio)) or ('', '')
         ibge_cep = _pega(_colher(r'C[óo]digo\s+IBGE\s*/\s*CEP', _ac_ibge_cep)) or ('', '')
@@ -11349,15 +11431,29 @@ class SPPdfExtractor:
                 if len(cep_fundido) != 8:
                     cep_fundido = ''
 
+                # Achado real 2026-09-24 (nota nº 171/173, DANFSe v2.0,
+                # SUL&SEG COMERCIO E SERVICOS DE MANUTENCAO ELETRICOS LTDA):
+                # nesta nota o Código IBGE/CEP do PRESTADOR vem numa seção
+                # separada, ANTES da linha fundida "<razão> <município> /
+                # <UF>" (sem IBGE/CEP colados na própria linha) — diferente da
+                # nota nº 5/SBS acima, onde os 4 valores vêm todos na mesma
+                # linha. Sem `ibge_fundido` nesta linha, o bloco `if
+                # ibge_fundido:` original nunca rodava e a razão social
+                # engolia o município inteiro ("...LTDA Lauro de Freitas"),
+                # com `municipio` ficando vazio apesar do Código IBGE já ter
+                # sido lido corretamente em `cod_mun` (via `_colher` acima).
+                # Usa `cod_mun` já conhecido como a mesma prova de corte
+                # quando a linha fundida não traz seu próprio IBGE.
                 municipio_f = ''
                 palavras = antes.split(' ')
-                if ibge_fundido:
+                ibge_conhecido = ibge_fundido or cod_mun
+                if ibge_conhecido:
                     for n in (4, 3, 2, 1):
                         if n >= len(palavras):
                             continue
                         candidato = ' '.join(palavras[-n:])
                         if _ibge_resolver.extract_and_validate(
-                                candidato, uf_fundido, city_hint=candidato) == ibge_fundido:
+                                candidato, uf_fundido, city_hint=candidato) == ibge_conhecido:
                             municipio_f = candidato
                             antes = ' '.join(palavras[:-n])
                             break
@@ -11404,7 +11500,24 @@ class SPPdfExtractor:
                 r'\s+\S*\.(?:com(?:\.br)?|net|org|gov(?:\.br)?)\b\S*\s*$',
                 valor_end, re.IGNORECASE)
             if m_email_colado:
+                # Achado real 2026-09-24 (nota nº 171/173, tomador MACEDO
+                # COMERCIAL DE CALCADOS): esta nota NÃO imprime uma linha de
+                # valor separada para a coluna "E-mail" (o rótulo "Endereço
+                # E-mail" fica sem valor próprio de e-mail abaixo) — o e-mail
+                # só existe colado no fim desta MESMA linha do endereço
+                # ("...ITINGA valmirGQmaxcalcados.com.br"). `_colher(E-?mail,
+                # _ac_email)` nunca o encontra (`_ac_email` rejeita qualquer
+                # linha com espaço, e esta linha tem o endereço inteiro antes
+                # do e-mail) — o e-mail real ficava descartado junto com o
+                # trecho removido do endereço. Recupera o fragmento antes de
+                # descartá-lo e usa como e-mail quando a coluna própria não
+                # rendeu nada.
+                fragmento_email = valor_end[m_email_colado.start():].strip()
                 valor_end = valor_end[:m_email_colado.start()].rstrip()
+                if not email:
+                    candidato_email = _arroba(fragmento_email)
+                    if re.match(r'^[^@\s]+@[^@\s]+\.[A-Za-z][^@\s]*$', candidato_email):
+                        email = candidato_email
             segs = [s.strip() for s in valor_end.split(',') if s.strip()]
             if segs:
                 logradouro = segs[0]
@@ -22351,10 +22464,29 @@ class SPPdfExtractor:
         paginas_via_ocr = set(range(n_pages_real)) if self.from_ocr else set()
 
         for idx in range(min(n_pages_real, len(pages))):
-            if len(pages[idx].strip()) < OCR_MIN_CHARS:
+            precisa_ocr = len(pages[idx].strip()) < OCR_MIN_CHARS
+            motivo = "sem texto extraível"
+
+            # Fallback por PATOLOGIA de extração digital: texto longo o
+            # bastante (passa no gate acima), mas colado sem espaço nenhum —
+            # ver `_texto_digital_sem_espacos`. Restrito a páginas que o
+            # detector de layout já reconhece como DANFSe Nacional (v1.0/v2.0)
+            # porque é lá que o achado real foi confirmado e onde a extração
+            # depende inteiramente de `\s+` entre rótulo e valor; outros
+            # layouts deste projeto usam extração por regex tolerante a texto
+            # colado (ex.: `_reconstruir_texto_por_coordenadas` para
+            # Camaçari/Goiânia) e não devem ser desviados para OCR sem
+            # necessidade.
+            if not precisa_ocr and self._texto_digital_sem_espacos(pages[idx]):
+                layout_pagina = self._detect_layout_page(pages[idx])
+                if layout_pagina in (LAYOUT_NACIONAL, LAYOUT_NACIONAL_REFORMA):
+                    precisa_ocr = True
+                    motivo = "texto digital sem espaços entre palavras (patologia do gerador de PDF)"
+
+            if precisa_ocr:
                 ocr_text = self._ocr_page(idx)
                 if len(ocr_text.strip()) >= OCR_MIN_CHARS:
-                    print(f"[*] Página {idx + 1} sem texto extraível — usando OCR.")
+                    print(f"[*] Página {idx + 1} {motivo} — usando OCR.")
                     pages[idx] = ocr_text
                     self.from_ocr = True
                     paginas_via_ocr.add(idx)
