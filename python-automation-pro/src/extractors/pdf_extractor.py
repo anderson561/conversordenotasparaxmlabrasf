@@ -289,6 +289,19 @@ class SPPdfExtractor:
         # como atributo escalar antes de chamar `sub_ext.parse()`.
         self._password_enotas_tomador_recut_por_pagina = {}
         self._password_enotas_prestador_im_recut_por_pagina = {}
+        # Texto digital ORIGINAL (glued, sem espaço nenhum) de uma página
+        # desviada para OCR pela patologia `_texto_digital_sem_espacos` (ver
+        # `parse_multiple`) — indexado por página (0-indexed, mesma convenção
+        # de `_ocr_page`). Descartar esse texto por completo seria jogar fora
+        # uma fonte às vezes MAIS confiável que o OCR para tokens compactos
+        # sem espaço interno (ex.: Código de Verificação): o glifo digital é
+        # exato, enquanto o Tesseract pode inserir um caractere espúrio (achado
+        # real, nota nº 05299158, FLASH TECNOLOGIA E INSTITUICAO DE PAGAMENTO
+        # LTDA: o texto digital traz "...11:54:50YTH8X4GYIdentificadorNacional"
+        # limpo, mas a MESMA região lida por OCR sai "YTH8-X46GY", com um "6"
+        # espúrio a mais). Propagado para o `sub_ext` de cada nota do lote,
+        # igual ao padrão já usado pelos recortes do PASSWORD/eNotas acima.
+        self._texto_digital_glued_por_pagina = {}
         # Recorte dedicado do bloco do PRESTADOR (Simões Filho/BA), sem o
         # rótulo "PRESTADOR" (o crop começa em "Razão Social:") — não pode
         # ser localizado pela mesma fatia "PRESTADOR...TOMADOR" usada no
@@ -4364,6 +4377,35 @@ class SPPdfExtractor:
             return "XXXX-XXXX"
 
         if self.layout == LAYOUT_SAO_PAULO_2:
+            # Nota DIGITAL que caiu na patologia `_texto_digital_sem_espacos`
+            # (ver `parse_multiple`) e por isso foi desviada para OCR: o texto
+            # digital ORIGINAL (glued, sem espaço ENTRE PALAVRAS) continua
+            # disponível em `_texto_digital_glued_pagina` e é MAIS CONFIÁVEL
+            # que o OCR para este campo especificamente — é o glifo exato do
+            # PDF, sem chance de o Tesseract inserir um caractere espúrio.
+            # Achado real, nota nº 05299158 (FLASH TECNOLOGIA E INSTITUICAO DE
+            # PAGAMENTO LTDA): o texto digital traz "...11:54:50YTH8-X4GY
+            # IdentificadorNacional" (código real "YTH8-X4GY", hífen interno
+            # do próprio código PRESERVADO — a patologia cola só os ESPAÇOS
+            # entre palavras/rótulos, não outros caracteres), mas a MESMA
+            # região lida por OCR sai "YTH8-X46GY", com um "6" espúrio a mais
+            # — o recorte/heurístico abaixo aceitaria esse valor errado sem
+            # questionar. O código sempre vem colado entre a hora de emissão
+            # (hh:mm:ss) e o rótulo seguinte "Identificador Nacional", sem
+            # espaço algum antes/depois — mas o hífen do próprio formato
+            # impresso "XXXX-XXXX" é tolerado como opcional (`-?`) caso outra
+            # nota real do mesmo gerador o perca na extração.
+            texto_glued = getattr(self, '_texto_digital_glued_pagina', None)
+            if texto_glued:
+                m_glued = re.search(
+                    r'\d{2}:\d{2}:\d{2}([A-Z0-9]{3,5}-?[A-Z0-9]{3,6})Identificador',
+                    texto_glued, re.IGNORECASE)
+                if m_glued:
+                    cod = re.sub(r'[^A-Z0-9]', '', m_glued.group(1).upper())
+                    if len(cod) == 8:
+                        return f"{cod[:4]}-{cod[4:]}"
+                    return m_glued.group(1).upper()
+
             # Achado real 2026-08-17 (nota nº 00028202, VALESTRA NEGOCIOS E
             # INVESTIMENTOS LTDA): quando `_ocr_header_box_sao_paulo` recupera
             # a caixa "Código de Verificação" (recorte dedicado, prependado ao
@@ -7336,6 +7378,20 @@ class SPPdfExtractor:
                             end_data['numero'] = m_num_sp.group(2)
                         else:
                             end_data['logradouro'] = resto_sp
+
+                    # Tipo de logradouro duplicado ("rua rua X" em vez de
+                    # "rua X") - erro do PRÓPRIO emissor, já visto em João
+                    # Pessoa (ver `_remover_tipo_logradouro_duplicado`) e
+                    # confirmado aqui também: nota nº 05299158 (FLASH
+                    # TECNOLOGIA E INSTITUICAO DE PAGAMENTO LTDA), endereço do
+                    # tomador impresso como "rua rua senador theotônio vilela"
+                    # (renderização em 300 DPI confirma que a duplicação já
+                    # vem assim na própria nota, não é um rótulo colado pelo
+                    # parser). Reaproveita o mesmo método genérico em vez de
+                    # duplicar a lista de tipos de logradouro.
+                    if end_data.get('logradouro'):
+                        end_data['logradouro'] = self._remover_tipo_logradouro_duplicado(
+                            end_data['logradouro'])
             # Se houver vírgulas, tentamos quebrar em Logradouro, Número, Bairro
             elif ',' in partes_end:
                 bits = [b.strip() for b in partes_end.split(',')]
@@ -22469,21 +22525,32 @@ class SPPdfExtractor:
 
             # Fallback por PATOLOGIA de extração digital: texto longo o
             # bastante (passa no gate acima), mas colado sem espaço nenhum —
-            # ver `_texto_digital_sem_espacos`. Restrito a páginas que o
-            # detector de layout já reconhece como DANFSe Nacional (v1.0/v2.0)
-            # porque é lá que o achado real foi confirmado e onde a extração
-            # depende inteiramente de `\s+` entre rótulo e valor; outros
-            # layouts deste projeto usam extração por regex tolerante a texto
-            # colado (ex.: `_reconstruir_texto_por_coordenadas` para
-            # Camaçari/Goiânia) e não devem ser desviados para OCR sem
-            # necessidade.
+            # ver `_texto_digital_sem_espacos`. Achado originalmente na DANFSe
+            # Nacional (v1.0/v2.0) e confirmado depois também em
+            # LAYOUT_SAO_PAULO (nota nº 05299158, FLASH TECNOLOGIA E
+            # INSTITUICAO DE PAGAMENTO LTDA -> MASSA ALIMENTAÇÃO E SERVICOS
+            # S/A., 2026-08-03): mesma característica do TEXTO/gerador do PDF,
+            # não do layout específico — o gate NÃO é mais restrito a uma
+            # lista fixa de layouts, para cobrir qualquer layout futuro que
+            # colidir com o mesmo gerador de PDF problemático. O limiar de
+            # densidade de `_texto_digital_sem_espacos` (< 1% de espaços num
+            # texto de 500+ caracteres) já é suficientemente conservador para
+            # não confundir com layouts que usam extração por coordenadas
+            # tolerante a blocos deslocados (ex.: `_reconstruir_texto_por_
+            # coordenadas` para Camaçari/Goiânia) — aqueles têm espaçamento
+            # normal dentro de cada bloco, só a ORDEM de leitura é que muda.
+            eh_patologia_sem_espacos = False
             if not precisa_ocr and self._texto_digital_sem_espacos(pages[idx]):
-                layout_pagina = self._detect_layout_page(pages[idx])
-                if layout_pagina in (LAYOUT_NACIONAL, LAYOUT_NACIONAL_REFORMA):
-                    precisa_ocr = True
-                    motivo = "texto digital sem espaços entre palavras (patologia do gerador de PDF)"
+                precisa_ocr = True
+                eh_patologia_sem_espacos = True
+                motivo = "texto digital sem espaços entre palavras (patologia do gerador de PDF)"
 
             if precisa_ocr:
+                if eh_patologia_sem_espacos:
+                    # Guarda o texto digital original (glued) ANTES de
+                    # sobrescrever com o OCR — ver comentário de
+                    # `_texto_digital_glued_por_pagina` no `__init__`.
+                    self._texto_digital_glued_por_pagina[idx] = pages[idx]
                 ocr_text = self._ocr_page(idx)
                 if len(ocr_text.strip()) >= OCR_MIN_CHARS:
                     print(f"[*] Página {idx + 1} {motivo} — usando OCR.")
@@ -22726,6 +22793,13 @@ class SPPdfExtractor:
                 self._password_enotas_tomador_recut_por_pagina.get(page_idx - 1)
             sub_ext._password_enotas_prestador_im_recut = \
                 self._password_enotas_prestador_im_recut_por_pagina.get(page_idx - 1)
+
+            # Propaga o texto digital original (glued) da página de origem,
+            # quando esta caiu na patologia `_texto_digital_sem_espacos` e foi
+            # desviada para OCR — ver `_texto_digital_glued_por_pagina` no
+            # `__init__`. Mesma convenção 0-based dos dicionários acima.
+            sub_ext._texto_digital_glued_pagina = \
+                self._texto_digital_glued_por_pagina.get(page_idx - 1)
 
             try:
                 nfse = sub_ext.parse()
