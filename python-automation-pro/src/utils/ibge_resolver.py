@@ -108,6 +108,14 @@ class IBGEResolver:
         # cidades-e-estados/pb/joao-pessoa.html e geoftp.ibge.gov.br,
         # "JOÃO PESSOA - PB 2507507").
         "JOAO PESSOA": "2507507", "JOÃO PESSOA": "2507507",
+        # Santana de Parnaíba/SP - prestador do LAYOUT_NACIONAL_REFORMA (nota
+        # nº 1/2, PATRICIA ONORI BORCHES SANCHEZ, MEI, achado real
+        # 2026-09-30). Sem esta entrada, um documento em que o próprio código
+        # IBGE impresso na nota não sobrevivesse ao OCR cairia no fallback
+        # silencioso da capital do estado ("SP" -> São Paulo, 3550308) em vez
+        # de Santana de Parnaíba (3547304) - confirmado na fonte oficial do
+        # IBGE (cidades.ibge.gov.br/brasil/sp/santana-de-parnaiba).
+        "SANTANA DE PARNAIBA": "3547304", "SANTANA DE PARNAÍBA": "3547304",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
