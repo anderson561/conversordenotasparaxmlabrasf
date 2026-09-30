@@ -11369,10 +11369,24 @@ class SPPdfExtractor:
             return (re.sub(r'\s+', ' ', m.group(1)).strip(), m.group(2).upper()) if m else None
 
         def _ac_ibge_cep(l):
-            m = re.match(r'^([\d.]{5,12})\s*/\s*([\d.\-]{8,12})$', l)
+            # Achado real 2026-09-30 (nota nº 1/2, DANFSe v2.0 "NFS-e MEI",
+            # PATRICIA ONORI BORCHES SANCHEZ): o OCR desta nota perde o "0"
+            # inicial do CEP só nesta coluna ("35.47304 / 6543001" — CEP real
+            # "06543-001" com 8 dígitos, sai com só 7). O limite inferior
+            # {8,12} original rejeitava a linha INTEIRA (o `$` força casar
+            # tudo), então nem o código IBGE (perfeitamente legível) era
+            # aproveitado — o campo saía com o sentinela "00000000" E o
+            # código do município caía no fallback por nome (que nem conhece
+            # "Santana de Parnaíba" e devolvia a capital SP por engano).
+            # Aceita 7 dígitos aqui também; o zero perdido só é reposto
+            # abaixo, e só quando o IBGE já bate exatamente 7 dígitos válidos
+            # — não generaliza para qualquer CEP curto.
+            m = re.match(r'^([\d.]{5,12})\s*/\s*([\d.\-]{7,12})$', l)
             if not m:
                 return None
             ibge, cep = re.sub(r'\D', '', m.group(1)), re.sub(r'\D', '', m.group(2))
+            if len(ibge) == 7 and len(cep) == 7:
+                cep = '0' + cep
             return (ibge if len(ibge) == 7 else '', cep if len(cep) == 8 else '')
 
         def _ac_email(l):
@@ -11403,6 +11417,20 @@ class SPPdfExtractor:
             # dígitos) — um CNPJ ou telefone formatado nunca é um token
             # puramente numérico (sempre carregam pontuação dentro do próprio
             # token, já que `l.split()` separa por espaço).
+            #
+            # Achado real 2026-09-30 (nota nº 1/2, PATRICIA ONORI BORCHES
+            # SANCHEZ): quando o Indicador Municipal do prestador vem
+            # legitimamente em branco ("- (11) 9462-0190", só o "-" marca a
+            # ausência), `_colher` continuava vasculhando as linhas SEGUINTES
+            # do bloco à procura de QUALQUER token puramente numérico — e
+            # achava um, bem mais adiante: o CEP da própria linha "Código
+            # IBGE / CEP" ("35.47304 / 6543001"), aceito como se fosse o IM
+            # do prestador. Nenhuma linha de valor LEGÍTIMA de IM/Telefone
+            # tem "/" (CNPJ, Código IBGE/CEP e Município/UF sempre têm); só
+            # ignorar qualquer linha com "/" já isola o vazamento sem exigir
+            # reescrever a janela de busca compartilhada por outros campos.
+            if '/' in l:
+                return None
             for tok in l.split():
                 if re.match(r'^\d{4,}$', tok):
                     return tok
@@ -11441,6 +11469,40 @@ class SPPdfExtractor:
 
         m_nome = re.search(r'Nome\s*/\s*Nome\s+Empresarial\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
         razao = m_nome.group(1).strip() if m_nome else ''
+
+        # Achado real 2026-09-30 (nota nº 1/2, DANFSe v2.0 "NFS-e MEI",
+        # PATRICIA ONORI BORCHES SANCHEZ, MEI): nesta variante a coluna "Nome
+        # / Nome Empresarial" sai VAZIA logo abaixo do próprio rótulo — o
+        # valor de verdade só aparece DEPOIS do bloco "CNPJ/CPF / NIF"
+        # (rótulo + CNPJ formatado), numa linha que repete o CNPJ SEM
+        # pontuação colado ao nome ("67.944.968 PATRICIA ONORI BORCHES
+        # SANCHEZ"):
+        #
+        #   Nome / Nome Empresarial
+        #   CNPJ/CPF / NIF
+        #   67.944.968/0001-47
+        #   67.944.968 PATRICIA ONORI BORCHES SANCHEZ
+        #
+        # A regex acima assume cegamente que a 1ª linha não-vazia após o
+        # rótulo já é o nome — aqui essa linha é o PRÓXIMO rótulo, "CNPJ/CPF
+        # / NIF" (ou "CNPJ/CPF /NIF", grafia com 1 espaço a menos no bloco do
+        # tomador desta mesma nota). Sem essa checagem a razão social saía
+        # LITERALMENTE "CNPJ/CPF / NIF" — tanto no prestador quanto no
+        # tomador — apesar do nome estar perfeitamente legível 2 linhas
+        # abaixo. Detecta o candidato batendo um rótulo conhecido deste
+        # bloco (não um nome) e usa a 2ª linha não-vazia seguinte (pula o
+        # rótulo já visto E a linha do CNPJ formatado), removendo o prefixo
+        # de CNPJ sem pontuação quando presente. Não mexe no caminho já
+        # validado (SBS, nº 11, Campo Grande, Macedo) — lá o candidato já é
+        # o nome de verdade e nunca bate um destes rótulos.
+        _ROTULO_BLOCO_ENTIDADE = re.compile(
+            r'^(?:CNPJ\s*/\s*CPF|Indicador\s+Municipal|Telefone|Endere[çc]o|'
+            r'Munic[íi]pio|C[óo]digo\s+IBGE)\b', re.IGNORECASE)
+        if m_nome and _ROTULO_BLOCO_ENTIDADE.match(razao):
+            linhas_seguintes = [ln.strip() for ln in bloco[m_nome.end():].split('\n') if ln.strip()]
+            candidato = linhas_seguintes[1] if len(linhas_seguintes) > 1 else ''
+            candidato = re.sub(r'^\d{2}\.?\d{3}\.?\d{3}\s+', '', candidato).strip()
+            razao = candidato if (candidato and not _ROTULO_BLOCO_ENTIDADE.match(candidato)) else ''
 
         # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES INTEGRADAS DE
         # SEGURANÇA ELETRÔNICA -> BONI TRANSPORTES): em vez das colunas "Nome
