@@ -23,6 +23,7 @@ from ..models.nfse_models import Nfse, Entidade, Endereco, Valores
 from ..models.nfe_produto_models import NfeProduto, EntidadeNfe, ItemProduto, Transportador, ValoresNfe
 from ..models.cte_os_model import CteOS, EntidadeCte, ModalRodoviario, ImpostoCte
 from ..utils.ibge_resolver import IBGEResolver
+from . import feira_nfse_nacional as _feira_nac
 from datetime import datetime
 
 _ibge_resolver = IBGEResolver()
@@ -68,6 +69,7 @@ LAYOUT_NACIONAL  = 'danfse_nacional'  # NFS-e Nacional / DANFSe v1.0
 LAYOUT_NACIONAL_REFORMA = 'danfse_nacional_reforma'  # NFS-e Nacional / DANFSe v2.0 (pós-reforma tributária). SUPERSET do LAYOUT_NACIONAL: herda os branches da v1.0 nos campos cujo rótulo NÃO mudou (BC ISSQN, ISSQN Apurado, Contribuição Previdenciária - Retida, Contribuições Sociais - Retidas, decode da Chave de Acesso) e trata só o que a v2.0 renomeou/reorganizou, sem tocar no código já validado da v1.0. Achado real: nota nº 11, UNICA SEGURANCA PATRIMONIAL LTDA (Lauro de Freitas/BA) -> CONDOMINIO EDIFICIO TK TOWER (Salvador/BA), R$ 12.353,68, PDF escaneado (OCR). Diferenças estruturais em relação à v1.0: (1) o valor do serviço deixou de se chamar "Valor do Serviço" e passou a "VALOR DA OPERAÇÃO / SERVIÇO" - sem tratamento, TODA nota v2.0 caía no fallback e gravava o VALOR LÍQUIDO como ValorServicos (9.817,41 em vez de 12.353,68); (2) blocos de entidade renomeados ("PRESTADOR / FORNECEDOR", "TOMADOR / ADQUIRENTE") e com as colunas da direita (Inscrição/Município/E-mail/Telefone/Código IBGE-CEP) despejadas DEPOIS dos dois blocos, em pares prestador-depois-tomador (extração por ORDINAL de ocorrência); (3) o município do prestador passa a vir com código IBGE explícito na própria nota ("Código IBGE / CEP"); (4) retenção do ISSQN deixou de ser a coluna "ISSQN Retido: Sim/Não" e virou "Retenção do ISSQN: Retido pelo Tomador"; (5) seções novas da reforma (TRIBUTAÇÃO IBS/CBS, CST/cClassTrib, "VALOR LÍQUIDO DA NFS-e + IBS/CBS") que não têm equivalente no ABRASF 2.01 e ficam fora do XML
 LAYOUT_SALVADOR  = 'salvador_ba'      # Salvador/BA
 LAYOUT_FEIRA     = 'feira_de_santana' # Feira de Santana/BA
+LAYOUT_FEIRA_NFSE_NACIONAL = 'feira_de_santana_nfse_nacional'  # Feira de Santana/BA, template NOVO da NFS-e ("Departamento de Administração Tributária", "Período de Competência", "Exigibilidade do ISS", chave "NFS-e Nacional" de 50 dígitos em INFORMAÇÕES COMPLEMENTARES) fotografado por celular (PDF sem texto digital, 180°, bordas esquerda/direita cortadas). Achado real 2026-10-05 (cruz e cruz.pdf, CRUZ E CRUZ ADVOCACIA -> SARAVIMANA PATRIMONIAL LTDA, R$ 6.316,62). Detectado por marca ESTRUTURAL do template (ver `feira_nfse_nacional.eh_template`), não pela cidade, e checado antes do fallback bare 'FEIRA DE SANTANA' que continua servindo LAYOUT_FEIRA. Número/CNPJ do prestador/Código de Verificação vêm da chave autoverificável (cMun, checksum do CNPJ, AAMM = emissão), recuperada por recorte dedicado com votação multi-leitura e costurada sob marcadores sintéticos `FEIRANAC_*`; CNPJ do tomador com os dígitos iniciais fora do enquadramento é completado por checksum só quando a completação é única ou é contraparte confirmada pelo usuário; o que a borda cortou e nada autoverifica fica em sentinela + `Nfse.avisos`.
 LAYOUT_RIO       = 'rio_de_janeiro'   # Rio de Janeiro/RJ (Nota Carioca)
 LAYOUT_GENERICO  = 'generico'         # SP / ABRASF / outros
 LAYOUT_LOCALIZA  = 'localiza_fatura'  # Localiza Rent A Car S/A (Fatura de Locação)
@@ -779,6 +781,11 @@ class SPPdfExtractor:
         # LAYOUT_SIMOES_FILHO/STAUMMAQ) — ver LAYOUT_RIBEIRAO_PRETO.
         if re.search(r'PREFEITURA\s+DE\s+RIBEIR[ÃA]O\s+PRETO', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PRETO
+        # Template NOVO de Feira de Santana (foto/NFS-e Nacional): gate
+        # ESTRUTURAL, ANTES do fallback bare por nome de cidade abaixo, que
+        # segue servindo o template antigo (LAYOUT_FEIRA) sem alteração.
+        if _feira_nac.eh_template(t):
+            return LAYOUT_FEIRA_NFSE_NACIONAL
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): detecção pelo CNPJ/
@@ -1256,6 +1263,11 @@ class SPPdfExtractor:
         # LAYOUT_SIMOES_FILHO/STAUMMAQ) — ver LAYOUT_RIBEIRAO_PRETO.
         if re.search(r'PREFEITURA\s+DE\s+RIBEIR[ÃA]O\s+PRETO', t, re.IGNORECASE):
             return LAYOUT_RIBEIRAO_PRETO
+        # Template NOVO de Feira de Santana (foto/NFS-e Nacional): gate
+        # ESTRUTURAL, ANTES do fallback bare por nome de cidade abaixo, que
+        # segue servindo o template antigo (LAYOUT_FEIRA) sem alteração.
+        if _feira_nac.eh_template(t):
+            return LAYOUT_FEIRA_NFSE_NACIONAL
         if re.search(r'FEIRA DE SANTANA', t, re.IGNORECASE):
             return LAYOUT_FEIRA
         # BIO CONTROL DESINSETIZADORA (Lauro de Freitas/BA): detecção pelo CNPJ/
@@ -2497,6 +2509,13 @@ class SPPdfExtractor:
     def _extrair_numero(self) -> str:
         t = self.raw_text
 
+        if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
+            # Número = nNFSe (13 dígitos) da chave autoverificável. NUNCA do
+            # nome do arquivo nem do "nº" do processo judicial da descrição
+            # (o padrão genérico capturava "8055622").
+            dados = self._feira_nac_chave()
+            return dados['numero'] if dados else '00000000'
+
         if self.layout == LAYOUT_JOAO_PESSOA:
             # Mesma grade de 3 campos por linha da emissão/competência (ver
             # `_extrair_data_emissao`) — "Número" é o 3º e último valor.
@@ -3188,6 +3207,8 @@ class SPPdfExtractor:
         return '00000000'
 
     def _extrair_discriminacao(self) -> str:
+        if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
+            return self._extrair_discriminacao_feira_nacional()
         t = self.raw_text
         if self.layout == LAYOUT_JOAO_PESSOA:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO" (sem parêntese de nota
@@ -4250,6 +4271,12 @@ class SPPdfExtractor:
         existir."""
         t = self.raw_text
 
+        if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
+            # Só o valor VOTADO por leituras de zooms distintos (o dígito final
+            # varia entre zooms: 1/3/4) e plausível; senão o default 0000000.
+            cnae = (_feira_nac.ler_marcadores(t).get('CNAE') or [None])[0]
+            return cnae if cnae and _feira_nac.cnae_plausivel(cnae) else None
+
         if self.layout == LAYOUT_JOAO_PESSOA:
             # "CNAE / CBO\n3329-5/01-02 - SERVICOS DE MONTAGEM..." — subclasse
             # oficial "NNNN-N/NN" antes do primeiro "-" descritivo (o "-02"
@@ -4285,6 +4312,11 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
+            # Mesma convenção do DANFSe Nacional (decisão do usuário): a chave
+            # de acesso validada é o código de verificação; sem ela, sentinela.
+            dados = self._feira_nac_chave()
+            return dados['chave'] if dados else "XXXX-XXXX"
         if self.layout == LAYOUT_JOAO_PESSOA:
             # "Código de Verificação\n\n2yYFj8Icd" — ao contrário dos demais
             # layouts desta família, o código é ALFANUMÉRICO DE CAIXA MISTA
@@ -4993,6 +5025,11 @@ class SPPdfExtractor:
 
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             return self._extrair_entidade_nacional_reforma(is_prestador, is_intermediario)
+
+        if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
+            if is_intermediario:
+                return None
+            return self._extrair_entidade_feira_nacional(is_prestador)
 
         if self.layout == LAYOUT_SANTOS:
             if is_intermediario:
@@ -9017,6 +9054,174 @@ class SPPdfExtractor:
             ),
             email=email,
             telefone=telefone,
+        )
+
+    # ------------------------------------------------------------------
+    # LAYOUT_FEIRA_NFSE_NACIONAL — Feira de Santana/BA, foto + chave NFS-e
+    # Nacional (ver LAYOUT_FEIRA_NFSE_NACIONAL e feira_nfse_nacional.py)
+    # ------------------------------------------------------------------
+
+    def _feira_nac_aviso(self, msg: str) -> None:
+        avisos = self.__dict__.setdefault('_feira_nac_avisos', [])
+        if msg not in avisos:
+            avisos.append(msg)
+
+    def _feira_nac_chave(self) -> Optional[dict]:
+        """Chave NFS-e Nacional validada (cMun, checksum do CNPJ, AAMM = mês da
+        emissão impressa): a do recorte dedicado (já votada) ou uma que >= 2
+        leituras do texto confirmem. Uma única leitura de texto NÃO basta: o
+        checksum não cobre os 13 dígitos do número da nota."""
+        t = self.raw_text
+        aamm = _feira_nac.aamm_da_emissao(t)
+        marcada = _feira_nac.ler_marcadores(t).get('CHAVE', [])
+        if marcada:
+            dados = _feira_nac.decodificar_chave(marcada[0], aamm)
+            if dados:
+                return dados
+        vencedora = _feira_nac.votar_chave(_feira_nac.extrair_chaves_de_texto(t), aamm)
+        return _feira_nac.decodificar_chave(vencedora, aamm) if vencedora else None
+
+    def _extrair_discriminacao_feira_nacional(self) -> str:
+        marc = _feira_nac.ler_marcadores(self.raw_text)
+        servico = next((ln for ln in marc.get('SERVICO', []) if re.search(r'CNAE', ln, re.IGNORECASE)), None)
+        partes: List[str] = []
+        if servico:
+            atividade = re.split(r',?\s*CNAE', servico, maxsplit=1, flags=re.IGNORECASE)[0].strip(' ,.')
+            cnae = self._extrair_codigo_cnae()
+            # O CNAE impresso na linha vem do OCR de página inteira (dígito
+            # final instável): só entra o valor votado, nunca o da linha.
+            partes.append(f"{atividade}, CNAE: {cnae}." if cnae else f"{atividade}.")
+        linhas = [re.sub(r"[\s'\"`]+$", '', ln) for ln in marc.get('DESC', [])]
+        if linhas and (marc.get('DESC_CORTADO') or ['0'])[0] == '1':
+            linhas = _feira_nac.descricao_sem_inicio_cortado(linhas)
+            self._feira_nac_aviso(
+                "Foto cortada nas bordas esquerda/direita: o 1º trecho de cada linha da "
+                "discriminação (palavra cortada) foi descartado e rótulos/valores podem ter "
+                "perdido caracteres - confira razão social, logradouro e descrição no original")
+        partes.extend(linhas)
+        if not partes:
+            self._feira_nac_aviso("Discriminação do serviço não recuperada da foto - mantido o texto genérico")
+            return "Serviços prestados conforme nota fiscal."
+        return re.sub(r'\s+', ' ', ' '.join(partes)).strip()
+
+    def _extrair_valores_feira_nacional(self) -> Valores:
+        t = self.raw_text
+        marc = _feira_nac.ler_marcadores(t)
+
+        def _lido(chave: str) -> Optional[float]:
+            v = (marc.get(chave) or [None])[0]
+            return _feira_nac.parse_valor_br(v) if v else None
+
+        servicos = _lido('VALOR_SERVICOS')
+        if servicos is None:
+            m = re.search(r'Valor\s+L[íi]quido\s*\(R\$\)[^\n]*\n+\s*(\d{1,3}(?:\.\d{3})*,\d{2})', t, re.IGNORECASE)
+            servicos = _feira_nac.parse_valor_br(m.group(1)) if m else 0.0
+        liquido = _lido('VALOR_LIQUIDO')
+        if liquido is None:
+            liquido = servicos
+            if servicos:
+                self._feira_nac_aviso(
+                    "Valor Líquido não lido da foto - assumido igual ao Valor dos Serviços "
+                    "(deduções e retenções federais impressas 0,00); confira")
+        iss = _lido('VALOR_ISS')
+        if iss is None:
+            iss = 0.0
+            self._feira_nac_aviso(
+                "Base de Cálculo ISS/ISS/ISS Retido impressos como \"*****\" (ME/EPP optante do "
+                "Simples) e Alíquota cortada pela borda da foto - mantidos zerados por não "
+                "haver valor legível para extrair")
+        self._feira_nac_aviso(
+            "Deduções e retenções federais (INSS/IR/PIS/COFINS/CSLL/Outras) não são lidas "
+            "neste template fotografado - mantidas zeradas (impressas 0,00 nesta nota)")
+        return Valores(
+            valor_servicos=servicos,
+            base_calculo=0.0,
+            aliquota=0.0,
+            valor_iss=iss,
+            iss_retido=False,
+            valor_iss_retido=0.0,
+            valor_liquido_nfse=liquido,
+        )
+
+    def _extrair_entidade_feira_nacional(self, is_prestador: bool) -> Entidade:
+        t = self.raw_text
+        marc = _feira_nac.ler_marcadores(t)
+        papel = 'prestador' if is_prestador else 'tomador'
+        sufixo_k = 'PREST' if is_prestador else 'TOM'
+        razoes = _feira_nac.extrair_razoes(t)
+        idx = 0 if is_prestador else 1
+        razao_ocr = razoes[idx] if len(razoes) > idx else ''
+
+        # CNPJ: o do prestador vem da chave (autoverificável); os dois, na falta
+        # dela, de um sufixo lido por >= 2 zooms e completado por checksum.
+        cnpj: Optional[str] = None
+        chave = self._feira_nac_chave()
+        if is_prestador and chave:
+            cnpj = chave['cnpj']
+        else:
+            sufixo = (marc.get(f'CNPJ_{sufixo_k}_SUFIXO') or [''])[0]
+            if sufixo:
+                cnpj, origem = _feira_nac.resolver_cnpj_por_sufixo(sufixo, razao_ocr)
+                if cnpj:
+                    self._feira_nac_aviso(
+                        f"CNPJ do {papel}: dígitos iniciais fora do enquadramento da foto - "
+                        f"completado por checksum ({'contraparte confirmada pelo usuário' if origem == 'contraparte_confirmada' else 'única completação válida'}); confira")
+        if not cnpj:
+            cnpj = '00000000000100'
+        razao = (_feira_nac.corrigir_razao_confirmada(cnpj, razao_ocr) if not is_prestador else razao_ocr) \
+            or ('Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado')
+
+        # Endereço: linha anotada pelo recorte; na falta, a linha "...CEP: nnnnn-nnn" do texto base.
+        prefixo = cep = municipio = uf = ''
+        bruto = (marc.get(f'END_{sufixo_k}') or [''])[0]
+        if bruto:
+            prefixo, cep, municipio, uf = (bruto.split('|') + ['', '', '', ''])[:4]
+        else:
+            pos = re.search(r'PRESTADOR\s+DE\s+SERVI', t, re.IGNORECASE)
+            linhas_cep = [ln for ln in (t[pos.start():] if pos else t).split('\n')
+                          if re.search(r'CEP\s*[:;]\s*\d{5}', ln) and not ln.startswith('FEIRANAC_')]
+            if len(linhas_cep) > (0 if is_prestador else 1):
+                ln = linhas_cep[0 if is_prestador else 1]
+                m = re.match(r'^(.*?)\s*[-–]?\s*CEP\s*[:;.]?\s*(\d{5})\s*-?\s*(\d{3})(.*)$', ln)
+                if m:
+                    prefixo, cep = m.group(1), m.group(2) + m.group(3)
+                    mm = re.search(r'-\s*([A-Za-zÀ-ú][A-Za-zÀ-ú ]{2,40}?)\s*-\s*([A-Z]{2})\s*$', m.group(4).strip())
+                    if mm:
+                        municipio, uf = mm.group(1).strip(), mm.group(2)
+        campos = _feira_nac.parse_endereco_prefixo(prefixo)
+        logradouro, cortado = _feira_nac.logradouro_sem_fragmento_cortado(campos['logradouro'] or '')
+        if cortado:
+            self._feira_nac_aviso(
+                f"Logradouro do {papel}: o tipo de via (início da linha) foi cortado pela borda "
+                "da foto - mantido só o texto legível, sem completar")
+        if not cep:
+            self._feira_nac_aviso(f"CEP do {papel} ilegível na foto - mantido zerado")
+        if not municipio or uf not in _feira_nac.UFS_BRASIL:
+            municipio, uf = _feira_nac.MUNICIPIO_FEIRA, _feira_nac.UF_FEIRA
+            self._feira_nac_aviso(
+                f"Município/UF do {papel} inferidos do município emissor (Feira de Santana/BA): "
+                "o fim da linha de endereço (borda direita) ficou ilegível")
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio) or ''
+
+        inscricao = None
+        if is_prestador:
+            m_im = re.search(r'/\d{4}-\d{2}\s+(\d{3,12})\b', t)
+            inscricao = m_im.group(1) if m_im else None
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=inscricao,
+            razao_social=razao,
+            endereco=Endereco(
+                logradouro=logradouro or 'Não informado',
+                numero=campos['numero'] or 'S/N',
+                complemento=campos['complemento'],
+                bairro=campos['bairro'] or 'Não informado',
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep or '00000000',
+            ),
         )
 
     def _extrair_entidade_ribeirao_preto(self, t: str, is_prestador: bool) -> Entidade:
@@ -13269,6 +13474,9 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
+            return self._extrair_valores_feira_nacional()
+
         if self.layout == LAYOUT_RIBEIRAO_PRETO:
             # Grade "Valor Total dos Serviços | Total ISSQN (%) | Valor
             # Líquido da NFS-e" com os 3 valores na linha seguinte
@@ -17266,6 +17474,19 @@ class SPPdfExtractor:
                     if header_rp.strip():
                         best_text = f"{header_rp}\n{best_text}"
 
+                # Feira de Santana/BA, template foto/NFS-e Nacional (achado
+                # real 2026-10-05, cruz e cruz.pdf): a leitura de página
+                # inteira perde a chave de 50 dígitos, erra dígitos do CNPJ/
+                # CNAE e fragmenta a descrição. Recortes dedicados, anchorados
+                # por `image_to_data` e na orientação já corrigida
+                # (best_angle), devolvem linhas SINTÉTICAS `FEIRANAC_*`
+                # PREPENDIDAS (sem nenhum rótulo real que o split de notas de
+                # `parse_multiple` reconheça — ver feira_nfse_nacional.py).
+                if _feira_nac.eh_template(best_text):
+                    recorte_feira = _feira_nac.recortar_template(page, best_angle, best_text)
+                    if recorte_feira.strip():
+                        best_text = f"{recorte_feira}\n{best_text}"
+
                 # Barreiras/BA escaneado: a segmentação automática do Tesseract
                 # DESCARTA UMA FAIXA HORIZONTAL INTEIRA desta nota — a faixa que
                 # carrega o texto da discriminação, a OBSERVAÇÃO, a GRADE
@@ -20659,6 +20880,7 @@ class SPPdfExtractor:
         if len(self.raw_text.strip()) < 50: return None
 
         self.layout = self._detect_layout()
+        self._feira_nac_avisos: List[str] = []
 
         if self.layout == LAYOUT_DANFE_PRODUTO:
             # Documento de PRODUTO (NF-e Modelo 55), estruturalmente distinto
@@ -20777,6 +20999,13 @@ class SPPdfExtractor:
             # depois values dumped" — não casa com os padrões acima, que
             # exigem "OPTANTE"+"SIMPLES NACIONAL" adjacentes).
             optante_simples = True
+        elif self.layout == LAYOUT_FEIRA_NFSE_NACIONAL and re.search(
+                r'Microempres[aá]rio[\s\S]{0,120}?\(\s*ME\s*/?\s*EPP\s*\)', self.raw_text, re.IGNORECASE):
+            # "Reg. Especial Tributação: Microempresário e Empresa de Pequeno
+            # Porte (ME EPP)" + "Simples Nacional: Sim" — mesma convenção "6"
+            # dos demais ramos ME/EPP.
+            optante_simples = True
+            regime_especial = "6"
         elif self.layout == LAYOUT_SANTOS:
             # Santos/SP (Ginfes): grade "labels dumped, depois values dumped"
             # ("Identificação Prestação de Serviços") — "Simples Nacional" (o
@@ -20902,6 +21131,8 @@ class SPPdfExtractor:
                 "real recuperável; confira manualmente o percentual de ISS "
                 "desta nota"
             )
+        if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
+            avisos.extend(self._feira_nac_avisos)
         if self.layout == LAYOUT_NACIONAL and re.search(r'\*{3,}', self.raw_text):
             # Achado real (Aracaju/SE, WebISS, nota 2026000000014): a
             # própria prefeitura imprime "*****" no lugar de Base de Cálculo
