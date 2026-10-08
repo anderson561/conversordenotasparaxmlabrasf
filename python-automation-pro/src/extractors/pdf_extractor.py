@@ -24,6 +24,7 @@ from ..models.nfe_produto_models import NfeProduto, EntidadeNfe, ItemProduto, Tr
 from ..models.cte_os_model import CteOS, EntidadeCte, ModalRodoviario, ImpostoCte
 from ..utils.ibge_resolver import IBGEResolver
 from . import feira_nfse_nacional as _feira_nac
+from . import sp_identificador as _sp_ident
 from datetime import datetime
 
 _ibge_resolver = IBGEResolver()
@@ -304,6 +305,12 @@ class SPPdfExtractor:
         # espúrio a mais). Propagado para o `sub_ext` de cada nota do lote,
         # igual ao padrão já usado pelos recortes do PASSWORD/eNotas acima.
         self._texto_digital_glued_por_pagina = {}
+        # São Paulo/SP escaneado: chaves "Identificador" (50 dígitos, NFS-e
+        # Nacional) do anexo IBS/CBS (pág. 2), indexadas pela página 0-based em
+        # que apareceram — preenchido por `parse_multiple`, consultado por
+        # `_sp_numero_pela_chave`. Ver `sp_identificador.py`.
+        self._sp_identificadores_doc = {}
+        self._sp_avisos: List[str] = []
         # Recorte dedicado do bloco do PRESTADOR (Simões Filho/BA), sem o
         # rótulo "PRESTADOR" (o crop começa em "Razão Social:") — não pode
         # ser localizado pela mesma fatia "PRESTADOR...TOMADOR" usada no
@@ -2485,6 +2492,29 @@ class SPPdfExtractor:
                 purged.append(p)
         return list(dict.fromkeys(purged))
 
+    def _sp_numero_pela_chave(self) -> Optional[str]:
+        """Número da NFS-e de São Paulo escaneada decodificado do "Identificador"
+        (chave NFS-e Nacional de 50 dígitos) — fonte autoverificável imune ao OCR
+        da caixa "Número da Nota". Procura a chave no próprio texto da nota e no
+        anexo IBS/CBS da página SEGUINTE (`sp_identificador.eh_pagina_anexo_ibs_cbs`
+        — a página seguinte de uma nota sem anexo é outra nota e nunca entra).
+        Devolve o número com 8 dígitos (convenção do layout) ou None."""
+        t = self.raw_text
+        candidatas = list(_sp_ident.extrair_identificadores(t))
+        pagina = getattr(self, '_pagina_hint', None)
+        if pagina:
+            # `_pagina_hint` é 1-based: o índice 0-based da página seguinte é ele mesmo.
+            candidatas.extend(self._sp_identificadores_doc.get(pagina, []))
+        if not candidatas:
+            return None
+        cnpj_prestador = _sp_ident.cnpj_do_prestador(t)
+        aamm = _sp_ident.aamm_da_emissao(t)
+        for chave in candidatas:
+            dados = _sp_ident.decodificar(chave, cnpj_prestador, aamm)
+            if dados:
+                return _sp_ident.formatar_numero(dados['nnfse'])
+        return None
+
     def _chave_barreiras(self) -> Optional[str]:
         """Chave de Acesso do ambiente nacional impressa nas NFS-e de
         Barreiras/BA, com validação ESTRUTURAL — 50 dígitos começando pelo
@@ -2864,8 +2894,30 @@ class SPPdfExtractor:
             # (_ocr_header_box_sao_paulo), prependido ao texto. Na página inteira
             # o valor sai corrompido (vira "5"), então priorizamos a linha limpa
             # do recorte, que é a 1ª ocorrência do rótulo no texto.
+            #
+            # Achado real 2026-10-08 (nota 00028203, VALESTRA -> MASSA): a caixa
+            # inteira sumiu da leitura de página inteira e o recorte devolveu a
+            # Inscrição Municipal do prestador (59920149) como número. Duas
+            # travas, nesta ordem: (1) o "Identificador" de 50 dígitos
+            # (autoverificável: DV módulo 11 + CNPJ do prestador + AAMM da
+            # emissão) decodifica o número sem OCR da caixa e VENCE a leitura;
+            # (2) sem chave válida, um candidato igual a um valor que o próprio
+            # documento rotula como Inscrição Municipal/CNPJ/CEP é leitura da
+            # célula errada -> sentinela + aviso (nunca o nome do arquivo, que
+            # o fallback genérico abaixo usaria).
+            numero_chave = self._sp_numero_pela_chave()
             m = re.search(r'N[uú]mero\s+da\s+Nota\s*:?\s*[\n\s]*(\d{3,})', t, re.IGNORECASE)
-            if m: return m.group(1).strip()
+            lido = m.group(1).strip() if m else None
+            if numero_chave:
+                if lido and lido.lstrip('0') != numero_chave.lstrip('0'):
+                    self._sp_avisos.append(
+                        f"Número lido da caixa do cabeçalho ({lido}) diverge do Identificador "
+                        f"da NFS-e ({numero_chave}) - usado o do Identificador")
+                return numero_chave
+            if lido:
+                if lido.lstrip('0') in _sp_ident.valores_de_outros_campos(t):
+                    return '00000000'
+                return lido
 
         if self.layout == LAYOUT_JOINVILLE:
             m = re.search(r'N[uú]mero\s*/\s*S[eé]rie[\s\n]*(\d+)', t, re.IGNORECASE)
@@ -19935,6 +19987,38 @@ class SPPdfExtractor:
                 y0 = max(0, int((y_top + h_label * 1.1) * escala))
                 y1 = min(h_f, int((y_top + h_label * 3.2) * escala))
                 numero = _ocr_digitos(img_f.crop((x0, y0, w_f, y1)))
+            else:
+                # Achado real 2026-10-08 (nota nº 00028203, VALESTRA NEGOCIOS E
+                # INVESTIMENTOS LTDA -> MASSA ALIMENTACAO E SERVICOS S/A): a
+                # segmentação automática da PÁGINA INTEIRA descartou a caixa
+                # "Número da Nota / Data e Hora de Emissão" (rótulos e valores
+                # sumiram do `image_to_data`, embora a foto esteja nítida) —
+                # `candidatos` ficou vazio e o ramo "localiza o valor pela
+                # assinatura" abaixo escolheu o ÚNICO token de 6+ dígitos da
+                # região, a Inscrição Municipal do prestador (59920149).
+                # Antes dele, tenta localizar o RÓTULO relendo SÓ a região do
+                # canto superior direito (a mesma caixa, sem o resto da página
+                # competindo na segmentação): ali o rótulo é reconhecido e o
+                # valor logo abaixo sai limpo em zoom 6x (00028203).
+                try:
+                    x0_reg, y1_reg = int(w_l * 0.5), int(h_l * 0.3)
+                    data_reg = pytesseract.image_to_data(
+                        img_l.crop((x0_reg, 0, w_l, y1_reg)), lang='por', config='--psm 6',
+                        output_type=pytesseract.Output.DICT)
+                    cand_reg = sorted(
+                        (j for j in range(len(data_reg['text']))
+                         if re.search(r'N[uú]mero', data_reg['text'][j] or '', re.IGNORECASE)),
+                        key=lambda j: data_reg['top'][j])
+                except Exception:
+                    cand_reg = []
+                if cand_reg:
+                    j = cand_reg[0]
+                    x_left, y_top, h_label = data_reg['left'][j] + x0_reg, data_reg['top'][j], data_reg['height'][j]
+                    numero_anchor = (x_left, y_top, h_label)
+                    x0 = max(0, int(x_left * escala * 0.9))
+                    y0 = max(0, int((y_top + h_label * 1.1) * escala))
+                    y1 = min(h_f, int((y_top + h_label * 3.2) * escala))
+                    numero = _ocr_digitos(img_f.crop((x0, y0, w_f, y1)))
 
             if not numero:
                 # Achado real (nota FLASH TECNOLOGIA nº 05114339, RPS 3566572,
@@ -19965,9 +20049,31 @@ class SPPdfExtractor:
                 # de 6+ dígitos CONSECUTIVOS (não corta por pontuação interna
                 # — datas/CEPs/Inscrição Municipal, com separador a cada 2-5
                 # dígitos, continuam não colando o suficiente pra casar).
+                #
+                # Achado real 2026-10-08 (nota nº 00028203): a assinatura
+                # "6+ dígitos no topo da região" também casa a Inscrição
+                # Municipal do prestador ("Inscrição Municipal: 59920149",
+                # mesma metade direita e mesmo terço superior) — escolhida
+                # como número da nota quando a caixa real some do OCR. Um token
+                # que o PRÓPRIO documento rotula como outro campo (Inscrição
+                # Municipal, CNPJ, CEP: os 1-3 tokens seguintes a esses
+                # rótulos) nunca é o número da nota.
+                rotulados_como_outro = set()
+                for j, tj in enumerate(data['text']):
+                    if re.search(r'Inscri|Municipal|CNPJ|CPF|\bCEP\b', tj or '', re.IGNORECASE):
+                        for k in range(j + 1, min(j + 4, len(data['text']))):
+                            dig = re.sub(r'\D', '', data['text'][k] or '')
+                            if len(dig) >= 6:
+                                rotulados_como_outro.add(dig.lstrip('0'))
+
+                def _eh_outro_campo(i):
+                    m_dig = re.search(r'\d{6,}', (data['text'][i] or '').strip())
+                    return bool(m_dig) and m_dig.group(0).lstrip('0') in rotulados_como_outro
+
                 candidatos_valor = sorted(
                     (i for i in range(len(data['text']))
                      if re.search(r'\d{6,}', (data['text'][i] or '').strip())
+                     and not _eh_outro_campo(i)
                      and data['left'][i] > w_l * 0.5 and data['top'][i] < h_l * 0.3),
                     key=lambda i: data['top'][i]
                 )
@@ -21133,6 +21239,8 @@ class SPPdfExtractor:
             )
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             avisos.extend(self._feira_nac_avisos)
+        if self.layout == LAYOUT_SAO_PAULO_2:
+            avisos.extend(a for a in self._sp_avisos if a not in avisos)
         if self.layout == LAYOUT_NACIONAL and re.search(r'\*{3,}', self.raw_text):
             # Achado real (Aracaju/SE, WebISS, nota 2026000000014): a
             # própria prefeitura imprime "*****" no lugar de Base de Cálculo
@@ -22851,6 +22959,18 @@ class SPPdfExtractor:
                     self.from_ocr = True
                     paginas_via_ocr.add(idx)
 
+        # São Paulo/SP escaneado: o "Identificador" (chave de 50 dígitos) do
+        # anexo IBS/CBS (pág. 2) é a fonte autoverificável do número da nota
+        # (ver `sp_identificador.py`). A página do anexo é descartada como
+        # "Layout não reconhecido" logo abaixo — por isso a chave é guardada
+        # ANTES do filtro, indexada pela página (0-based), e propagada ao
+        # `sub_ext` da nota da página anterior. Não altera `pages` nem o split.
+        self._sp_identificadores_doc = {
+            i: _sp_ident.extrair_identificadores(p)
+            for i, p in enumerate(pages)
+            if _sp_ident.eh_pagina_anexo_ibs_cbs(p)
+        }
+
         self.invalid_pages = []
         filtered_pages = []
         for idx, page in enumerate(pages, start=1):
@@ -23074,6 +23194,7 @@ class SPPdfExtractor:
             # precisam reabrir e renderizar a página real (ex.:
             # `_recuperar_cnpj_tomador_camacari`).
             sub_ext._pagina_hint = page_idx
+            sub_ext._sp_identificadores_doc = self._sp_identificadores_doc
 
             # Propaga os recortes dedicados do PASSWORD/eNotas Gateway
             # ESCANEADO (ver `__init__`/`_ocr_page`) da página de origem
