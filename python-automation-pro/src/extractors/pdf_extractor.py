@@ -2753,7 +2753,28 @@ class SPPdfExtractor:
             # autenticidade alfanumérico ("8075H0406") colado perto de outra
             # ocorrência do rótulo produz um candidato just por sorte curto
             # ("8075") seguido da letra "H" do próprio código.
+            #
+            # Achado real, nota nº 6013 (CLINICA MEDICINA HUMANA LTDA ->
+            # MASSA ALIMENTAÇÃO E SERVIÇOS S/A, `NF 6013.pdf`): das várias
+            # leituras da mesma caixa só UMA tem o rótulo limpo ("é Número da
+            # Nota", com o "é" do ícone colado), e logo depois dele o OCR
+            # intercala a faixa "PREFEITURA MUNICIPAL DE CAMAÇARI" e o rótulo
+            # VIZINHO "3 Data de Emissão" — o "3" é fragmento de ícone colado
+            # ao rótulo da PRÓXIMA célula, não o valor deste rótulo (família
+            # OCR "21": o valor adjacente tem de ser DO rótulo), mas passava
+            # nas checagens acima e a nota saía como nº 3. O valor real
+            # ("6013") sobrevive em outras duas leituras: a linha de abertura
+            # (antes de qualquer rótulo) e "mero da Nota\n6013" (rótulo
+            # degradado — perdeu o "Nú", logo o regex de rótulo limpo nunca
+            # o reconhece). Por isso um candidato "suspeito" (há outro rótulo
+            # de célula ou a faixa "PREFEITURA" entre o rótulo e ele, ou ele
+            # vem colado a um rótulo vizinho na mesma linha) NÃO é devolvido
+            # de imediato: só vale como último recurso, se nem o rótulo
+            # degradado nem a recuperação pela linha de abertura acharem um
+            # valor — assim nenhuma nota que já dependia de um candidato
+            # suspeito (sem corroboração alguma) muda de comportamento.
             labels_num = list(re.finditer(r'N[uú]mero\s+da\s+Nota\b', t, re.IGNORECASE))
+            candidato_suspeito = None
             for m_num_label in labels_num:
                 janela = t[m_num_label.end():m_num_label.end() + 100]
                 m_prox = re.search(r'(\d+)', janela)
@@ -2767,8 +2788,26 @@ class SPPdfExtractor:
                     or len(candidato) > 6
                     or depois.isalpha()
                 )
-                if not contaminado:
+                if contaminado:
+                    continue
+                entre = janela[:m_prox.start()]
+                resto_da_linha = janela[m_prox.end():].split('\n', 1)[0]
+                suspeito = bool(
+                    re.search(r'PREFEITURA|Data\s+de\s+Emiss|C[oó]digo\s+de\s+aut', entre, re.IGNORECASE)
+                    or re.match(r'\s*(?:Data\s+de\s+Emiss|C[oó]digo\s+de\s+aut)', resto_da_linha, re.IGNORECASE)
+                )
+                if not suspeito:
                     return candidato
+                if candidato_suspeito is None:
+                    candidato_suspeito = candidato
+            if candidato_suspeito is not None:
+                # Rótulo degradado ("mero da Nota", sem o "Nú"): rótulo + valor
+                # na linha de baixo. O `(?<![uú])` exclui o rótulo limpo.
+                for m_deg in re.finditer(
+                        r'(?<![uúUÚ])mero\s+da\s+Nota[ \t]*\n+[ \t]*(\d{1,6})(?![\w/])',
+                        t, re.IGNORECASE):
+                    if m_deg.group(1) not in ('2024', '2025', '2026', '2027'):
+                        return m_deg.group(1)
             if labels_num:
                 # Nenhuma ocorrência do rótulo teve valor limpo (caso da nota
                 # 258) — procura um número isolado numa tentativa de recorte
@@ -2785,6 +2824,8 @@ class SPPdfExtractor:
                     if depois_cand == '/' or m_cand.group(1) in ('2024', '2025', '2026', '2027'):
                         continue
                     return m_cand.group(1)
+                if candidato_suspeito is not None:
+                    return candidato_suspeito
 
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             # "# NFS-e 24052" — texto já reconstruído por coordenada
