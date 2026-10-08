@@ -1,5 +1,6 @@
 from src.main import run_conversion, run_batch_conversion, run_contrato_conversion, parse_page_spec
 from src.models.contrato_locacao_model import ContratoLocacao, EntidadeContrato
+from src.utils.pdf_senha import PdfSenhaError
 import argparse
 import sys
 import json
@@ -18,11 +19,17 @@ if __name__ == "__main__":
     parser.add_argument("--pages",   help="Converter apenas páginas específicas de um PDF de várias páginas "
                                           "(só com --input). Aceita páginas soltas e intervalos, ex.: "
                                           "\"1,3,6\" ou \"1-3,6\".")
+    parser.add_argument("--password", help="Senha de abertura para PDFs protegidos por senha (--input e --batch). "
+                                            "ATENÇÃO: a senha digitada na linha de comando fica visível no "
+                                            "histórico do terminal e na lista de processos do sistema.")
 
     args = parser.parse_args()
 
     if args.pages and not args.input:
         parser.error("--pages só pode ser usado com --input (um único PDF).")
+
+    if args.password and args.contrato:
+        parser.error("--password só pode ser usado com --input ou --batch (PDFs).")
 
     if args.contrato:
         # Lê JSON com dados do contrato e gera XML
@@ -37,11 +44,16 @@ if __name__ == "__main__":
         run_contrato_conversion(contrato, args.output)
 
     elif args.batch:
-        run_batch_conversion(args.batch, args.output, output_format=args.format)
+        # PDF protegido sem senha / com senha errada falha só aquele arquivo (relatório final).
+        run_batch_conversion(args.batch, args.output, output_format=args.format, password=args.password)
     else:
         selected_pages = None
         if args.pages:
             selected_pages = parse_page_spec(args.pages)  # ValueError -> mensagem clara na saída
             if not selected_pages:
                 parser.error("--pages não contém nenhuma página válida.")
-        run_conversion(args.input, args.output, output_format=args.format, selected_pages=selected_pages)
+        try:
+            run_conversion(args.input, args.output, output_format=args.format,
+                           selected_pages=selected_pages, password=args.password)
+        except PdfSenhaError as ex:
+            sys.exit(f"[ERRO] {ex}")  # mensagem clara em stderr, código de saída 1, sem traceback
