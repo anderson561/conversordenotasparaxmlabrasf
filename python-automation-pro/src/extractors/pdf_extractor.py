@@ -264,6 +264,11 @@ class SPPdfExtractor:
         # número sem lastro — usado por `parse()` para gerar um aviso em vez
         # de mascarar o problema.
         self._camacari_aliquota_iss_zerada = False
+        # Sinaliza que a grade "Retenções (R$)" do Camaçari traz um "Total de
+        # Retenções" positivo que a soma das células lidas NÃO fecha (ver
+        # `_camacari_retencoes_grade`) — as retenções ficam zeradas e `parse()`
+        # gera um aviso em vez de gravar um valor plausível porém errado.
+        self._camacari_retencoes_nao_conferem = False
         # Sinaliza que a grade de 5 valores do Salvador escaneado (LAYOUT_
         # SALVADOR, "Deduções/Base de Cálculo/Alíquota/Valor do ISS/Crédito")
         # não bateu (célula(s) da linha de valores ilegível(is) no scan,
@@ -2304,7 +2309,15 @@ class SPPdfExtractor:
             # seguinte ("Data de EmissãoNúmero da Nota..."), sem data logo
             # depois, então este padrão simplesmente não casa e o
             # comportamento anterior fica preservado.
-            m = re.search(r'[Dd]?ata\s+de\s+Emiss[ãa]o\s*:?\s*\|?\s*[\n\s—-]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            #
+            # O rótulo também chega MAIS degradado — "a de Emissão" (perdeu o
+            # "Dat"), com o valor na linha de baixo (achado real, nota nº 6013:
+            # "a de Emissão\n13/01/2026 09:19"); sem aceitar essa grafia o ramo
+            # não casava e a nota caía na "Data da prestação" (só data, hora
+            # 00:00). O `\ba` exige o "a" isolado no começo da palavra, e o
+            # valor continua tendo de vir logo após o rótulo — nunca pega
+            # outra data do documento.
+            m = re.search(r'(?:[Dd]?ata|\ba)\s+de\s+Emiss[ãa]o\s*:?\s*\|?\s*[\n\s—-]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
@@ -2783,7 +2796,28 @@ class SPPdfExtractor:
             # autenticidade alfanumérico ("8075H0406") colado perto de outra
             # ocorrência do rótulo produz um candidato just por sorte curto
             # ("8075") seguido da letra "H" do próprio código.
+            #
+            # Achado real, nota nº 6013 (CLINICA MEDICINA HUMANA LTDA ->
+            # MASSA ALIMENTAÇÃO E SERVIÇOS S/A, `NF 6013.pdf`): das várias
+            # leituras da mesma caixa só UMA tem o rótulo limpo ("é Número da
+            # Nota", com o "é" do ícone colado), e logo depois dele o OCR
+            # intercala a faixa "PREFEITURA MUNICIPAL DE CAMAÇARI" e o rótulo
+            # VIZINHO "3 Data de Emissão" — o "3" é fragmento de ícone colado
+            # ao rótulo da PRÓXIMA célula, não o valor deste rótulo (família
+            # OCR "21": o valor adjacente tem de ser DO rótulo), mas passava
+            # nas checagens acima e a nota saía como nº 3. O valor real
+            # ("6013") sobrevive em outras duas leituras: a linha de abertura
+            # (antes de qualquer rótulo) e "mero da Nota\n6013" (rótulo
+            # degradado — perdeu o "Nú", logo o regex de rótulo limpo nunca
+            # o reconhece). Por isso um candidato "suspeito" (há outro rótulo
+            # de célula ou a faixa "PREFEITURA" entre o rótulo e ele, ou ele
+            # vem colado a um rótulo vizinho na mesma linha) NÃO é devolvido
+            # de imediato: só vale como último recurso, se nem o rótulo
+            # degradado nem a recuperação pela linha de abertura acharem um
+            # valor — assim nenhuma nota que já dependia de um candidato
+            # suspeito (sem corroboração alguma) muda de comportamento.
             labels_num = list(re.finditer(r'N[uú]mero\s+da\s+Nota\b', t, re.IGNORECASE))
+            candidato_suspeito = None
             for m_num_label in labels_num:
                 janela = t[m_num_label.end():m_num_label.end() + 100]
                 m_prox = re.search(r'(\d+)', janela)
@@ -2797,8 +2831,26 @@ class SPPdfExtractor:
                     or len(candidato) > 6
                     or depois.isalpha()
                 )
-                if not contaminado:
+                if contaminado:
+                    continue
+                entre = janela[:m_prox.start()]
+                resto_da_linha = janela[m_prox.end():].split('\n', 1)[0]
+                suspeito = bool(
+                    re.search(r'PREFEITURA|Data\s+de\s+Emiss|C[oó]digo\s+de\s+aut', entre, re.IGNORECASE)
+                    or re.match(r'\s*(?:Data\s+de\s+Emiss|C[oó]digo\s+de\s+aut)', resto_da_linha, re.IGNORECASE)
+                )
+                if not suspeito:
                     return candidato
+                if candidato_suspeito is None:
+                    candidato_suspeito = candidato
+            if candidato_suspeito is not None:
+                # Rótulo degradado ("mero da Nota", sem o "Nú"): rótulo + valor
+                # na linha de baixo. O `(?<![uú])` exclui o rótulo limpo.
+                for m_deg in re.finditer(
+                        r'(?<![uúUÚ])mero\s+da\s+Nota[ \t]*\n+[ \t]*(\d{1,6})(?![\w/])',
+                        t, re.IGNORECASE):
+                    if m_deg.group(1) not in ('2024', '2025', '2026', '2027'):
+                        return m_deg.group(1)
             if labels_num:
                 # Nenhuma ocorrência do rótulo teve valor limpo (caso da nota
                 # 258) — procura um número isolado numa tentativa de recorte
@@ -2815,6 +2867,8 @@ class SPPdfExtractor:
                     if depois_cand == '/' or m_cand.group(1) in ('2024', '2025', '2026', '2027'):
                         continue
                     return m_cand.group(1)
+                if candidato_suspeito is not None:
+                    return candidato_suspeito
 
         if self.layout == LAYOUT_CAMACARI_SISLOC:
             # "# NFS-e 24052" — texto já reconstruído por coordenada
@@ -11075,12 +11129,22 @@ class SPPdfExtractor:
 
         inscricao = _campo(r'Inscri[çc][ãa]o\s+Municipal\s*:?\s*(\d+)')
 
-        logradouro = _campo(r'Logradouro\s*:?\s*(.+?)\s*(?:N[ºo°]\s*:|$)')
-        numero = _campo(r'N[ºo°]\s*:?\s*([A-Za-z0-9]+)')
+        # Mesmas tolerâncias de OCR já aplicadas no `_extrair_entidade_camacari3`
+        # (nota nº 6013): o "Nº" que fecha a linha do logradouro pode vir SEM
+        # pontuação quando o valor é "S/N" ("Logradouro: | VIA MANTOIM Nº S/N").
+        logradouro = _campo(r'Logradouro\s*:?\s*(.+?)\s*(?:N[ºo°]\s*:|\bN[ºo°]\s+S/?N\b|$)')
+        # Exige pontuação depois do "Nº" (senão o "No" de "Nome/Razão Social"
+        # era lido como "Nº" e o número saía "me" — mesmo achado do `_3`) ou o
+        # "Nº S/N" explícito sem pontuação.
+        numero = (_campo(r'N[ºo°]\s*[:;.]\s*(S/?N\b|[A-Za-z0-9]+)')
+                  or _campo(r'\bN[ºo°]\s+(S/?N)\b'))
+        if re.fullmatch(r'S/?N', numero, re.IGNORECASE):
+            numero = 'S/N'
         complemento = _campo(r'Compl\.?\s*:?\s*(.+?)\s*(?:B[ai]{1,2}r{1,2}o|Beira|$)')
 
         cep = ''
-        m_cep = re.search(r'CEP\s*:?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
+        # O ":" depois de "CEP" também sai como "!"/";"/"|" no OCR ("CEP! 43813000").
+        m_cep = re.search(r'CEP\s*[:.!;|]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
         if m_cep:
             cep = re.sub(r'\D', '', m_cep.group(1))
 
@@ -11269,8 +11333,12 @@ class SPPdfExtractor:
             (o "-" que separa "BA 522 - VIA CASCALHEIRA" fica intacto)."""
             return re.sub(r'^[\s\-–—|/\\:.,_=]+', '', v).strip()
 
+        # O "Nº" que fecha a linha do logradouro também pode vir SEM
+        # pontuação quando o valor é "S/N" (achado real, nota nº 6013, tomador:
+        # "Logradouro: | VIA MANTOIM Nº S/N") — sem essa parada o lookahead
+        # nunca casava e o logradouro inteiro virava "Não informado".
         logradouro = _sem_ruido_a_esquerda(
-            _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|$)'))
+            _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|\bN[ºo°]\s+S/?N\b|$)'))
         # Exige pontuação explícita (":"/";"/".") logo após "Nº" — achado real:
         # sem essa exigência, o próprio rótulo "Nome/Razão Social" (que começa
         # com "No" — casa com `N[ºo°]`) era lido como se fosse "Nº", e o
@@ -11320,7 +11388,9 @@ class SPPdfExtractor:
         # "CEP/CID/UF" do layout `localiza_fatura`: UM rótulo maltratado pelo
         # OCR derruba o dado que vem depois dele.
         cep = ''
-        m_cep = re.search(r'[CG]EP\s*[:.]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
+        # O ":" depois de "CEP" também sai como "!" no OCR (achado real, nota
+        # nº 6013, tomador: "CEP! 43813000"), além de ";"/"|".
+        m_cep = re.search(r'[CG]EP\s*[:.!;|]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
         if m_cep:
             cep = re.sub(r'\D', '', m_cep.group(1))
 
@@ -13522,6 +13592,70 @@ class SPPdfExtractor:
             return pytesseract.image_to_string(img1, lang="por", config="--psm 6")
         except Exception:
             return ''
+
+    def _camacari_retencoes_grade(self, t: str):
+        """Lê as retenções federais da grade "Retenções (R$)" do Camaçari
+        (CPqD) — PIS/COFINS/INSS/IR/CSLL/Outras — e SÓ as devolve quando a
+        soma das células lidas fecha, ao centavo, com o "Total de Retenções"
+        impresso na própria grade (achado real, nota nº 6013: PIS 3,10 +
+        COFINS 14,32 + CSLL 4,77 = 22,19). Devolve a tupla
+        `(pis, cofins, inss, ir, csll, outras)` ou `None`.
+
+        `None` em dois casos: (a) a grade não existe/total ausente ou é 0,00
+        (nada a preencher — zeros impressos continuam zeros); (b) o total é
+        positivo mas a soma NÃO fecha (célula ilegível/lida errado) — aí as
+        retenções ficam zeradas e `_camacari_retencoes_nao_conferem` pede um
+        aviso: dado errado é pior que dado ausente, nunca um valor plausível
+        porém errado. Célula ausente conta como 0 só porque a soma das
+        presentes já tem de igualar o total (uma célula não-lida e não-zero
+        faria a conta não fechar)."""
+        self._camacari_retencoes_nao_conferem = False
+        m_ini = re.search(r'Reten[çc][õo]es\s*\(R\$\)', t, re.IGNORECASE)
+        if not m_ini:
+            return None
+        trecho = t[m_ini.start():m_ini.start() + 700]
+        m_corte = re.search(r'Tipo\s+de\s+tributa[çc][aã]o', trecho, re.IGNORECASE)
+        if m_corte:
+            trecho = trecho[:m_corte.start()]
+        # Célula monetária: "14,32" (formato normal) OU só dígitos sem
+        # pontuação ("1432" — o OCR perdeu a vírgula; ≥3 dígitos para que os
+        # 2 últimos sejam os centavos). Um valor com a vírgula perdida só é
+        # aceito se a soma FECHAR com o total impresso (ver `_combinacao_unica`).
+        celula = r'(\d{1,3}(?:\.\d{3})*,\d{2}|\d{3,})(?![\d,])'
+
+        def _leituras(token: str):
+            if ',' in token:
+                return [self._parse_valor(token)]
+            return [int(token) / 100.0]
+
+        m_total = re.search(r'Total\s+de\s+Reten[çc][õo]es\s*:\s*' + celula, trecho, re.IGNORECASE)
+        if not m_total:
+            return None
+        leituras_total = _leituras(m_total.group(1))
+        if leituras_total[0] <= 0.0:
+            return None
+        celulas = []
+        for rotulo in (r'PIS', r'COFINS', r'INSS', r'IR', r'CSLL', r'Outras'):
+            m = re.search(r'(?<![A-Za-z])' + rotulo + r'\s*:\s*' + celula, trecho)
+            celulas.append(_leituras(m.group(1)) if m else [0.0])
+        valores = self._combinacao_unica(celulas, leituras_total[0])
+        if valores is None:
+            self._camacari_retencoes_nao_conferem = True
+            return None
+        return valores
+
+    @staticmethod
+    def _combinacao_unica(celulas, total: float):
+        """`celulas`: para cada célula da grade, a lista de leituras possíveis
+        (valores). Devolve a tupla de valores quando EXATAMENTE UMA combinação
+        soma o `total` impresso (±0,005); com 0 ou 2+ combinações devolve
+        `None` — nunca escolhe entre leituras igualmente válidas."""
+        import itertools
+        fecham = [c for c in itertools.product(*celulas) if abs(sum(c) - total) <= 0.005]
+        # Combinações com os MESMOS valores (leituras repetidas na mesma
+        # célula) contam como uma só.
+        unicas = {tuple(round(v, 2) for v in c) for c in fecham}
+        return fecham[0] if len(unicas) == 1 else None
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
@@ -16287,6 +16421,7 @@ class SPPdfExtractor:
                 aliquota = self._parse_valor(m_pct.group(1)) / 100.0
                 iss = round(base * aliquota, 2)
                 liquido = _num(m_liq) if m_liq else val_serv
+                ret = self._camacari_retencoes_grade(t) or (0.0,) * 6
                 return Valores(
                     valor_servicos=val_serv,
                     valor_deducoes=deducoes,
@@ -16295,6 +16430,8 @@ class SPPdfExtractor:
                     valor_iss=iss,
                     iss_retido=False,
                     valor_liquido_nfse=liquido,
+                    valor_pis=ret[0], valor_cofins=ret[1], valor_inss=ret[2],
+                    valor_ir=ret[3], valor_csll=ret[4], outras_retencoes=ret[5],
                 )
 
         if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
@@ -16526,6 +16663,17 @@ class SPPdfExtractor:
                         pis, cofins, inss, ir, csll, outras = (
                             _v('pis'), _v('cofins'), _v('inss'), _v('ir'), _v('csll'), _v('outras')
                         )
+
+            # Retenções federais da grade "Retenções (R$)" lida do próprio
+            # texto (nota nº 6013: PIS 3,10 / COFINS 14,32 / CSLL 4,77, total
+            # 22,19 — saíam 0,00 porque este branch só lia as retenções no
+            # fallback de dois blocos do digital, acima). Só preenche quando
+            # nada veio daquele fallback E a soma bate com o "Total de
+            # Retenções" impresso; senão fica zerado + aviso.
+            if not any((pis, cofins, inss, ir, csll, outras)):
+                ret = self._camacari_retencoes_grade(t)
+                if ret:
+                    pis, cofins, inss, ir, csll, outras = ret
 
             return Valores(
                 valor_servicos=val_serv, base_calculo=base, aliquota=aliq,
@@ -20985,6 +21133,9 @@ class SPPdfExtractor:
 
         if len(self.raw_text.strip()) < 50: return None
 
+        # Registro de municípios que caíram no fallback da capital NESTA nota
+        # (ver `IBGEResolver.aviso_fallback_capital`).
+        _ibge_resolver.limpar_fallbacks_capital()
         self.layout = self._detect_layout()
         self._feira_nac_avisos: List[str] = []
 
@@ -21223,6 +21374,14 @@ class SPPdfExtractor:
                     "cobrada pelo prestador é considerada valor tributável; "
                     "confira se esse repasse precisa de tratamento contábil à parte"
                 )
+        if getattr(self, '_camacari_retencoes_nao_conferem', False):
+            avisos.append(
+                "Retenções federais (PIS/COFINS/INSS/IR/CSLL) impressas na grade "
+                "\"Retenções (R$)\" não puderam ser conferidas: a soma das "
+                "células lidas no scan não fecha com o \"Total de Retenções\" "
+                "impresso - mantidas zeradas por não haver valor confiável; "
+                "confira manualmente as retenções desta nota"
+            )
         if getattr(self, '_camacari_aliquota_iss_zerada', False):
             avisos.append(
                 "Alíquota/Valor do ISS não confiáveis nesta grade (célula "
@@ -21260,6 +21419,18 @@ class SPPdfExtractor:
                 "mas confira se ela deve mesmo ser escriturada antes de "
                 "importar no sistema contábil"
             )
+
+        # Município que a nota imprime mas que não consta na tabela IBGE do
+        # conversor: o código devolvido é o da capital da UF (valor plausível
+        # porém não confiável) — avisa em vez de deixar passar em silêncio.
+        for _papel, _ent in (('prestador', prestador), ('tomador', tomador), ('intermediário', intermediario)):
+            _end = getattr(_ent, 'endereco', None)
+            if _end is None:
+                continue
+            _aviso_mun = _ibge_resolver.aviso_fallback_capital(
+                _end.municipio, _end.uf, _end.codigo_municipio, _papel)
+            if _aviso_mun and _aviso_mun not in avisos:
+                avisos.append(_aviso_mun)
 
         municipio_incidencia_override = self._extrair_municipio_incidencia_override()
 

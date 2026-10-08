@@ -114,7 +114,10 @@ def test_tomador_endereco_nao_vaza_o_do_prestador(nfse):
     # que também casava quebra de linha.
     assert e.municipio == "Camacari"
     assert e.uf == "BA"
-    assert e.codigo_municipio == "2927408"  # IBGE de Camaçari/BA
+    # Camaçari/BA = 2905701. Antes este teste fixava 2927408 (Salvador) com o
+    # comentario errado "IBGE de Camaçari": o resolver era chamado sem
+    # city_hint, pulava a tabela de cidades e caia na capital da UF.
+    assert e.codigo_municipio == "2905701"
     assert e.cep == "42840310"
 
 
