@@ -147,6 +147,13 @@ class IBGEResolver:
         # (servicodados.ibge.gov.br/api/v1/localidades/municipios/2906501 ->
         # "Candeias", UF BA).
         "CANDEIAS": "2906501",
+        # Petrolina/PE - prestador do LAYOUT_LOCALIZA_PETROLINA (fatura nº
+        # 53044, MC LOCADORA PETROLINA LTDA). Sem esta entrada caía no
+        # fallback da capital da UF (Recife, 2611606), e o teste do layout
+        # chegou a fixar esse valor errado. Código 2611101 conferido na API
+        # oficial do IBGE (servicodados.ibge.gov.br/api/v1/localidades/
+        # municipios/2611101 -> "Petrolina", UF PE).
+        "PETROLINA": "2611101",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):

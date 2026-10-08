@@ -69,7 +69,12 @@ def test_extract_localiza_petrolina_nfse_53044(monkeypatch):
         assert p.endereco.municipio == "PETROLINA"
         assert p.endereco.uf == "PE"
         assert p.endereco.cep == "56308000"
-        assert p.endereco.codigo_municipio == "2611606"
+        # Petrolina/PE = 2611101 (API oficial do IBGE). Antes este teste fixava
+        # 2611606, que e RECIFE: o resolver nao conhecia Petrolina e caia no
+        # fallback da capital da UF, e o assert travava esse valor errado.
+        assert p.endereco.codigo_municipio == "2611101"
+        # Cidade cadastrada: nao pode mais surgir aviso de fallback da capital.
+        assert not any("tabela de códigos IBGE" in a for a in nfse.avisos)
 
         t = nfse.tomador
         assert t.cnpj_cpf == "07345543000190"
