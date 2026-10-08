@@ -1025,6 +1025,21 @@ e sem Release o auto-update se comporta exatamente como "já está atualizado".
 onefile anterior à v1.8.0 — o `auto_updater` delas procura um asset chamado
 `nfse_converter_gui.exe` e não saberia o que fazer com um zip.
 
+## PDFs Protegidos por Senha
+
+PDFs com **senha de abertura** (`/Encrypt`, senha de usuário) são suportados na GUI e na CLI. Infraestrutura compartilhada por todos os layouts — não altera a contagem de layouts.
+
+- **Desprotege UMA vez, na entrada** (`src/utils/pdf_senha.py`): `pdf_desprotegido(path, senha)` (context manager) devolve o próprio caminho se o PDF não exige senha, ou uma **cópia temporária sem criptografia** (pymupdf, `PDF_ENCRYPT_NONE`, em `tempfile.mkdtemp()`) que é **apagada ao sair do bloco**, com ou sem exceção. É aplicado em `run_conversion`, `run_batch_conversion` e na pré-análise de páginas da GUI — **nenhum** dos 15+ pontos que abrem o PDF (`extract_text`/`extract_pages` do pdfminer, `pymupdf.open` do OCR, `feira_nfse_nacional`) sabe de senha.
+- **A cópia mantém o nome-base original** (`os.path.basename` idêntico): há lógica que lê o número da nota do nome do arquivo (família "número vindo do nome do arquivo") e o nome dos XMLs (`<base>_Pagina_X_NF_Y.xml`) depende dele.
+- **Só senha de DONO** (abre com senha vazia) conta como NÃO protegido: segue o fluxo normal, sem cópia.
+- **Erros com texto sempre não vazio**: `PdfProtegidoPorSenhaError` ("O PDF '<nome>' está protegido por senha. Informe a senha para convertê-lo.") e `PdfSenhaIncorretaError` ("Senha incorreta para o PDF '<nome>'."), ambos `PdfSenhaError`. A causa raiz do "Erro:" vazio era `pdfminer.PDFPasswordIncorrect` (`str(ex) == ''`); `descrever_erro(ex)` (`src/utils/erros.py`) devolve `str(ex)` ou o nome da classe, e vale para qualquer exceção sem mensagem.
+- **Senha nunca persistida**: não é logada, impressa nem gravada em disco/config; na GUI vive só em memória (dict caminho→senha) durante a execução.
+- **CLI**: `--password SENHA` com `--input` ou `--batch` (rejeitado com `--contrato`). Sem senha ou com senha errada: mensagem em português em stderr e código de saída 1, sem traceback; no `--batch` falha só aquele PDF (relatório final, "PDFs com Falha Total"). Atenção: a senha na linha de comando fica no histórico do terminal e na lista de processos.
+- **GUI** (`gui_app.py`, `pedir_senhas`): antes da pré-análise, cada PDF protegido do processamento abre um diálogo modal ("PDF protegido por senha": nome do arquivo, campo de senha com olho, Enter confirma). Senha errada reabre o diálogo com "Senha incorreta. Tente novamente." sem limite de tentativas; **Pular este arquivo** só aparece quando há mais de um arquivo; **Cancelar** aborta tudo sem converter nada. O encadeamento é por callbacks na thread da UI (nunca abre diálogo da thread de conversão); o estado puro (fila, senhas, pulados, cancelado) é `ColetorDeSenhas`, testável sem Flet. Pular arquivos de um lote **não** o transforma em "arquivo único" (o fluxo e o nome dos XMLs continuam os de lote).
+- **⚠️ Ressalva de fidelidade (pdfminer)**: regravar o PDF (qualquer regravação, não só a desproteção) perturba em ~1e-7 as métricas de fonte, e a análise de layout do pdfminer é sensível a empates de ponto flutuante — a ORDEM do texto extraído pode mudar marginalmente (ex.: no PDF `NF 15.pdf`, o campo Telefone do tomador saía em outra posição). Em amostra de 29 PDFs digitais reais, a cópia desprotegida deu XML idêntico ao do PDF sem senha em 28; a divergência medida incluiu também a regravação feita para CRIAR o PDF protegido de teste. Se for preciso fidelidade bit a bit, o caminho é passar `password=` direto aos 4 pontos do pdfminer em `pdf_extractor.py` (`extract_pages` e 3x `extract_text`) em vez da cópia.
+
+---
+
 ## Processamento de Múltiplas Páginas (PDFs)
 
 O sistema conta com um motor de fatiamento inteligente que suporta:

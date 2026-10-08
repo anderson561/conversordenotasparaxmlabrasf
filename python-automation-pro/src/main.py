@@ -7,6 +7,8 @@ from .transformers.contrato_transformer import ContratoLocacaoTransformer
 from .models.contrato_locacao_model import ContratoLocacao
 from .models.nfe_produto_models import NfeProduto
 from .models.cte_os_model import CteOS
+from .utils.pdf_senha import pdf_desprotegido
+from .utils.erros import descrever_erro
 import os
 
 
@@ -63,11 +65,14 @@ def parse_page_spec(spec: str) -> list:
     return sorted(paginas)
 
 
-def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "abrasf", selected_pages: list = None, progress_callback=None):
+def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "abrasf", selected_pages: list = None, progress_callback=None, password: str = None):
+    """`password`: senha de abertura, só necessária se o PDF for protegido.
+    Sem ela (ou errada) levanta `PdfProtegidoPorSenhaError`/`PdfSenhaIncorretaError`
+    (mensagem em português, nunca vazia). O PDF é aberto a partir de uma cópia
+    temporária desprotegida (apagada ao final); a senha nunca é logada."""
     print(f"[*] Carregando PDF: {pdf_path}")
-    extractor = SPPdfExtractor(pdf_path)
-
-    nfse_list = extractor.parse_multiple()
+    with pdf_desprotegido(pdf_path, password) as pdf_legivel:
+        nfse_list = SPPdfExtractor(pdf_legivel).parse_multiple()
 
     if not nfse_list:
         raise ValueError(
@@ -107,7 +112,11 @@ def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "ab
 
     print(f"[+] Conversão concluída com sucesso! ({len(nfse_list)} notas extraídas)")
 
-def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_files: list = None, progress_callback=None, output_format: str = "abrasf"):
+def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_files: list = None, progress_callback=None, output_format: str = "abrasf", password: str = None, senhas: dict = None):
+    """`password`: senha única aplicada a todo PDF protegido do lote (CLI
+    `--password`); `senhas`: dict caminho->senha por arquivo (GUI), que tem
+    precedência. PDF protegido sem senha / com senha errada falha SÓ aquele
+    arquivo (contabilizado em "PDFs Falhos"), sem derrubar os demais."""
     if pdf_files:
         files_to_process = pdf_files
         print(f"[*] Iniciando conversão de {len(pdf_files)} arquivos selecionados.")
@@ -134,8 +143,8 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
             progress_callback(i / total_files, f"Processando: {filename}")
 
         try:
-            extractor = SPPdfExtractor(pdf_path)
-            nfse_list = extractor.parse_multiple()
+            with pdf_desprotegido(pdf_path, (senhas or {}).get(pdf_path, password)) as pdf_legivel:
+                nfse_list = SPPdfExtractor(pdf_legivel).parse_multiple()
 
             if not nfse_list:
                 msg = f"[AVISO] {filename} IGNORADO (Nenhuma nota fiscal reconhecida)"
@@ -171,9 +180,9 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
             if progress_callback:
                 progress_callback(i / total_files, f"[+] {filename} -> {len(nfse_list)} XMLs Gerados!")
         except Exception as e:
-            print(f"[ERROR] Falha ao processar {filename}: {str(e)}")
+            print(f"[ERROR] Falha ao processar {filename}: {descrever_erro(e)}")
             if progress_callback:
-                progress_callback(i / total_files, f"[ERRO] {filename}: {str(e)}")
+                progress_callback(i / total_files, f"[ERRO] {filename}: {descrever_erro(e)}")
             fail_count += 1
 
     if progress_callback:
