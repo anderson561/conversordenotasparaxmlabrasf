@@ -6,6 +6,8 @@ from src.main import run_batch_conversion, run_contrato_conversion
 from src.models.contrato_locacao_model import ContratoLocacao, EntidadeContrato
 from src.version import APP_VERSION
 from src.utils import auto_updater
+from src.utils.erros import descrever_erro
+from src.utils.pdf_senha import ColetorDeSenhas, pdf_desprotegido, pdf_protegido
 
 def main(page: ft.Page):
     page.title = "Conversor NFS-e para ABRASF XML"
@@ -72,7 +74,7 @@ def main(page: ft.Page):
                 auto_updater.apply_update_and_restart(dest, tipo)
             except Exception as ex:
                 progress_dialog.open = False
-                page.snack_bar = ft.SnackBar(ft.Text(f"Falha ao atualizar: {ex}"))
+                page.snack_bar = ft.SnackBar(ft.Text(f"Falha ao atualizar: {descrever_erro(ex)}"))
                 page.snack_bar.open = True
                 page.update()
 
@@ -379,6 +381,89 @@ def main(page: ft.Page):
         page.update()
 
     # ---------------------------------------------------------------
+    # Senhas de PDFs protegidos
+    # ---------------------------------------------------------------
+    def pedir_senhas(protegidos, total_arquivos, ao_terminar):
+        """Pede a senha de cada PDF protegido, um diálogo modal por vez,
+        encadeado por callbacks (roda na thread da UI; nunca bloqueia nem é
+        chamado da thread de conversão). Ao resolver o último, chama
+        `ao_terminar(coletor)` — o `coletor` traz senhas/pulados/cancelado.
+        As senhas ficam só em memória: nada é gravado em disco nem em log."""
+        coletor = ColetorDeSenhas(protegidos, total_arquivos)
+
+        def mostrar():
+            arquivo = coletor.atual
+            if arquivo is None:
+                ao_terminar(coletor)
+                return
+
+            resolvido = [False]
+            campo = ft.TextField(
+                label="Senha", password=True, can_reveal_password=True,
+                autofocus=True, width=340,
+            )
+
+            def fechar():
+                resolvido[0] = True
+                campo.value = ""  # não deixa a senha digitada na árvore de controles
+                dlg.open = False
+                page.update()
+
+            def confirmar(e):
+                senha = campo.value or ""
+                if not senha:
+                    campo.error_text = "Informe a senha."
+                elif coletor.tentar(senha):
+                    fechar()
+                    mostrar()
+                    return
+                else:
+                    campo.error_text = "Senha incorreta. Tente novamente."
+                campo.value = ""
+                campo.focus()
+                page.update()
+
+            def pular(e):
+                fechar()
+                coletor.pular()
+                mostrar()
+
+            def cancelar(e=None):
+                if resolvido[0]:
+                    return
+                fechar()
+                coletor.cancelar()
+                ao_terminar(coletor)
+
+            campo.on_submit = confirmar  # Enter confirma
+
+            acoes = [ft.TextButton("Cancelar", on_click=cancelar)]
+            if coletor.pode_pular:
+                acoes.append(ft.TextButton("Pular este arquivo", on_click=pular))
+            acoes.append(ft.ElevatedButton("OK", on_click=confirmar))
+
+            dlg = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("PDF protegido por senha"),
+                content=ft.Column(
+                    [
+                        ft.Text(os.path.basename(arquivo), weight=ft.FontWeight.BOLD),
+                        ft.Text("Informe a senha para abrir este arquivo."),
+                        campo,
+                    ],
+                    tight=True,
+                ),
+                actions=acoes,
+                actions_alignment=ft.MainAxisAlignment.END,
+                on_dismiss=cancelar,
+            )
+            page.overlay.append(dlg)
+            dlg.open = True
+            page.update()
+
+        mostrar()
+
+    # ---------------------------------------------------------------
     # Processamento principal
     # ---------------------------------------------------------------
     def start_processing(e):
@@ -420,15 +505,24 @@ def main(page: ft.Page):
         files_to_check = []
         if not is_contrato:
             if selected_files:
-                files_to_check = selected_files
+                files_to_check = list(selected_files)  # cópia: "Pular" não pode alterar a seleção da tela
             elif input_dir_text.value and os.path.isdir(input_dir_text.value):
                 files_to_check = [os.path.join(input_dir_text.value, f) for f in os.listdir(input_dir_text.value) if f.lower().endswith('.pdf')]
+
+        # Fixado ANTES dos diálogos de senha: pular arquivos de um lote não pode
+        # transformá-lo em "arquivo único" (mudaria o fluxo e o nome dos XMLs).
+        arquivo_unico = len(files_to_check) == 1
+        senhas = {}      # caminho -> senha (só em memória, só nesta execução)
+        pulados = []     # PDFs protegidos que o usuário optou por não converter
+        avisos_iniciais = []
 
         def do_run(selected_pages=None):
             process_btn.disabled = True
             progress_bar.visible = True
             log_area.controls.clear()
             add_log("[*] Iniciando processamento...", "blue")
+            for aviso in avisos_iniciais:
+                add_log(aviso, "orange")
             page.update()
 
             def run():
@@ -471,7 +565,7 @@ def main(page: ft.Page):
                             progress_callback=update_progress
                         )
                     else:
-                        if len(files_to_check) == 1:
+                        if arquivo_unico:
                             from src.main import run_conversion
                             # Chama run_conversion direto se for um único arquivo, pois suporta selected_pages
                             output_xml = os.path.join(out_dir, "temp.xml") # run_conversion espera o caminho do xml, embora vá gerar os corretos
@@ -480,23 +574,33 @@ def main(page: ft.Page):
                                 output_xml_path=output_xml,
                                 output_format=format_dropdown.value,
                                 selected_pages=selected_pages,
-                                progress_callback=update_progress
+                                progress_callback=update_progress,
+                                password=senhas.get(files_to_check[0])
                             )
                             update_progress(1.0, f"[+] Concluído! XMLs gerados em {out_dir}")
                         else:
+                            if pulados:
+                                entrada = dict(pdf_files=list(files_to_check))
+                            else:
+                                entrada = dict(
+                                    input_dir=input_dir_text.value if not selected_files else None,
+                                    pdf_files=selected_files if selected_files else None,
+                                )
                             run_batch_conversion(
-                                input_dir=input_dir_text.value if not selected_files else None,
-                                pdf_files=selected_files if selected_files else None,
                                 output_dir=out_dir,
                                 progress_callback=update_progress,
-                                output_format=format_dropdown.value
+                                output_format=format_dropdown.value,
+                                senhas=senhas,
+                                **entrada
                             )
 
                     page.snack_bar = ft.SnackBar(ft.Text("Processamento concluído com sucesso!"))
                     page.snack_bar.open = True
                 except Exception as ex:
-                    add_log(f"[ERRO] {str(ex)}", "red")
-                    page.snack_bar = ft.SnackBar(ft.Text(f"Erro: {str(ex)}"))
+                    # `str(ex)` pode ser vazio (ex.: PDFPasswordIncorrect do pdfminer):
+                    # nunca mostrar "Erro:" em branco.
+                    add_log(f"[ERRO] {descrever_erro(ex)}", "red")
+                    page.snack_bar = ft.SnackBar(ft.Text(f"Erro: {descrever_erro(ex)}"))
                     page.snack_bar.open = True
                 finally:
                     process_btn.disabled = False
@@ -504,119 +608,145 @@ def main(page: ft.Page):
 
             threading.Thread(target=run, daemon=True).start()
 
-        # Verifica se é um único arquivo PDF com múltiplas páginas
-        if not is_contrato and len(files_to_check) == 1:
-            from src.extractors.pdf_extractor import SPPdfExtractor
-            try:
-                extractor = SPPdfExtractor(files_to_check[0])
-                nfse_list = extractor.parse_multiple()
-                invalid_pages = getattr(extractor, 'invalid_pages', [])
+        def analisar_e_rodar():
+            # Verifica se é um único arquivo PDF com múltiplas páginas
+            if not is_contrato and arquivo_unico:
+                from src.extractors.pdf_extractor import SPPdfExtractor
+                try:
+                    # PDF protegido: lê da cópia temporária desprotegida (apagada ao sair do bloco).
+                    with pdf_desprotegido(files_to_check[0], senhas.get(files_to_check[0])) as pdf_legivel:
+                        extractor = SPPdfExtractor(pdf_legivel)
+                        nfse_list = extractor.parse_multiple()
+                        invalid_pages = getattr(extractor, 'invalid_pages', [])
 
-                msgs = [f"Pág {p['page']}: {p['reason']}" for p in invalid_pages]
-                for n in nfse_list:
-                    if n.avisos:
-                        pag = f"Pág {n.pagina_origem}" if n.pagina_origem else f"Nota {n.numero}"
-                        msgs.append(f"{pag}: {'; '.join(n.avisos)}")
-
-                if msgs:
-                    page.snack_bar = ft.SnackBar(
-                        ft.Text("Atenção: " + " | ".join(msgs)),
-                        bgcolor=ft.colors.ORANGE_800
-                    )
-                    page.snack_bar.open = True
-                    page.update()
-                
-                if len(nfse_list) > 1:
-                    def on_dialog_close(e, sel_pages=None):
-                        dialog.open = False
-                        page.update()
-                        do_run(selected_pages=sel_pages)
-
-                    # Uma checkbox por nota válida, rotulada com a PÁGINA REAL do
-                    # PDF (n.pagina_origem) + o número da nota. Multisseleção
-                    # permite escolher páginas alternadas (ex.: 1, 3 e 6) e
-                    # converter só elas — o filtro run_conversion(selected_pages=)
-                    # já suporta lista arbitrária.
-                    page_checkboxes = []
+                    msgs = [f"Pág {p['page']}: {p['reason']}" for p in invalid_pages]
                     for n in nfse_list:
-                        cb = ft.Checkbox(label=f"Página {n.pagina_origem} — Nota {n.numero}", value=False)
-                        cb.data = n.pagina_origem
-                        page_checkboxes.append(cb)
+                        if n.avisos:
+                            pag = f"Pág {n.pagina_origem}" if n.pagina_origem else f"Nota {n.numero}"
+                            msgs.append(f"{pag}: {'; '.join(n.avisos)}")
 
-                    def converter_selecionadas(e):
-                        sel = sorted({cb.data for cb in page_checkboxes if cb.value})
-                        if not sel:
-                            page.snack_bar = ft.SnackBar(ft.Text("Selecione ao menos uma página."))
-                            page.snack_bar.open = True
-                            page.update()
-                            return
-                        on_dialog_close(e, sel)
-
-                    def alternar_todas(e):
-                        marcar = not all(cb.value for cb in page_checkboxes)
-                        for cb in page_checkboxes:
-                            cb.value = marcar
+                    if msgs:
+                        page.snack_bar = ft.SnackBar(
+                            ft.Text("Atenção: " + " | ".join(msgs)),
+                            bgcolor=ft.colors.ORANGE_800
+                        )
+                        page.snack_bar.open = True
                         page.update()
+                
+                    if len(nfse_list) > 1:
+                        def on_dialog_close(e, sel_pages=None):
+                            dialog.open = False
+                            page.update()
+                            do_run(selected_pages=sel_pages)
 
-                    acoes = ft.Row(
-                        [
-                            ft.ElevatedButton(
-                                "Converter selecionadas", icon=ft.icons.CHECK,
-                                on_click=converter_selecionadas, bgcolor=ft.colors.GREEN_700,
+                        # Uma checkbox por nota válida, rotulada com a PÁGINA REAL do
+                        # PDF (n.pagina_origem) + o número da nota. Multisseleção
+                        # permite escolher páginas alternadas (ex.: 1, 3 e 6) e
+                        # converter só elas — o filtro run_conversion(selected_pages=)
+                        # já suporta lista arbitrária.
+                        page_checkboxes = []
+                        for n in nfse_list:
+                            cb = ft.Checkbox(label=f"Página {n.pagina_origem} — Nota {n.numero}", value=False)
+                            cb.data = n.pagina_origem
+                            page_checkboxes.append(cb)
+
+                        def converter_selecionadas(e):
+                            sel = sorted({cb.data for cb in page_checkboxes if cb.value})
+                            if not sel:
+                                page.snack_bar = ft.SnackBar(ft.Text("Selecione ao menos uma página."))
+                                page.snack_bar.open = True
+                                page.update()
+                                return
+                            on_dialog_close(e, sel)
+
+                        def alternar_todas(e):
+                            marcar = not all(cb.value for cb in page_checkboxes)
+                            for cb in page_checkboxes:
+                                cb.value = marcar
+                            page.update()
+
+                        acoes = ft.Row(
+                            [
+                                ft.ElevatedButton(
+                                    "Converter selecionadas", icon=ft.icons.CHECK,
+                                    on_click=converter_selecionadas, bgcolor=ft.colors.GREEN_700,
+                                ),
+                                ft.TextButton("Marcar/limpar todas", on_click=alternar_todas),
+                                ft.TextButton(
+                                    "Converter todas as válidas",
+                                    on_click=lambda e: on_dialog_close(e, None),
+                                ),
+                            ],
+                            wrap=True,
+                        )
+
+                        # Achado real 2026-09-16 (PDF "STAUMMAQ - SCAN.pdf", 8 notas
+                        # válidas): a tela de seleção de páginas não aparecia para
+                        # PDFs com poucas notas (<=8), só para os com muitas (>8) —
+                        # exatamente os dois casos em que `height` do Container ficava
+                        # `None` (sem seleção) x `420` (fixo). Suspeita: `height=None`
+                        # dentro de um `AlertDialog` deixa a Column sem altura limitada
+                        # para o layout engine calcular no backend desktop do Flet,
+                        # colapsando o diálogo a altura zero/invisível em vez de
+                        # dimensionar pelo conteúdo. Corrigido dando SEMPRE uma altura
+                        # explícita (escalada pela quantidade de notas, com piso e teto)
+                        # em vez de deixar `None` para listas curtas.
+                        altura_conteudo = min(420, max(160, 90 + 36 * len(nfse_list)))
+                        col_content = ft.Column(
+                            [ft.Text("O PDF possui mais de uma nota válida. Marque as páginas que deseja converter:")]
+                            + page_checkboxes
+                            + [ft.Divider(), acoes],
+                            tight=True,
+                            scroll=ft.ScrollMode.AUTO,
+                        )
+                        dialog = ft.AlertDialog(
+                            title=ft.Text("Selecionar páginas para conversão"),
+                            content=ft.Container(
+                                content=col_content,
+                                height=altura_conteudo,
+                                width=380,
                             ),
-                            ft.TextButton("Marcar/limpar todas", on_click=alternar_todas),
-                            ft.TextButton(
-                                "Converter todas as válidas",
-                                on_click=lambda e: on_dialog_close(e, None),
-                            ),
-                        ],
-                        wrap=True,
-                    )
+                        )
+                        page.overlay.append(dialog)
+                        dialog.open = True
+                        page.update()
+                        return
+                except Exception as ex:
+                    # Antes: `pass` silencioso — qualquer exceção na pré-checagem
+                    # (ex.: falha de OCR ao pré-analisar o PDF) fazia a tela de
+                    # seleção de páginas nunca aparecer, SEM nenhum aviso, e o
+                    # usuário só via o PDF ser convertido inteiro sem chance de
+                    # escolher páginas — indistinguível de "não tem mais de uma
+                    # nota válida" (achado real 2026-09-16, PDF "STAUMMAQ - SCAN.pdf",
+                    # 8 páginas). Agora loga o erro real para o usuário poder
+                    # diagnosticar, e o fluxo continua para `do_run()` (conversão
+                    # completa, sem seleção) como já fazia.
+                    add_log(f"[AVISO] Não foi possível pré-analisar as páginas do PDF para oferecer seleção: {ex}", "orange")
 
-                    # Achado real 2026-09-16 (PDF "STAUMMAQ - SCAN.pdf", 8 notas
-                    # válidas): a tela de seleção de páginas não aparecia para
-                    # PDFs com poucas notas (<=8), só para os com muitas (>8) —
-                    # exatamente os dois casos em que `height` do Container ficava
-                    # `None` (sem seleção) x `420` (fixo). Suspeita: `height=None`
-                    # dentro de um `AlertDialog` deixa a Column sem altura limitada
-                    # para o layout engine calcular no backend desktop do Flet,
-                    # colapsando o diálogo a altura zero/invisível em vez de
-                    # dimensionar pelo conteúdo. Corrigido dando SEMPRE uma altura
-                    # explícita (escalada pela quantidade de notas, com piso e teto)
-                    # em vez de deixar `None` para listas curtas.
-                    altura_conteudo = min(420, max(160, 90 + 36 * len(nfse_list)))
-                    col_content = ft.Column(
-                        [ft.Text("O PDF possui mais de uma nota válida. Marque as páginas que deseja converter:")]
-                        + page_checkboxes
-                        + [ft.Divider(), acoes],
-                        tight=True,
-                        scroll=ft.ScrollMode.AUTO,
-                    )
-                    dialog = ft.AlertDialog(
-                        title=ft.Text("Selecionar páginas para conversão"),
-                        content=ft.Container(
-                            content=col_content,
-                            height=altura_conteudo,
-                            width=380,
-                        ),
-                    )
-                    page.overlay.append(dialog)
-                    dialog.open = True
-                    page.update()
-                    return
-            except Exception as ex:
-                # Antes: `pass` silencioso — qualquer exceção na pré-checagem
-                # (ex.: falha de OCR ao pré-analisar o PDF) fazia a tela de
-                # seleção de páginas nunca aparecer, SEM nenhum aviso, e o
-                # usuário só via o PDF ser convertido inteiro sem chance de
-                # escolher páginas — indistinguível de "não tem mais de uma
-                # nota válida" (achado real 2026-09-16, PDF "STAUMMAQ - SCAN.pdf",
-                # 8 páginas). Agora loga o erro real para o usuário poder
-                # diagnosticar, e o fluxo continua para `do_run()` (conversão
-                # completa, sem seleção) como já fazia.
-                add_log(f"[AVISO] Não foi possível pré-analisar as páginas do PDF para oferecer seleção: {ex}", "orange")
+            do_run()
 
-        do_run()
+        def apos_senhas(coletor):
+            if coletor.cancelado:
+                status_text.value = "Processamento cancelado."
+                add_log("[*] Processamento cancelado: nenhum arquivo foi convertido.", "orange")
+                return
+            senhas.update(coletor.senhas)
+            if coletor.pulados:
+                pulados.extend(coletor.pulados)
+                for f in coletor.pulados:
+                    avisos_iniciais.append(f"[AVISO] {os.path.basename(f)} PULADO (protegido por senha, senha não informada).")
+                files_to_check[:] = [f for f in files_to_check if f not in coletor.pulados]
+            if not files_to_check:
+                status_text.value = "Nenhum arquivo para converter."
+                add_log("[*] Nenhum arquivo restante para converter.", "orange")
+                return
+            analisar_e_rodar()
+
+        protegidos = [] if is_contrato else [f for f in files_to_check if pdf_protegido(f)]
+        if protegidos:
+            pedir_senhas(protegidos, len(files_to_check), apos_senhas)
+        else:
+            analisar_e_rodar()
 
     process_btn = ft.ElevatedButton(
         "Iniciar Conversão",

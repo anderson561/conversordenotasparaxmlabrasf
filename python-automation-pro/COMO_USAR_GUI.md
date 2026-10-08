@@ -53,6 +53,16 @@ Quando você converte **um único PDF** que contém **mais de uma nota válida**
 
 > Só as páginas com nota reconhecida aparecem na lista; páginas de lixo/comprovante são ignoradas automaticamente. O PDF inteiro é lido para reconhecer as notas — a seleção decide quais viram XML.
 
+### PDFs protegidos por senha
+
+Se algum PDF da seleção exigir **senha para abrir**, ao clicar em "Iniciar Conversão" aparece, antes de qualquer conversão, a janela **"PDF protegido por senha"** com o nome do arquivo e um campo de senha (use o ícone do olho para ver o que digitou).
+
+- **OK** (ou a tecla `Enter`) — confirma a senha. Se estiver errada, a janela continua aberta com "Senha incorreta. Tente novamente." (sem limite de tentativas).
+- **Pular este arquivo** — só aparece quando há mais de um arquivo; esse PDF não é convertido e os demais seguem.
+- **Cancelar** — aborta tudo: nada é convertido.
+
+> As senhas ficam só na memória durante essa conversão: não são gravadas em disco nem no log. Durante a leitura é usada uma cópia temporária sem senha do PDF, apagada ao final. PDFs sem senha de abertura seguem o fluxo normal, sem nenhuma pergunta.
+
 ---
 
 ## 4. Geração de XML para Contratos de Locação
