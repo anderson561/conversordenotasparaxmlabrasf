@@ -116,6 +116,14 @@ class IBGEResolver:
         # de Santana de Parnaíba (3547304) - confirmado na fonte oficial do
         # IBGE (cidades.ibge.gov.br/brasil/sp/santana-de-parnaiba).
         "SANTANA DE PARNAIBA": "3547304", "SANTANA DE PARNAÍBA": "3547304",
+        # Candeias/BA - município do tomador da nota nº 6013 (CLINICA MEDICINA
+        # HUMANA LTDA -> MASSA ALIMENTAÇÃO E SERVIÇOS S/A, layout Camaçari
+        # escaneado, achado real 2026-10-08). Sem esta entrada caía no
+        # fallback silencioso de Salvador/BA (2927408), que NÃO é Candeias.
+        # Código 2906501 conferido na API oficial do IBGE
+        # (servicodados.ibge.gov.br/api/v1/localidades/municipios/2906501 ->
+        # "Candeias", UF BA).
+        "CANDEIAS": "2906501",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):

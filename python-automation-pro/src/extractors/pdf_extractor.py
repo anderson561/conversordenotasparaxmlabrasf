@@ -263,6 +263,11 @@ class SPPdfExtractor:
         # número sem lastro — usado por `parse()` para gerar um aviso em vez
         # de mascarar o problema.
         self._camacari_aliquota_iss_zerada = False
+        # Sinaliza que a grade "Retenções (R$)" do Camaçari traz um "Total de
+        # Retenções" positivo que a soma das células lidas NÃO fecha (ver
+        # `_camacari_retencoes_grade`) — as retenções ficam zeradas e `parse()`
+        # gera um aviso em vez de gravar um valor plausível porém errado.
+        self._camacari_retencoes_nao_conferem = False
         # Sinaliza que a grade de 5 valores do Salvador escaneado (LAYOUT_
         # SALVADOR, "Deduções/Base de Cálculo/Alíquota/Valor do ISS/Crédito")
         # não bateu (célula(s) da linha de valores ilegível(is) no scan,
@@ -2297,7 +2302,15 @@ class SPPdfExtractor:
             # seguinte ("Data de EmissãoNúmero da Nota..."), sem data logo
             # depois, então este padrão simplesmente não casa e o
             # comportamento anterior fica preservado.
-            m = re.search(r'[Dd]?ata\s+de\s+Emiss[ãa]o\s*:?\s*\|?\s*[\n\s—-]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
+            #
+            # O rótulo também chega MAIS degradado — "a de Emissão" (perdeu o
+            # "Dat"), com o valor na linha de baixo (achado real, nota nº 6013:
+            # "a de Emissão\n13/01/2026 09:19"); sem aceitar essa grafia o ramo
+            # não casava e a nota caía na "Data da prestação" (só data, hora
+            # 00:00). O `\ba` exige o "a" isolado no começo da palavra, e o
+            # valor continua tendo de vir logo após o rótulo — nunca pega
+            # outra data do documento.
+            m = re.search(r'(?:[Dd]?ata|\ba)\s+de\s+Emiss[ãa]o\s*:?\s*\|?\s*[\n\s—-]*(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
@@ -11258,8 +11271,12 @@ class SPPdfExtractor:
             (o "-" que separa "BA 522 - VIA CASCALHEIRA" fica intacto)."""
             return re.sub(r'^[\s\-–—|/\\:.,_=]+', '', v).strip()
 
+        # O "Nº" que fecha a linha do logradouro também pode vir SEM
+        # pontuação quando o valor é "S/N" (achado real, nota nº 6013, tomador:
+        # "Logradouro: | VIA MANTOIM Nº S/N") — sem essa parada o lookahead
+        # nunca casava e o logradouro inteiro virava "Não informado".
         logradouro = _sem_ruido_a_esquerda(
-            _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|$)'))
+            _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|\bN[ºo°]\s+S/?N\b|$)'))
         # Exige pontuação explícita (":"/";"/".") logo após "Nº" — achado real:
         # sem essa exigência, o próprio rótulo "Nome/Razão Social" (que começa
         # com "No" — casa com `N[ºo°]`) era lido como se fosse "Nº", e o
@@ -11309,7 +11326,9 @@ class SPPdfExtractor:
         # "CEP/CID/UF" do layout `localiza_fatura`: UM rótulo maltratado pelo
         # OCR derruba o dado que vem depois dele.
         cep = ''
-        m_cep = re.search(r'[CG]EP\s*[:.]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
+        # O ":" depois de "CEP" também sai como "!" no OCR (achado real, nota
+        # nº 6013, tomador: "CEP! 43813000"), além de ";"/"|".
+        m_cep = re.search(r'[CG]EP\s*[:.!;|]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
         if m_cep:
             cep = re.sub(r'\D', '', m_cep.group(1))
 
@@ -13511,6 +13530,46 @@ class SPPdfExtractor:
             return pytesseract.image_to_string(img1, lang="por", config="--psm 6")
         except Exception:
             return ''
+
+    def _camacari_retencoes_grade(self, t: str):
+        """Lê as retenções federais da grade "Retenções (R$)" do Camaçari
+        (CPqD) — PIS/COFINS/INSS/IR/CSLL/Outras — e SÓ as devolve quando a
+        soma das células lidas fecha, ao centavo, com o "Total de Retenções"
+        impresso na própria grade (achado real, nota nº 6013: PIS 3,10 +
+        COFINS 14,32 + CSLL 4,77 = 22,19). Devolve a tupla
+        `(pis, cofins, inss, ir, csll, outras)` ou `None`.
+
+        `None` em dois casos: (a) a grade não existe/total ausente ou é 0,00
+        (nada a preencher — zeros impressos continuam zeros); (b) o total é
+        positivo mas a soma NÃO fecha (célula ilegível/lida errado) — aí as
+        retenções ficam zeradas e `_camacari_retencoes_nao_conferem` pede um
+        aviso: dado errado é pior que dado ausente, nunca um valor plausível
+        porém errado. Célula ausente conta como 0 só porque a soma das
+        presentes já tem de igualar o total (uma célula não-lida e não-zero
+        faria a conta não fechar)."""
+        self._camacari_retencoes_nao_conferem = False
+        m_ini = re.search(r'Reten[çc][õo]es\s*\(R\$\)', t, re.IGNORECASE)
+        if not m_ini:
+            return None
+        trecho = t[m_ini.start():m_ini.start() + 700]
+        m_corte = re.search(r'Tipo\s+de\s+tributa[çc][aã]o', trecho, re.IGNORECASE)
+        if m_corte:
+            trecho = trecho[:m_corte.start()]
+        dinheiro = r'(\d{1,3}(?:\.\d{3})*,\d{2})(?![\d,])'
+        m_total = re.search(r'Total\s+de\s+Reten[çc][õo]es\s*:\s*' + dinheiro, trecho, re.IGNORECASE)
+        if not m_total:
+            return None
+        total = self._parse_valor(m_total.group(1))
+        if total <= 0.0:
+            return None
+        valores = []
+        for rotulo in (r'PIS', r'COFINS', r'INSS', r'IR', r'CSLL', r'Outras'):
+            m = re.search(r'(?<![A-Za-z])' + rotulo + r'\s*:\s*' + dinheiro, trecho)
+            valores.append(self._parse_valor(m.group(1)) if m else 0.0)
+        if abs(sum(valores) - total) > 0.005:
+            self._camacari_retencoes_nao_conferem = True
+            return None
+        return tuple(valores)
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
@@ -16276,6 +16335,7 @@ class SPPdfExtractor:
                 aliquota = self._parse_valor(m_pct.group(1)) / 100.0
                 iss = round(base * aliquota, 2)
                 liquido = _num(m_liq) if m_liq else val_serv
+                ret = self._camacari_retencoes_grade(t) or (0.0,) * 6
                 return Valores(
                     valor_servicos=val_serv,
                     valor_deducoes=deducoes,
@@ -16284,6 +16344,8 @@ class SPPdfExtractor:
                     valor_iss=iss,
                     iss_retido=False,
                     valor_liquido_nfse=liquido,
+                    valor_pis=ret[0], valor_cofins=ret[1], valor_inss=ret[2],
+                    valor_ir=ret[3], valor_csll=ret[4], outras_retencoes=ret[5],
                 )
 
         if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
@@ -16515,6 +16577,17 @@ class SPPdfExtractor:
                         pis, cofins, inss, ir, csll, outras = (
                             _v('pis'), _v('cofins'), _v('inss'), _v('ir'), _v('csll'), _v('outras')
                         )
+
+            # Retenções federais da grade "Retenções (R$)" lida do próprio
+            # texto (nota nº 6013: PIS 3,10 / COFINS 14,32 / CSLL 4,77, total
+            # 22,19 — saíam 0,00 porque este branch só lia as retenções no
+            # fallback de dois blocos do digital, acima). Só preenche quando
+            # nada veio daquele fallback E a soma bate com o "Total de
+            # Retenções" impresso; senão fica zerado + aviso.
+            if not any((pis, cofins, inss, ir, csll, outras)):
+                ret = self._camacari_retencoes_grade(t)
+                if ret:
+                    pis, cofins, inss, ir, csll, outras = ret
 
             return Valores(
                 valor_servicos=val_serv, base_calculo=base, aliquota=aliq,
@@ -21158,6 +21231,14 @@ class SPPdfExtractor:
                     "cobrada pelo prestador é considerada valor tributável; "
                     "confira se esse repasse precisa de tratamento contábil à parte"
                 )
+        if getattr(self, '_camacari_retencoes_nao_conferem', False):
+            avisos.append(
+                "Retenções federais (PIS/COFINS/INSS/IR/CSLL) impressas na grade "
+                "\"Retenções (R$)\" não puderam ser conferidas: a soma das "
+                "células lidas no scan não fecha com o \"Total de Retenções\" "
+                "impresso - mantidas zeradas por não haver valor confiável; "
+                "confira manualmente as retenções desta nota"
+            )
         if getattr(self, '_camacari_aliquota_iss_zerada', False):
             avisos.append(
                 "Alíquota/Valor do ISS não confiáveis nesta grade (célula "

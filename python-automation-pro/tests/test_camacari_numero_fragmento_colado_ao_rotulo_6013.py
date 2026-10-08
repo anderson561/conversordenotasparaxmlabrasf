@@ -51,3 +51,81 @@ def test_camacari_numero_nao_depende_do_nome_do_arquivo(monkeypatch):
     # Nome com outro numero que NAO pode ser usado como fallback do numero.
     lista = _converter(monkeypatch, "copia_qualquer_777.pdf")
     assert lista[0].numero == "6013"
+
+
+# ---------------------------------------------------------------------------
+# Colaterais da MESMA nota 6013 (mesmo texto OCR real): retencoes, tomador,
+# hora da emissao e Candeias/BA no resolver de IBGE.
+# ---------------------------------------------------------------------------
+
+def _nfse(monkeypatch, texto=None, nome="dummy_camacari_6013_col.pdf"):
+    caminho = os.path.join("tests", nome)
+    os.makedirs("tests", exist_ok=True)
+    with open(caminho, "wb") as f:
+        f.write(b"%PDF-1.4")
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text", lambda path: "")
+    monkeypatch.setattr(SPPdfExtractor, "_extract_via_ocr", lambda self: texto or MOCK_TEXT)
+    try:
+        return SPPdfExtractor(caminho).parse_multiple()[0]
+    finally:
+        if os.path.exists(caminho):
+            os.remove(caminho)
+
+
+def test_camacari_scan_retencoes_federais_da_grade_impressa(monkeypatch):
+    nfse = _nfse(monkeypatch)
+    v = nfse.valores
+    # Impresso: PIS 3,10 / COFINS 14,32 / CSLL 4,77 / Total de Retencoes 22,19
+    assert v.valor_pis == 3.10
+    assert v.valor_cofins == 14.32
+    assert v.valor_csll == 4.77
+    assert v.valor_inss == 0.0
+    assert v.valor_ir == 0.0
+    assert v.outras_retencoes == 0.0
+    assert v.valor_servicos == 477.45
+    assert v.valor_liquido_nfse == 455.26
+    # coerencia: liquido = servicos - retencoes federais (ISS a recolher pelo prestador)
+    assert round(v.valor_servicos - (v.valor_pis + v.valor_cofins + v.valor_csll), 2) == v.valor_liquido_nfse
+
+
+def test_camacari_scan_retencoes_nao_preenche_quando_soma_nao_bate(monkeypatch):
+    # Leitura errada de uma celula (COFINS 14,92 em vez de 14,32): a soma
+    # (22,79) nao fecha com o "Total de Retencoes" (22,19) -> nada de valor
+    # plausivel porem errado; fica zerado e avisado.
+    texto = MOCK_TEXT.replace("COFINS: 14,32", "COFINS: 14,92")
+    assert texto != MOCK_TEXT
+    nfse = _nfse(monkeypatch, texto)
+    v = nfse.valores
+    assert (v.valor_pis, v.valor_cofins, v.valor_csll) == (0.0, 0.0, 0.0)
+    assert any("Retenções" in a or "retenções" in a for a in nfse.avisos)
+
+
+def test_camacari_scan_tomador_cep_com_exclamacao_e_numero_sn_sem_dois_pontos(monkeypatch):
+    nfse = _nfse(monkeypatch)
+    e = nfse.tomador.endereco
+    assert e.logradouro == "VIA MANTOIM"
+    assert e.numero == "S/N"
+    assert e.bairro == "DISTRITO INDUSTRIAL"
+    assert e.cep == "43813000"
+    assert e.municipio == "CANDEIAS"
+    assert e.uf == "BA"
+    assert e.codigo_municipio == "2906501"
+
+
+def test_camacari_scan_data_emissao_com_hora_do_rotulo_degradado(monkeypatch):
+    nfse = _nfse(monkeypatch)
+    d = nfse.data_emissao
+    assert (d.year, d.month, d.day, d.hour, d.minute) == (2026, 1, 13, 9, 19)
+
+
+def test_camacari_scan_competencia_segue_data_da_prestacao(monkeypatch):
+    # A nota NAO imprime campo "Competencia" (conferido na imagem); vale a
+    # regra existente: 1o dia do mes da "Data da prestacao do servico".
+    nfse = _nfse(monkeypatch)
+    assert (nfse.competencia.year, nfse.competencia.month, nfse.competencia.day) == (2026, 1, 1)
+
+
+def test_ibge_resolver_candeias_ba_codigo_oficial():
+    from src.utils.ibge_resolver import IBGEResolver
+    r = IBGEResolver()
+    assert r.extract_and_validate("CANDEIAS", "BA", city_hint="CANDEIAS") == "2906501"
