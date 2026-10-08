@@ -129,3 +129,131 @@ def test_ibge_resolver_candeias_ba_codigo_oficial():
     from src.utils.ibge_resolver import IBGEResolver
     r = IBGEResolver()
     assert r.extract_and_validate("CANDEIAS", "BA", city_hint="CANDEIAS") == "2906501"
+
+
+# ---------------------------------------------------------------------------
+# Resolver de IBGE: municipio LIDO mas ausente da tabela nao cai na capital
+# em silencio (aviso), e nome curto sem city_hint tambem consulta a tabela.
+# ---------------------------------------------------------------------------
+
+def test_resolver_municipio_lido_ausente_da_tabela_registra_fallback_e_avisa():
+    from src.utils.ibge_resolver import IBGEResolver
+    r = IBGEResolver()
+    cod = r.extract_and_validate("XIQUE XIQUE", "BA", city_hint="XIQUE XIQUE")
+    # o valor devolvido continua sendo o da capital da UF (API inalterada) ...
+    assert cod == "2927408"
+    # ... mas agora o fallback fica registrado e gera aviso nominal
+    aviso = r.aviso_fallback_capital("Xique Xique", "BA", cod, "tomador")
+    assert "Xique Xique" in aviso and "não consta" in aviso and "2927408" in aviso
+    assert "tomador" in aviso
+    # codigo diferente do fallback (ex.: outro codigo lido) nao gera aviso
+    assert r.aviso_fallback_capital("Xique Xique", "BA", "2933604") == ""
+
+
+def test_resolver_capital_da_uf_placeholder_e_vazio_nao_sao_sinalizados():
+    from src.utils.ibge_resolver import IBGEResolver
+    r = IBGEResolver()
+    assert r.extract_and_validate("Maceió", "AL", city_hint="Maceió") == "2704302"
+    assert r.extract_and_validate("Não informado", "BA", city_hint="Não informado") == "2927408"
+    assert r.extract_and_validate("", "BA") == "2927408"
+    assert r.extract_and_validate("CANDEIAS", "BA", city_hint="CANDEIAS") == "2906501"
+    for nome, uf in (("Maceió", "AL"), ("Não informado", "BA"), ("CANDEIAS", "BA")):
+        for cod in ("2704302", "2927408", "2906501"):
+            assert r.aviso_fallback_capital(nome, uf, cod) == ""
+    r.limpar_fallbacks_capital()
+
+
+def test_resolver_nome_curto_sem_city_hint_consulta_a_tabela_de_cidades():
+    from src.utils.ibge_resolver import IBGEResolver
+    # Antes: sem city_hint o lookup era pulado e Camaçari saia 2927408 (Salvador).
+    assert IBGEResolver().extract_and_validate("Camacari", "BA") == "2905701"
+
+
+def test_nfse_municipio_do_tomador_ausente_da_tabela_gera_aviso(monkeypatch):
+    texto = MOCK_TEXT.replace("Município: CANDEIAS", "Município: XIQUE XIQUE")
+    assert texto != MOCK_TEXT
+    nfse = _nfse(monkeypatch, texto)
+    assert nfse.tomador.endereco.codigo_municipio == "2927408"  # fallback (capital) mantido
+    avisos = [a for a in nfse.avisos if "não consta na tabela de códigos IBGE" in a]
+    assert len(avisos) == 1
+    assert "XIQUE XIQUE" in avisos[0] and "tomador" in avisos[0]
+
+
+def test_nfse_municipio_cadastrado_nao_gera_aviso_de_municipio(monkeypatch):
+    nfse = _nfse(monkeypatch)
+    assert not any("tabela de códigos IBGE" in a for a in nfse.avisos)
+
+
+# ---------------------------------------------------------------------------
+# Camacari2: mesmas tolerancias de OCR do Camacari3 (Nº S/N, CEP!, data).
+# ---------------------------------------------------------------------------
+
+def _extrator_camacari2(monkeypatch):
+    from src.extractors.pdf_extractor import LAYOUT_CAMACARI_2
+    caminho = os.path.join("tests", "dummy_camacari2_6013.pdf")
+    os.makedirs("tests", exist_ok=True)
+    with open(caminho, "wb") as f:
+        f.write(b"%PDF-1.4")
+    try:
+        ex = SPPdfExtractor(caminho)
+    finally:
+        os.remove(caminho)
+    ex.raw_text = MOCK_TEXT
+    ex.layout = LAYOUT_CAMACARI_2
+    return ex
+
+
+def test_camacari2_tomador_aceita_cep_com_exclamacao_e_numero_sn(monkeypatch):
+    ex = _extrator_camacari2(monkeypatch)
+    e = ex._extrair_entidade_camacari2(False).endereco
+    assert e.logradouro == "VIA MANTOIM"
+    assert e.numero == "S/N"
+    assert e.cep == "43813000"
+    assert e.codigo_municipio == "2906501"
+    p = ex._extrair_entidade_camacari2(True).endereco
+    assert p.numero == "76" and p.cep == "42800025"
+
+
+def test_camacari2_data_emissao_com_rotulo_degradado(monkeypatch):
+    ex = _extrator_camacari2(monkeypatch)
+    d = ex._extrair_data_emissao()
+    assert (d.year, d.month, d.day, d.hour, d.minute) == (2026, 1, 13, 9, 19)
+
+
+# ---------------------------------------------------------------------------
+# Retencoes com a virgula perdida pelo OCR: recuperadas SO se uma unica
+# combinacao fechar com o "Total de Retencoes" impresso.
+# ---------------------------------------------------------------------------
+
+def test_camacari_scan_retencao_sem_virgula_e_recuperada_pela_soma(monkeypatch):
+    texto = MOCK_TEXT.replace("COFINS: 14,32", "COFINS: 1432")
+    assert texto != MOCK_TEXT
+    nfse = _nfse(monkeypatch, texto)
+    v = nfse.valores
+    assert (v.valor_pis, v.valor_cofins, v.valor_csll) == (3.10, 14.32, 4.77)
+    assert not any("Retenções federais" in a for a in nfse.avisos)
+
+
+def test_camacari_scan_total_de_retencoes_sem_virgula_tambem_e_recuperado(monkeypatch):
+    texto = MOCK_TEXT.replace("Total de Retenções: 22,19", "Total de Retenções: 2219")
+    assert texto != MOCK_TEXT
+    v = _nfse(monkeypatch, texto).valores
+    assert (v.valor_pis, v.valor_cofins, v.valor_csll) == (3.10, 14.32, 4.77)
+
+
+def test_camacari_scan_retencao_sem_virgula_impossivel_zera_e_avisa(monkeypatch):
+    # "1499" -> 14,99: nenhuma combinacao fecha com 22,19 -> zerado + aviso.
+    texto = MOCK_TEXT.replace("COFINS: 14,32", "COFINS: 1499")
+    nfse = _nfse(monkeypatch, texto)
+    v = nfse.valores
+    assert (v.valor_pis, v.valor_cofins, v.valor_csll) == (0.0, 0.0, 0.0)
+    assert any("Retenções federais" in a for a in nfse.avisos)
+
+
+def test_combinacao_unica_exige_exatamente_uma_combinacao():
+    f = SPPdfExtractor._combinacao_unica
+    assert f([[3.10], [14.32], [4.77]], 22.19) == (3.10, 14.32, 4.77)
+    assert f([[3.10], [14.32], [4.77]], 22.00) is None            # 0 combinacoes
+    # duas leituras por celula, duas combinacoes fecham (0,05+5,00 e 5,00+0,05)
+    assert f([[0.05, 5.0], [0.05, 5.0]], 5.05) is None            # ambiguo
+    assert f([[0.05, 5.0], [0.07]], 5.07) == (5.0, 0.07)          # so uma fecha

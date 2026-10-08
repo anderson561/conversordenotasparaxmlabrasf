@@ -11077,12 +11077,22 @@ class SPPdfExtractor:
 
         inscricao = _campo(r'Inscri[çc][ãa]o\s+Municipal\s*:?\s*(\d+)')
 
-        logradouro = _campo(r'Logradouro\s*:?\s*(.+?)\s*(?:N[ºo°]\s*:|$)')
-        numero = _campo(r'N[ºo°]\s*:?\s*([A-Za-z0-9]+)')
+        # Mesmas tolerâncias de OCR já aplicadas no `_extrair_entidade_camacari3`
+        # (nota nº 6013): o "Nº" que fecha a linha do logradouro pode vir SEM
+        # pontuação quando o valor é "S/N" ("Logradouro: | VIA MANTOIM Nº S/N").
+        logradouro = _campo(r'Logradouro\s*:?\s*(.+?)\s*(?:N[ºo°]\s*:|\bN[ºo°]\s+S/?N\b|$)')
+        # Exige pontuação depois do "Nº" (senão o "No" de "Nome/Razão Social"
+        # era lido como "Nº" e o número saía "me" — mesmo achado do `_3`) ou o
+        # "Nº S/N" explícito sem pontuação.
+        numero = (_campo(r'N[ºo°]\s*[:;.]\s*(S/?N\b|[A-Za-z0-9]+)')
+                  or _campo(r'\bN[ºo°]\s+(S/?N)\b'))
+        if re.fullmatch(r'S/?N', numero, re.IGNORECASE):
+            numero = 'S/N'
         complemento = _campo(r'Compl\.?\s*:?\s*(.+?)\s*(?:B[ai]{1,2}r{1,2}o|Beira|$)')
 
         cep = ''
-        m_cep = re.search(r'CEP\s*:?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
+        # O ":" depois de "CEP" também sai como "!"/";"/"|" no OCR ("CEP! 43813000").
+        m_cep = re.search(r'CEP\s*[:.!;|]?\s*(\d{2}\.?\d{3}-?\d{3})', bloco, re.IGNORECASE)
         if m_cep:
             cep = re.sub(r'\D', '', m_cep.group(1))
 
@@ -13555,21 +13565,45 @@ class SPPdfExtractor:
         m_corte = re.search(r'Tipo\s+de\s+tributa[çc][aã]o', trecho, re.IGNORECASE)
         if m_corte:
             trecho = trecho[:m_corte.start()]
-        dinheiro = r'(\d{1,3}(?:\.\d{3})*,\d{2})(?![\d,])'
-        m_total = re.search(r'Total\s+de\s+Reten[çc][õo]es\s*:\s*' + dinheiro, trecho, re.IGNORECASE)
+        # Célula monetária: "14,32" (formato normal) OU só dígitos sem
+        # pontuação ("1432" — o OCR perdeu a vírgula; ≥3 dígitos para que os
+        # 2 últimos sejam os centavos). Um valor com a vírgula perdida só é
+        # aceito se a soma FECHAR com o total impresso (ver `_combinacao_unica`).
+        celula = r'(\d{1,3}(?:\.\d{3})*,\d{2}|\d{3,})(?![\d,])'
+
+        def _leituras(token: str):
+            if ',' in token:
+                return [self._parse_valor(token)]
+            return [int(token) / 100.0]
+
+        m_total = re.search(r'Total\s+de\s+Reten[çc][õo]es\s*:\s*' + celula, trecho, re.IGNORECASE)
         if not m_total:
             return None
-        total = self._parse_valor(m_total.group(1))
-        if total <= 0.0:
+        leituras_total = _leituras(m_total.group(1))
+        if leituras_total[0] <= 0.0:
             return None
-        valores = []
+        celulas = []
         for rotulo in (r'PIS', r'COFINS', r'INSS', r'IR', r'CSLL', r'Outras'):
-            m = re.search(r'(?<![A-Za-z])' + rotulo + r'\s*:\s*' + dinheiro, trecho)
-            valores.append(self._parse_valor(m.group(1)) if m else 0.0)
-        if abs(sum(valores) - total) > 0.005:
+            m = re.search(r'(?<![A-Za-z])' + rotulo + r'\s*:\s*' + celula, trecho)
+            celulas.append(_leituras(m.group(1)) if m else [0.0])
+        valores = self._combinacao_unica(celulas, leituras_total[0])
+        if valores is None:
             self._camacari_retencoes_nao_conferem = True
             return None
-        return tuple(valores)
+        return valores
+
+    @staticmethod
+    def _combinacao_unica(celulas, total: float):
+        """`celulas`: para cada célula da grade, a lista de leituras possíveis
+        (valores). Devolve a tupla de valores quando EXATAMENTE UMA combinação
+        soma o `total` impresso (±0,005); com 0 ou 2+ combinações devolve
+        `None` — nunca escolhe entre leituras igualmente válidas."""
+        import itertools
+        fecham = [c for c in itertools.product(*celulas) if abs(sum(c) - total) <= 0.005]
+        # Combinações com os MESMOS valores (leituras repetidas na mesma
+        # célula) contam como uma só.
+        unicas = {tuple(round(v, 2) for v in c) for c in fecham}
+        return fecham[0] if len(unicas) == 1 else None
 
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
@@ -20993,6 +21027,9 @@ class SPPdfExtractor:
 
         if len(self.raw_text.strip()) < 50: return None
 
+        # Registro de municípios que caíram no fallback da capital NESTA nota
+        # (ver `IBGEResolver.aviso_fallback_capital`).
+        _ibge_resolver.limpar_fallbacks_capital()
         self.layout = self._detect_layout()
         self._feira_nac_avisos: List[str] = []
 
@@ -21274,6 +21311,18 @@ class SPPdfExtractor:
                 "mas confira se ela deve mesmo ser escriturada antes de "
                 "importar no sistema contábil"
             )
+
+        # Município que a nota imprime mas que não consta na tabela IBGE do
+        # conversor: o código devolvido é o da capital da UF (valor plausível
+        # porém não confiável) — avisa em vez de deixar passar em silêncio.
+        for _papel, _ent in (('prestador', prestador), ('tomador', tomador), ('intermediário', intermediario)):
+            _end = getattr(_ent, 'endereco', None)
+            if _end is None:
+                continue
+            _aviso_mun = _ibge_resolver.aviso_fallback_capital(
+                _end.municipio, _end.uf, _end.codigo_municipio, _papel)
+            if _aviso_mun and _aviso_mun not in avisos:
+                avisos.append(_aviso_mun)
 
         municipio_incidencia_override = self._extrair_municipio_incidencia_override()
 

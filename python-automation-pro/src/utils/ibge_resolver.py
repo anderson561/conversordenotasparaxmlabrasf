@@ -8,6 +8,15 @@ Utiliza uma lógica de "Cascata de Validação":
 """
 
 import re
+import unicodedata
+
+
+def _normaliza_nome(nome: str) -> str:
+    """Nome de município sem acento/pontuação, em caixa alta e com espaços
+    colapsados — chave estável para comparar o que a nota imprime."""
+    sem_acento = unicodedata.normalize('NFKD', nome or '').encode('ascii', 'ignore').decode('ascii')
+    return re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', '', sem_acento)).strip().upper()
+
 
 class IBGEResolver:
     """
@@ -35,6 +44,20 @@ class IBGEResolver:
         "PI": "2211001", "PR": "4106902", "RJ": "3304557", "RN": "2408102",
         "RO": "1100205", "RR": "1400100", "RS": "4314902", "SC": "4205407",
         "SE": "2800308", "SP": "3550308", "TO": "1721000",
+    }
+
+    # Nome de cada capital em DEFAULT_CODES_BY_UF (normalizado): um município
+    # lido que É a capital da UF resolve corretamente no fallback final e não
+    # deve ser sinalizado como "não resolvido".
+    CAPITAL_NAMES_BY_UF = {
+        "AC": "RIO BRANCO", "AL": "MACEIO", "AM": "MANAUS", "AP": "MACAPA",
+        "BA": "SALVADOR", "CE": "FORTALEZA", "DF": "BRASILIA", "ES": "VITORIA",
+        "GO": "GOIANIA", "MA": "SAO LUIS", "MG": "BELO HORIZONTE",
+        "MS": "CAMPO GRANDE", "MT": "CUIABA", "PA": "BELEM", "PB": "JOAO PESSOA",
+        "PE": "RECIFE", "PI": "TERESINA", "PR": "CURITIBA", "RJ": "RIO DE JANEIRO",
+        "RN": "NATAL", "RO": "PORTO VELHO", "RR": "BOA VISTA",
+        "RS": "PORTO ALEGRE", "SC": "FLORIANOPOLIS", "SE": "ARACAJU",
+        "SP": "SAO PAULO", "TO": "PALMAS",
     }
 
     KNOWN_CITIES = {
@@ -134,6 +157,30 @@ class IBGEResolver:
         """
         self.default_uf = default_uf.upper()
         self.default_code = default_code
+        # (nome normalizado, UF) -> código da capital devolvido por FALLBACK
+        # para um município que a nota IMPRIME mas que não consta em
+        # KNOWN_CITIES (nem teve código IBGE legível no texto). Alimentado por
+        # `extract_and_validate`; consultado por `aviso_fallback_capital` (o
+        # `parse()` do extrator transforma em `Nfse.avisos`) e zerado por
+        # `limpar_fallbacks_capital` a cada nota. Não muda o código devolvido.
+        self._fallbacks_capital = {}
+
+    def limpar_fallbacks_capital(self) -> None:
+        self._fallbacks_capital = {}
+
+    def aviso_fallback_capital(self, municipio: str, uf: str, codigo: str, papel: str = '') -> str:
+        """Texto do aviso quando `codigo` foi o fallback da capital da UF para
+        o `municipio` lido (e só nesse caso); `''` caso contrário."""
+        chave = (_normaliza_nome(municipio), (uf or '').upper())
+        if chave[0] and self._fallbacks_capital.get(chave) == codigo:
+            quem = f" do {papel}" if papel else ""
+            return (
+                f"Município \"{municipio}\"/{chave[1]}{quem} não consta na tabela de "
+                f"códigos IBGE do conversor — o CodigoMunicipio {codigo} (capital "
+                f"da UF) foi usado como fallback e NÃO é confiável; confira o "
+                f"código IBGE correto do município antes de importar"
+            )
+        return ''
 
     def extract_and_validate(self, text: str, detected_uf: str = "BA", city_hint: str = None, raw_doc_text: str = None) -> str:
         """
@@ -145,8 +192,17 @@ class IBGEResolver:
         # 0. Lookup direto pelo nome do município (city_hint), antes de qualquer
         #    busca por padrão no texto — evita que "SALVADOR" no endereço do
         #    tomador retorne o código de Salvador para o prestador de Camaçari.
-        if city_hint:
-            hint_upper = re.sub(r'[^\w\s]', '', city_hint).strip().upper()
+        # Quando o chamador não passa `city_hint` mas o próprio `text` é só o
+        # NOME do município (curto, uma linha, sem dígito — ex.:
+        # `extract_and_validate("Camacari", "BA")`), esse nome vale como hint:
+        # sem isso o lookup abaixo era pulado e uma cidade JÁ cadastrada caía
+        # na capital da UF (achado: telecom/FF, tomador "Camacari" saía
+        # 2927408 em vez de 2905701).
+        nome_lido = city_hint or (
+            text if text and len(text) <= 60 and '\n' not in text and not re.search(r'\d', text) else ''
+        )
+        if nome_lido:
+            hint_upper = re.sub(r'[^\w\s]', '', nome_lido).strip().upper()
             if hint_upper in self.KNOWN_CITIES:
                 return self.KNOWN_CITIES[hint_upper]
 
@@ -180,4 +236,17 @@ class IBGEResolver:
             return "2927408"
 
         # 4. Fallback final por UF (capital do estado)
-        return self.DEFAULT_CODES_BY_UF.get(uf, self.default_code)
+        codigo = self.DEFAULT_CODES_BY_UF.get(uf, self.default_code)
+        # Município LIDO na nota que não é a própria capital: o código acima é
+        # um valor plausível porém não confiável — registra para o `parse()`
+        # avisar. Só considera um nome de verdade (o `city_hint`, ou o
+        # `text` quando ele mesmo é só um nome curto de uma linha); município
+        # nem lido (vazio) segue como antes, sem registro.
+        nome = _normaliza_nome(nome_lido)
+        # "Não informado"/"Não identificado" são o PLACEHOLDER que os extratores
+        # gravam quando nada foi lido — não são um município impresso.
+        eh_placeholder = bool(re.match(r'^NAO\s+(?:INFORMAD|IDENTIFICAD|CONSTA|DISPONIV|LOCALIZAD|ENCONTRAD)', nome))
+        tem_letras = len(re.sub(r'[^A-Z]', '', nome)) >= 3
+        if nome and tem_letras and not eh_placeholder and nome != self.CAPITAL_NAMES_BY_UF.get(uf):
+            self._fallbacks_capital[(nome, uf)] = codigo
+        return codigo
