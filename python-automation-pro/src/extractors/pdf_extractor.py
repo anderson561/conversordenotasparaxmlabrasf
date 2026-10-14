@@ -4595,17 +4595,29 @@ class SPPdfExtractor:
                 return m.group(1).upper()
 
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
-            # Extrai a chave de acesso de 44 dígitos após o rótulo "CHAVE DE ACESSO"
+            # Chave de acesso de 44 dígitos localizada por ESTRUTURA/DV
+            # (`_localizar_chave_nfcom`), não por offset: o OCR cola, na MESMA
+            # linha da chave, os últimos dígitos do telefone do tomador
+            # ("...99168-8997 2926 0913 ... 4279") e o localizador antigo
+            # devolvia a janela deslocada "8997 2926 ... 3787" (achado real,
+            # nota nº 35972 - ver o docstring do localizador).
+            achada = self._localizar_chave_nfcom(t)
+            if achada:
+                return achada[0]
+            # Sem janela estrutural íntegra (ex.: um dígito do CNPJ/mês trocado
+            # pelo OCR): mantém a leitura rotulada/em grupos de 4 de antes, mas
+            # só se o mês (AAMM, posições 4:6) for plausível - uma janela
+            # deslocada por lixo na frente cai quase sempre fora de 01-12.
             m = re.search(r'CHAVE\s+DE\s+ACESSO\s*[:\s]*([\d\s]{44,60})', t, re.IGNORECASE)
             if m:
                 chave = re.sub(r'\D', '', m.group(1))
-                if len(chave) == 44:
+                if len(chave) == 44 and '01' <= chave[4:6] <= '12':
                     return chave
             # Fallback: sequência no formato impresso "XXXX XXXX ... XXXX" (11 grupos de 4)
             m2 = re.search(r'\b(?:\d{4}\s+){10}\d{4}\b', t)
             if m2:
                 chave = re.sub(r'\D', '', m2.group(0))
-                if len(chave) == 44:
+                if len(chave) == 44 and '01' <= chave[4:6] <= '12':
                     return chave
             return 'TELECOM'
 
@@ -7873,14 +7885,16 @@ class SPPdfExtractor:
         do texto antes do primeiro CNPJ formatado.
         """
         cnpj_prest = ""
-        # Estratégia 1: extrai CNPJ das posições 8-21 da chave de acesso
-        m_chave = re.search(r'\b(?:\d{4}\s+){10}\d{4}\b', t)
-        if not m_chave:
-            m_chave = re.search(r'CHAVE\s+DE\s+ACESSO\s*[:\s]*([\d\s]{44,60})', t, re.IGNORECASE)
-        if m_chave:
-            chave = re.sub(r'\D', '', m_chave.group(0) if not m_chave.lastindex else m_chave.group(1))
-            if len(chave) == 44:
-                cnpj_prest = chave[6:20]  # posições 6-19 = CNPJ emitente na chave NF-e mod22
+        # Estratégia 1: CNPJ do emitente (posições 6:20) de uma chave de acesso
+        # localizada por estrutura e com o DV mod-11 conferido
+        # (`_localizar_chave_nfcom`). O localizador antigo ("11 grupos de 4
+        # dígitos") pegava a janela deslocada "8997 2926 ... 3787" quando o OCR
+        # colava o fim do telefone do tomador na frente da chave, e
+        # `chave[6:20]` virava "26091339881200" - inválido no DV e mesmo
+        # assim aceito (achado real, nota nº 35972).
+        achada = self._localizar_chave_nfcom(t)
+        if achada and achada[1]:
+            cnpj_prest = achada[0][6:20]
 
         # Estratégia 2: primeiro CNPJ formatado no texto que NÃO esteja logo
         # depois do rótulo "CNPJ/CPF" (esse é sempre o do TOMADOR, à direita
@@ -7896,8 +7910,20 @@ class SPPdfExtractor:
                 antes = t[max(0, m_cnpj.start() - 20):m_cnpj.start()]
                 if re.search(r'CNPJ\s*[/Il|]?\s*CPF', antes, re.IGNORECASE):
                     continue
-                cnpj_prest = re.sub(r'\D', '', m_cnpj.group(1))
-                break
+                candidato = re.sub(r'\D', '', m_cnpj.group(1))
+                # Só vale com os 2 dígitos verificadores corretos: um CNPJ
+                # impresso lido com 1 dígito errado pelo OCR é pior que
+                # nenhum (cai na estratégia 3 / sentinela + aviso).
+                if self._cnpj_valido(candidato):
+                    cnpj_prest = candidato
+                    break
+
+        # Estratégia 3: chave de acesso com a ESTRUTURA íntegra (mês, CNPJ com
+        # DV correto e modelo 62) mas cujo DV mod-11 próprio não fechou - um
+        # dígito de OCR a menos em outro campo. O CNPJ dela já passou no DV
+        # próprio, então segue sendo uma fonte confiável.
+        if not cnpj_prest and achada:
+            cnpj_prest = achada[0][6:20]
 
         # Nome: primeiras linhas não-vazias APÓS o título fixo "DOCUMENTO
         # AUXILIAR..." do cabeçalho deste layout (senão o loop parava nele
@@ -21296,6 +21322,12 @@ class SPPdfExtractor:
         # antilixo em parse_multiple).
         if prestador and (prestador.cnpj_cpf.startswith('00000000000') or prestador.cnpj_cpf == ''):
             avisos.append("Dados do prestador não identificados")
+            if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+                avisos.append(
+                    "CNPJ do prestador não confirmado: nem a chave de acesso de 44 "
+                    "dígitos (DV mod-11) nem o CNPJ impresso (dígito verificador) "
+                    "puderam ser lidos de forma válida pelo OCR - conferir na nota"
+                )
         if tomador and (tomador.cnpj_cpf.startswith('00000000000') or tomador.cnpj_cpf == '' or tomador.razao_social == 'Tomador Não Identificado'):
             avisos.append("Dados do tomador não identificados")
         if valores.valor_servicos == 0.0:
@@ -21722,6 +21754,46 @@ class SPPdfExtractor:
             soma += int(digito) * (2 + i % 8)
         resto = soma % 11
         return '0' if resto in (0, 1) else str(11 - resto)
+
+    @classmethod
+    def _localizar_chave_nfcom(cls, t: str) -> Optional[tuple]:
+        """Localiza a chave de acesso de 44 dígitos de uma NFCom (modelo 62)
+        dentro do texto OCR por ESTRUTURA/VALIDAÇÃO, não por offset fixo.
+
+        Devolve `(chave, dv_confere)` ou `None`.
+
+        Achado real (nota Grupo F&F nº 35972, pág. 4 do lote Guarajuba Suites):
+        o OCR devolve a chave na MESMA linha do telefone do tomador ("Nº
+        TELEFONE: (71) 99168-8997 2926 0913 ... 3787 4279"). O localizador
+        antigo ("11 grupos de 4 dígitos") casava "8997 2926 ... 3787": 44
+        dígitos, mas começando 4 posições antes e perdendo o grupo final - e
+        `chave[6:20]` virava "26091339881200" (AAMM + 10 dígitos do CNPJ).
+        Em vez de supor que o 1º trecho com 44 dígitos é a chave, varre TODAS
+        as janelas de 44 dígitos de cada sequência numérica (separadores de
+        espaço/quebra de linha ignorados, como a chave impressa em grupos de 4)
+        e só aceita uma que feche:
+          * mês (AAMM, posições 4:6) entre 01 e 12;
+          * CNPJ do emitente (posições 6:20) com os 2 dígitos verificadores
+            corretos;
+          * dígito verificador mod-11 da própria chave (`_dv_chave_nfe`) ->
+            `(chave, True)`; ou, se um dígito do OCR derrubou só esse DV, a
+            estrutura íntegra com modelo 62 nas posições 20:22 ->
+            `(chave, False)` ("estrutural", só devolvida quando nenhuma janela
+            confirmada pelo DV existe).
+        Lixo numérico colado antes/depois da chave (telefone, CEP, protocolo)
+        nunca vira parte dela: a janela deslocada não fecha o DV."""
+        estrutural = None
+        for m in re.finditer(r'\d[\d\s]{42,}', t or ''):
+            digitos = re.sub(r'\D', '', m.group(0))
+            for i in range(len(digitos) - 43):
+                janela = digitos[i:i + 44]
+                if not ('01' <= janela[4:6] <= '12') or not cls._cnpj_valido(janela[6:20]):
+                    continue
+                if cls._dv_chave_nfe(janela[:43]) == janela[43]:
+                    return janela, True
+                if estrutural is None and janela[20:22] == '62':
+                    estrutural = janela
+        return (estrutural, False) if estrutural else None
 
     def _parse_danfe_produto_ocr(self) -> Optional[NfeProduto]:
         """Extrai um `NfeProduto` de um DANFE Modelo 55 ESCANEADO (OCR).
