@@ -13916,6 +13916,90 @@ class SPPdfExtractor:
         unicas = {tuple(round(v, 2) for v in c) for c in fecham}
         return fecham[0] if len(unicas) == 1 else None
 
+    # ------------------------------------------------------------------
+    # Regra de negócio do prestador FLASH (São Paulo/SP): valor recebido
+    # ------------------------------------------------------------------
+    # Raiz de CNPJ (8 dígitos) da FLASH TECNOLOGIA E INSTITUICAO DE PAGAMENTO
+    # LTDA - cobre matriz (/0001-18) e eventuais filiais.
+    _FLASH_CNPJ_RAIZ = '32223020'
+    _FLASH_RAZAO_PATTERN = r'FLASH\s+TECNOLOGIA\s+E\s+INSTITUI[CÇ][AÃ]O\s+DE\s+PAGAMENTO'
+    # "VALOR TOTAL DO SERVIÇO = R$ 0,00" IMPRESSO como zero (tolera o "R$"
+    # que o OCR lê como "RS"/"R5").
+    _FLASH_SERVICO_ZERO_PATTERN = (
+        r'VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O\s*[=:]?\s*R?\s*[$S5]?\s*0+,0{2}(?!\d)')
+    _FLASH_RECEBIDO_PATTERN = (
+        r'VALOR\s+TOTAL\s+RECEBIDO\s*[=:]?\s*R?\s*[$S5]?\s*(\d[\d.]*,\d{2})(?!\d)')
+
+    def _prestador_e_flash(self, prestador) -> bool:
+        """Identifica o prestador FLASH pelo CNPJ (raiz 32.223.020 com dígito
+        verificador VÁLIDO) ou, na falta de um CNPJ confiável, pela razão
+        social impressa."""
+        if prestador is None:
+            return False
+        cnpj = re.sub(r'\D', '', getattr(prestador, 'cnpj_cpf', '') or '')
+        if cnpj.startswith(self._FLASH_CNPJ_RAIZ) and self._cnpj_valido(cnpj):
+            return True
+        return bool(re.search(self._FLASH_RAZAO_PATTERN,
+                              getattr(prestador, 'razao_social', '') or '', re.IGNORECASE))
+
+    def _aplicar_flash_valor_recebido(self, prestador, valores: Valores):
+        """Regra de negócio (decisão do usuário, 2026-10-15): na NFS-e de São
+        Paulo do prestador FLASH, quando o "VALOR TOTAL DO SERVIÇO" é impresso
+        como R$ 0,00 (nota de compra de créditos de benefícios, onde só o ISS
+        sobre "serviços Flash" é tributável e vale zero), o `ValorServicos`
+        passa a ser o "VALOR TOTAL RECEBIDO" impresso logo abaixo.
+
+        Escopo ESTREITO: só LAYOUT_SAO_PAULO/LAYOUT_SAO_PAULO_2, só prestador
+        FLASH, só com o zero IMPRESSO e o valor recebido legível (> 0). Base de
+        Cálculo, Alíquota, ISS e retenções ficam como o documento imprime (o ISS
+        incide só sobre o "serviço Flash" = 0,00; não se inventa base nem ISS
+        sobre o valor recebido); só o líquido acompanha o novo ValorServicos
+        (serviços - retenções - deduções).
+
+        Devolve `(valores, avisos)`. Sem valor recebido legível/confiável NÃO se
+        inventa nada: mantém 0,00 e avisa ("dado errado é pior que dado
+        ausente"). No scan (OCR) o valor recebido só vale se confirmado pelo
+        "Valor Total - R$ X" da própria discriminação."""
+        if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
+            return valores, []
+        if valores.valor_servicos != 0.0 or not self._prestador_e_flash(prestador):
+            return valores, []
+        t = self.raw_text
+        if not re.search(self._FLASH_SERVICO_ZERO_PATTERN, t, re.IGNORECASE):
+            return valores, []
+
+        def _aviso_mantido(motivo: str) -> str:
+            return (
+                "Prestador Flash: Valor Total do Serviço impresso como R$ 0,00 e "
+                f"{motivo} - ValorServicos mantido em 0,00 (nada foi inferido); "
+                "conferir na nota")
+
+        m = re.search(self._FLASH_RECEBIDO_PATTERN, t, re.IGNORECASE)
+        recebido = self._parse_valor(m.group(1)) if m else 0.0
+        if recebido <= 0.0:
+            return valores, [_aviso_mantido("VALOR TOTAL RECEBIDO não localizado/legível")]
+
+        if self.layout == LAYOUT_SAO_PAULO_2:
+            totais_discriminacao = [
+                self._parse_valor(x) for x in re.findall(
+                    r'Valor\s+Total\s*[-–]\s*R\s*[$S5]?\s*(\d[\d.]*,\d{2})', t, re.IGNORECASE)]
+            if not any(abs(v - recebido) < 0.005 for v in totais_discriminacao):
+                return valores, [_aviso_mantido(
+                    "o VALOR TOTAL RECEBIDO lido por OCR não foi confirmado pelo "
+                    "\"Valor Total\" da discriminação")]
+
+        retencoes = (valores.valor_pis + valores.valor_cofins + valores.valor_inss
+                     + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
+                     + valores.valor_contribuicoes_sociais_retidas)
+        liquido = round(recebido - retencoes - valores.valor_deducoes, 2)
+        recebido_br = f"{recebido:,.2f}".replace(',', '#').replace('.', ',').replace('#', '.')
+        aviso = (
+            "Valor do serviço = 0,00; usado o VALOR TOTAL RECEBIDO "
+            f"R$ {recebido_br} como ValorServicos por regra do prestador Flash - "
+            "Base de Cálculo/Alíquota/ISS mantidos como impressos na nota; conferir")
+        return valores.model_copy(update={
+            'valor_servicos': recebido, 'valor_liquido_nfse': liquido}), [aviso]
+
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
@@ -21479,6 +21563,7 @@ class SPPdfExtractor:
                 intermediario = None
 
         valores   = self._extrair_valores()
+        valores, avisos_flash = self._aplicar_flash_valor_recebido(prestador, valores)
 
         discriminacao = self._extrair_discriminacao()
         servico_codigo = self._extrair_codigo_servico()
@@ -21565,6 +21650,7 @@ class SPPdfExtractor:
             avisos.append("Dados do tomador não identificados")
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
+        avisos.extend(avisos_flash)
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
             # Mesma natureza (NFCom, ICMS) dos layouts NFCom abaixo, mas este
             # layout NÃO zera Base de Cálculo/Alíquota: leva o BC ICMS/ALÍQ ICMS
