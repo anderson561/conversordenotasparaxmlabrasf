@@ -22,7 +22,7 @@ from typing import Optional, List, Union
 from ..models.nfse_models import Nfse, Entidade, Endereco, Valores
 from ..models.nfe_produto_models import NfeProduto, EntidadeNfe, ItemProduto, Transportador, ValoresNfe
 from ..models.cte_os_model import CteOS, EntidadeCte, ModalRodoviario, ImpostoCte
-from ..utils.ibge_resolver import IBGEResolver
+from ..utils.ibge_resolver import IBGEResolver, _normaliza_nome
 from . import feira_nfse_nacional as _feira_nac
 from . import sp_identificador as _sp_ident
 from datetime import datetime
@@ -1729,6 +1729,22 @@ class SPPdfExtractor:
                     mes = _MESES_PT.get(mes_str.lower()[:3], 1)
                     result = datetime(int(ano_str), mes, 1)
                 except: pass
+            if result is None and data_emissao:
+                # A NFS-e de São Paulo não imprime competência: o fato gerador é
+                # a data do RPS que ela substitui ("RPS Nº 4159843 Série NFSE2,
+                # emitido em 30/09/2026"), que pode cair no mês ANTERIOR ao da
+                # emissão da nota (RPS 30/09, NFS-e emitida em 02/10 -> competência
+                # 09/2026, não 10/2026). Na falta do RPS, a "Data da Compra" impressa
+                # na discriminação (compra de créditos Flash). Só vale uma data que
+                # não seja posterior à emissão nem mais de 1 ano anterior a ela;
+                # sem nenhuma, cai no mês da emissão (fallback abaixo).
+                for padrao in (r'RPS\s*N[º°o]?\s*\d+\s*S[ée]rie\s*\w+\s*,?\s*emitido\s+em\s+(\d{2}/\d{2}/\d{4})',
+                               r'Data\s+da\s+Compra\s*:\s*(\d{2}/\d{2}/\d{4})'):
+                    m = re.search(padrao, t, re.IGNORECASE)
+                    d = _parse_dmy(m.group(1)) if m else None
+                    if d and 0 <= (data_emissao.date() - d.date()).days <= 366:
+                        result = datetime(d.year, d.month, 1)
+                        break
         elif layout == LAYOUT_FORTALEZA:
             m = re.search(r'Compet[eê]ncia[\s\n]*(\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
@@ -3901,6 +3917,14 @@ class SPPdfExtractor:
             relax("DISCRIMINAÇÃO DOS SERVIÇOS"),
             relax("Discriminação"),
         ]
+        if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
+            # O cabeçalho da seção na NFS-e de São Paulo é "DISCRIMINAÇÃO DE
+            # SERVIÇOS" (com "DE", não "DOS"): sem o rótulo completo na lista,
+            # o genérico "Discriminação" casava só a 1ª palavra e a sobra "DE
+            # SERVIÇOS" vazava para o início do texto da discriminação (nota
+            # FLASH nº 05710445: "DE SERVIÇOS Valor Total - R$ 1.113,00 ...").
+            # Entra ANTES do genérico (o 1º casamento da alternância vence).
+            start_labels.insert(0, relax("DISCRIMINAÇÃO DE SERVIÇOS"))
         end_labels = [
             relax("VALOR TOTAL DA NOTA"),
             relax("Valor Total da Nota"),
@@ -13917,6 +13941,254 @@ class SPPdfExtractor:
         return fecham[0] if len(unicas) == 1 else None
 
     # ------------------------------------------------------------------
+    # São Paulo/SP digital: grade de valores e entidades com ordem de texto
+    # deslocada (pdfminer) - achado real, notas FLASH nº 05710445/05710815 e
+    # nota nº 01223660 (cartório)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _sp_grade_valores_por_estrutura(t: str):
+        """Lê Valor Total das Deduções / Base de Cálculo / Alíquota / Valor do
+        ISS da grade da NFS-e de São Paulo pela ESTRUTURA dos valores, não pela
+        posição dos rótulos.
+
+        O pdfminer despeja os 5 valores da grade (Deduções, Base, Alíquota, ISS,
+        Crédito NFP) intercalados com os rótulos de um jeito diferente a cada
+        nota, e às vezes troca de lugar ISS e Crédito (nota nº 01223660:
+        "193,65 | 367,40 2,00% | 0,00 7,34", com Crédito antes do ISS). O que se
+        preserva em qualquer ordem: Deduções e Base são os 2 primeiros valores
+        e a Alíquota é o ÚNICO com "%" (3º). ISS e Crédito vêm depois, em
+        qualquer ordem - o ISS é o que a aritmética confirma (Base x Alíquota,
+        tolerância de arredondamento; com Base ou Alíquota zeradas, ISS zero).
+        Devolve `(deducoes, base, aliquota, iss)` ou `None` (nenhuma leitura
+        fecha) e o chamador mantém a leitura posicional anterior - nada é
+        inventado."""
+        m_ini = re.search(r'Valor\s+Total\s+das\s+Dedu[çc][õo]es', t, re.IGNORECASE)
+        if not m_ini:
+            return None
+        regiao = t[m_ini.start():]
+        m_fim = re.search(r'OUTRAS\s+INFORMA[ÇC][ÕO]ES|Esta\s+NFS-e\s+foi\s+emitida', regiao, re.IGNORECASE)
+        if m_fim:
+            regiao = regiao[:m_fim.start()]
+        toks = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})(\s*%)?', regiao)
+        if len(toks) < 4 or not toks[2][1] or toks[0][1] or toks[1][1]:
+            return None
+        if any(pct for _, pct in toks[3:5]):
+            return None
+        parse = SPPdfExtractor._parse_valor
+        ded, base, aliq = parse(toks[0][0]), parse(toks[1][0]), parse(toks[2][0]) / 100
+        if aliq > 1.0:
+            return None
+        candidatos = [parse(v) for v, _ in toks[3:5]]
+        if base > 0 and aliq > 0:
+            fecham = [v for v in candidatos if abs(base * aliq - v) <= 0.02]
+        else:
+            fecham = [v for v in candidatos if v == 0.0]
+        return (ded, base, aliq, fecham[0]) if fecham else None
+
+    _SP_RE_ROTULO = re.compile(
+        r'^(?:CPF\s*/\s*CNPJ|CNPJ|CPF|Nome\s*/\s*Raz[ãa]o(?:\s+Social)?|Endere[çc]o|Munic[íi]pio|UF|E-?mail|'
+        r'Inscri[çc][ãa]o\s+Municipal)\s*:?$', re.IGNORECASE)
+    _SP_RE_CEP_ENDERECO = re.compile(r'CEP\s*:\s*(\d{5})\s*-?\s*(\d{3})\s*$', re.IGNORECASE)
+    _SP_RE_DOC = re.compile(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}')
+    _SP_UFS = frozenset(
+        'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split())
+
+    @classmethod
+    def _sp_endereco_linha_unica(cls, linha: str):
+        """Quebra "<logradouro> <número>[, <complemento>] - <bairro> - CEP: NNNNN-NNN"
+        (endereço impresso em UMA linha na NFS-e de São Paulo) em
+        `(logradouro, numero, complemento, bairro, cep)`. `None` quando a linha
+        não tem esse formato (sem CEP, sem bairro...) - nada é adivinhado."""
+        linha = re.sub(r'^\s*Endere[çc]o\s*:?\s*', '', linha.strip(), flags=re.IGNORECASE)
+        m_cep = cls._SP_RE_CEP_ENDERECO.search(linha)
+        if not m_cep:
+            return None
+        cep = m_cep.group(1) + m_cep.group(2)
+        resto = linha[:m_cep.start()].rstrip(' -')
+        segs = [x.strip() for x in resto.split(' - ') if x.strip()]
+        if len(segs) < 2:
+            return None
+        primeiro = segs[0]
+        complemento = None
+        if ',' in primeiro:
+            primeiro, _, comp = primeiro.partition(',')
+            primeiro, complemento = primeiro.strip(), (comp.strip() or None)
+            bairro = segs[-1]
+            if len(segs) > 2:
+                complemento = ' - '.join(filter(None, [complemento] + segs[1:-1]))
+        else:
+            bairro = segs[1]
+            if len(segs) > 2:
+                complemento = ' - '.join(segs[2:])
+        m_num = re.match(r'^(.*?)[\s]+(\d+[A-Za-z]?|S\s*/\s*N)$', primeiro, re.IGNORECASE)
+        if m_num and m_num.group(1).strip():
+            logradouro, numero = m_num.group(1).strip(), re.sub(r'\s+', '', m_num.group(2)).upper()
+        else:
+            logradouro, numero = primeiro, 'S/N'
+            # "LOGRADOURO, NÚMERO[, COMPLEMENTO]": o número é o 1º item após a vírgula
+            m_virg = re.match(r'^(\d+[A-Za-z]?|S\s*/\s*N)\s*(?:,\s*(.*))?$', complemento or '', re.IGNORECASE)
+            if m_virg:
+                numero = re.sub(r'\s+', '', m_virg.group(1)).upper()
+                complemento = (m_virg.group(2) or '').strip() or None
+        if not logradouro or not bairro:
+            return None
+        return logradouro, numero, complemento, bairro, cep
+
+    @staticmethod
+    def _sp_e_nome_de_municipio(nome: str) -> bool:
+        """True quando `nome` é só o nome de um município que o conversor
+        conhece (tabela IBGE do resolver + capitais) - nunca uma razão social."""
+        chave = _normaliza_nome(nome)
+        return bool(chave) and (
+            chave in {_normaliza_nome(k) for k in _ibge_resolver.KNOWN_CITIES}
+            or chave in _ibge_resolver.CAPITAL_NAMES_BY_UF.values())
+
+    @staticmethod
+    def _sp_uf_do_municipio(nome: str) -> Optional[str]:
+        """UF de um município que o conversor conhece (pelo prefixo do código
+        IBGE ou por ser capital); `None` se desconhecido - não se adivinha."""
+        chave = _normaliza_nome(nome)
+        for uf, capital in _ibge_resolver.CAPITAL_NAMES_BY_UF.items():
+            if chave == capital:
+                return uf
+        for k, cod in _ibge_resolver.KNOWN_CITIES.items():
+            if _normaliza_nome(k) == chave:
+                for uf, pref in _ibge_resolver.UF_PREFIXES.items():
+                    if cod.startswith(pref):
+                        return uf
+        return None
+
+    def _sp_ler_bloco_entidade(self, bloco: str):
+        """Lê endereço (linha única), município/UF e candidatos a razão social de
+        um bloco "PRESTADOR/TOMADOR DE SERVIÇOS" da NFS-e de São Paulo pelo TIPO
+        de cada linha, não pela posição do rótulo (o pdfminer despeja rótulos e
+        valores em ordens diferentes por nota). Devolve dict, ou `None` quando o
+        bloco não tem um endereço de linha única com CEP - o ÂNCORA que prova
+        que o bloco é deste template (sem ele nada é refinado).
+
+        Chaves: `endereco` (tupla de `_sp_endereco_linha_unica`), `municipio`,
+        `uf`, `razao` (1ª linha de texto elegível do bloco, ou rótulo inline) e
+        `texto_apos_endereco` (linhas de texto elegíveis DEPOIS do endereço - o
+        pdfminer pode deixar a razão do tomador no fim do bloco do prestador)."""
+        linhas = [l.strip() for l in bloco.split('\n') if l.strip()]
+        razao = municipio = uf = None
+        end_linha, idx_end = None, None
+        for i, l in enumerate(linhas):
+            m = re.match(r'^Nome\s*/\s*Raz[ãa]o(?:\s+Social)?\s*:\s*(\S.*)$', l, re.IGNORECASE)
+            if m and not razao:
+                razao = m.group(1).strip()
+            if end_linha is None and self._SP_RE_CEP_ENDERECO.search(l) and ' - ' in l:
+                end_linha, idx_end = l, i
+            m = re.match(r'^Munic[íi]pio\s*:\s*(\S.*?)(?:\s+UF\s*:\s*([A-Z]{2}))?$', l, re.IGNORECASE)
+            if m and not re.match(r'^UF\b', m.group(1), re.IGNORECASE):
+                municipio = municipio or m.group(1).strip()
+                if m.group(2):
+                    uf = uf or m.group(2).upper()
+            m = re.match(r'^UF\s*:\s*([A-Z]{2})$', l)
+            if m:
+                uf = uf or m.group(1)
+        endereco = self._sp_endereco_linha_unica(end_linha) if end_linha else None
+        if endereco is None:
+            return None
+
+        def _texto_simples(l: str) -> bool:
+            return (bool(re.match(r"^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'\-]{2,}$", l))
+                    and not self._SP_RE_ROTULO.match(l))
+
+        def _elegivel_razao(l: str) -> bool:
+            return not (self._SP_RE_ROTULO.match(l) or self._SP_RE_DOC.search(l) or l == end_linha
+                        or re.match(r'^[\d.\-/ ]+$', l) or re.match(r'^-+$', l) or '@' in l or ':' in l
+                        or re.match(r'^(?:PRESTADOR|TOMADOR|INTERMEDI[ÁA]RIO|DISCRIMINA)', l, re.IGNORECASE)
+                        or self._sp_e_nome_de_municipio(l) or l == municipio
+                        or (len(l) == 2 and l in self._SP_UFS))
+
+        if not uf:  # valor sozinho (2 letras maiúsculas) logo após o rótulo "UF:"
+            for i, l in enumerate(linhas):
+                if re.match(r'^UF\s*:?$', l, re.IGNORECASE):
+                    uf = next((c for c in linhas[i + 1:i + 3] if re.match(r'^[A-Z]{2}$', c) and c in self._SP_UFS), None)
+                    if uf:
+                        break
+        if not municipio:  # valor sozinho nas linhas logo após o endereço (pula e-mail)
+            for cand in linhas[idx_end + 1:idx_end + 4]:
+                if '@' in cand or self._SP_RE_ROTULO.match(cand):
+                    continue
+                if _texto_simples(cand) and cand != razao:
+                    municipio = cand
+                break
+        if not razao:
+            razao = next((l for l in linhas if _elegivel_razao(l)), None)
+        apos = [l for l in linhas[idx_end + 1:] if _elegivel_razao(l)]
+        return {'razao': razao, 'endereco': endereco, 'municipio': municipio, 'uf': uf,
+                'texto_apos_endereco': apos}
+
+    def _sp_refinar_entidades(self, prestador, tomador):
+        """NFS-e de São Paulo digital cujo pdfminer entrega os blocos de
+        Prestador/Tomador com a ordem de rótulos/valores deslocada e o endereço
+        em UMA linha ("R X 242, ANDAR 4 - BAIRRO - CEP: 05425-000"): o extrator
+        genérico lia a razão social do tomador como o município ("Salvador"),
+        deixava logradouro/bairro como "Não informado"/S/N e caía no fallback
+        BA/Salvador para UF/código do município (nota FLASH nº 05710445).
+
+        Só MELHORA o resultado genérico, campo a campo, a partir de um bloco lido
+        com âncora (endereço de linha única com CEP):
+          - endereço: preenchido quando o genérico deixou o placeholder
+            ("Não informado");
+          - município/UF: o lido por rótulo (ou o UF do município conhecido)
+            prevalece sobre o fallback do genérico quando divergem;
+          - razão social: trocada só quando a genérica é evidentemente errada
+            (placeholder ou o nome de um município).
+        CNPJ/IM/e-mail não são tocados. Não roda onde o template traz o rótulo
+        "Bairro:" (extrator próprio, `_extrair_entidade_sao_paulo`)."""
+        if self.layout != LAYOUT_SAO_PAULO or re.search(r'Bairro\s*:', self.raw_text, re.IGNORECASE):
+            return prestador, tomador
+        t = self.raw_text
+        m_p = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        m_t = re.search(r'TOMADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        if not (m_p and m_t and m_p.end() <= m_t.start()):
+            return prestador, tomador
+        m_f = re.search(r'INTERMEDI[ÁA]RIO\s+DE\s+SERVI[ÇC]OS|DISCRIMINA[ÇC][ÃA]O\s+DE\s+SERVI[ÇC]OS',
+                        t[m_t.end():], re.IGNORECASE)
+        fim_tom = m_t.end() + m_f.start() if m_f else len(t)
+        lido_p = self._sp_ler_bloco_entidade(t[m_p.end():m_t.start()])
+        lido_t = self._sp_ler_bloco_entidade(t[m_t.end():fim_tom])
+
+        def _razao_suspeita(razao: str) -> bool:
+            return (not razao or bool(re.search(r'N[ãa]o\s+Identificad', razao, re.IGNORECASE))
+                    or self._sp_e_nome_de_municipio(razao))
+
+        def _refinar(ent, lido, razao_deslocada=None):
+            if ent is None or lido is None:
+                return ent
+            end = ent.endereco
+            upd = {}
+            if (end.logradouro or '').strip().lower() in ('', 'não informado', 'nao informado'):
+                logradouro, numero, complemento, bairro, cep = lido['endereco']
+                upd.update(logradouro=logradouro, numero=numero, complemento=complemento,
+                           bairro=bairro, cep=cep)
+            mun = lido['municipio']
+            uf = lido['uf'] if lido['uf'] in self._SP_UFS else (self._sp_uf_do_municipio(mun) if mun else None)
+            if mun and uf:
+                igual = (_normaliza_nome(end.municipio or '') == _normaliza_nome(mun)
+                         and (end.uf or '').upper() == uf)
+                if not igual:
+                    upd.update(municipio=mun, uf=uf, codigo_municipio=_ibge_resolver.extract_and_validate(
+                        mun, uf, city_hint=mun))
+            novo = ent.model_copy(update={'endereco': end.model_copy(update=upd)} if upd else {})
+            if _razao_suspeita(ent.razao_social):
+                cand = lido['razao'] or razao_deslocada
+                if cand and not _razao_suspeita(cand):
+                    novo = novo.model_copy(update={'razao_social': cand})
+            return novo
+
+        # A razão do tomador pode ter ficado no FIM do bloco do prestador (antes
+        # do cabeçalho "TOMADOR DE SERVIÇOS"): só vale quando o bloco do tomador
+        # não trouxe nenhuma.
+        deslocada = None
+        if lido_p and lido_t is not None and not lido_t['razao']:
+            deslocada = next((l for l in lido_p['texto_apos_endereco'] if l != lido_p['razao']), None)
+        return _refinar(prestador, lido_p), _refinar(tomador, lido_t, deslocada)
+
+    # ------------------------------------------------------------------
     # Regra de negócio do prestador FLASH (São Paulo/SP): valor recebido
     # ------------------------------------------------------------------
     # Raiz de CNPJ (8 dígitos) da FLASH TECNOLOGIA E INSTITUICAO DE PAGAMENTO
@@ -17249,7 +17521,12 @@ class SPPdfExtractor:
         # "Crédito p/ Abatimento do IPTU"). Gateado pela presença de "Valor
         # Total das Deduções" — marca específica desta grade, ausente do mock
         # sintético mais simples que já cobre o caminho genérico.
-        if self.layout == LAYOUT_SAO_PAULO and re.search(r'Valor\s+Total\s+das\s+Dedu[çc][õo]es', t, re.IGNORECASE):
+        grade_sp = self._sp_grade_valores_por_estrutura(t) if self.layout == LAYOUT_SAO_PAULO else None
+        if grade_sp is not None:
+            # Leitura pela ESTRUTURA da sequência de valores (independe da ordem
+            # rótulo/valor do pdfminer) - ver `_sp_grade_valores_por_estrutura`.
+            val_deducoes, base, aliq, iss = grade_sp
+        if self.layout == LAYOUT_SAO_PAULO and grade_sp is None and re.search(r'Valor\s+Total\s+das\s+Dedu[çc][õo]es', t, re.IGNORECASE):
             label_defs_sp = [
                 ('deducoes', r'Valor\s+Total\s+das\s+Dedu[çc][õo]es'),
                 ('desconto_incond', r'Desconto\s+Incond\.?'),
@@ -21533,6 +21810,7 @@ class SPPdfExtractor:
         self._cnpj_prestador_extraido = prestador.cnpj_cpf if prestador else None
         tomador   = self._extrair_entidade("Tomador")
         intermediario = self._extrair_entidade("Intermediario")
+        prestador, tomador = self._sp_refinar_entidades(prestador, tomador)
 
         # DANFSe Nacional: quando o TOMADOR vem "não identificado" na própria nota
         # (o documento imprime, em tarja de largura total, "TOMADOR DO SERVIÇO NÃO
