@@ -25,6 +25,7 @@ from ..models.cte_os_model import CteOS, EntidadeCte, ModalRodoviario, ImpostoCt
 from ..utils.ibge_resolver import IBGEResolver, _normaliza_nome
 from . import feira_nfse_nacional as _feira_nac
 from . import sp_identificador as _sp_ident
+from . import saubara_nfse as _saubara
 from datetime import datetime
 
 _ibge_resolver = IBGEResolver()
@@ -143,6 +144,10 @@ LAYOUT_BARUERI = 'barueri_sp'  # Prefeitura Municipal de Barueri/SP (barueri.sp.
 LAYOUT_SP_SKYTEF = 'sp_skytef'  # SKYTEF SOLUÇÕES EM CAPTURA DE TRANSAÇÕES LTDA (CNPJ 04.988.631/0001-11, Vila Olímpia/São Paulo-SP) - fatura de licenciamento de uso de software (TEF Nuvem) emitida pela plataforma Qive (www.qive.com.br), estruturalmente diferente do template oficial da Prefeitura de São Paulo (LAYOUT_SAO_PAULO exige o texto "MUNICÍPIO DE SÃO PAULO", ausente aqui - sem colisão). PDF DIGITAL (pdfminer). Achado real: nota nº 902735, SKYTEF -> RG RESTAURANTE LTDA (Camaçari/BA), R$86,80 (fallback genérico saía com entidades trocadas/garbladas e valores zerados). Detectado só pelo CNPJ do emitente (nunca pela marca "Qive", plataforma SaaS compartilhada por outros emitentes - mesmo critério já usado para não colidir em ISSNet Cuiabá×Goiânia e Mata de São João/SAATRI). Prestador FIXO (hardcoded do próprio letterhead, estável entre notas). Cabeçalho com quirk de "rótulo antes do valor deslocado": "Nome / Nome Empresarial" do TOMADOR aparece ANTES do cabeçalho de seção "Dados do Tomador de Serviços" (não depois, como os demais campos do bloco) - mesma família geral de "rótulo deslocado" já vista em Santos/Vinhedo, faceta nova aqui (só a razão social sai invertida, não o bloco inteiro). Competência ("02/2026") sai como um valor solto ANTES do rótulo "Numero da NFS-e:", sem nenhum rótulo "Competência" adjacente ao seu próprio valor (o rótulo "Competência" do cabeçalho fica órfão, sem valor colado). Bloco final de valores (Código do Serviço/PIS/COFINS/IR/INSS/CSLL/B.Cálculo/Alíquota/V.ISS/V.Líquido/ISS Retido) já sai em pares rótulo\nvalor limpos - extração direta. Informações IBS/CBS (Reforma Tributária) não têm tag no ABRASF 2.01 - descartadas.
 LAYOUT_SP_CAIXA_CARTOES = 'sp_caixa_cartoes'  # CAIXA CARTÕES PRÉ-PAGOS S.A. (CNPJ 39.459.331/0006-34, Vila Olímpia/São Paulo-SP) - fatura de "Taxa de Serviço" (reembolso/adquirência de cartões pré-pagos), emitida pela MESMA plataforma Qive do LAYOUT_SP_SKYTEF (outro emitente, mesmo template nacional NFS-e) - sem colisão com o template oficial da Prefeitura de São Paulo (exige "MUNICÍPIO DE SÃO PAULO", ausente aqui). PDF DIGITAL (pdfminer). Achado real: nota nº 27723844, CAIXA CARTÕES -> RG RESTAURENTE LTDA - EPP (Camaçari/BA), R$6,30. Detectado só pelo CNPJ do emitente (nunca pela marca "Qive" - mesmo critério do SKYTEF, para não colidir com outros emitentes na mesma plataforma). Prestador FIXO (hardcoded do letterhead). Extratores de tomador/valores/data mantidos SEPARADOS dos do SKYTEF (mesma decisão já tomada entre LAYOUT_NFCOM_SALVADOR/LAYOUT_NFCOM_RLGR - mesmo template nacional/plataforma, extratores próprios por emitente, para uma mudança futura da Qive numa nota não arrastar a outra), apesar da estrutura quase idêntica. Diferença notada: aqui a Competência SAI LIMPA ("Competência\n\n03/2026", rótulo adjacente ao valor) - ao contrário do SKYTEF, onde o valor da Competência sai órfão antes do rótulo "Numero da NFS-e:". A discriminação cita um valor de IRRF explícito e com base legal própria ("IRRF 1,5%... R$ 0,09... conforme I.N. 153/87 e Lei 7450/85, art. 53") mesmo com o campo estruturado "IR" mostrando só "-" - extraído da discriminação (valor real declarado na nota, não fabricado), diferente do SKYTEF (que mantém IR em 0,00 por não haver nenhum valor real citado ali). Informações IBS/CBS não têm tag no ABRASF 2.01 - descartadas.
 LAYOUT_VINHEDO = 'vinhedo_sp'  # Prefeitura Municipal de Vinhedo/SP (plataforma Balker, vinhedo.balker.com.br). Achado real: nota nº 139, WEDO DECOR LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, R$1.049,79 (fallback genérico saía com valor_servicos zerado, valor_iss fabricado, UF do prestador "BA", município caindo no fallback Salvador/BA - Vinhedo ausente de KNOWN_CITIES -, e a razão social do TOMADOR saindo como "País: BRASIL"). Blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS" com rótulo→valor adjacente (label + dois-pontos, mesma linha ou linha seguinte) para quase todo campo - mas o cabeçalho de seção "TOMADOR DE SERVIÇOS" sai DESLOCADO no MEIO do próprio bloco do tomador (entre as Inscrições e o Endereço), mesmo quirk do Santos/SP; fatiamento usa a 2ª ocorrência de "Razão Social/Nome:" como início do bloco tomador. Data de Emissão em formato "DD/MMM/AAAA - HH:MM:SS" com mês abreviado em PT-BR ("28/JUL/2026"), único layout com esse formato - usa o dicionário `_MESES_PT` já existente. Grade de Retenções Federais + Base/Alíquota/ISS (2 linhas x 7 colunas, sem linhas de separação): o pdfminer emite cada VALOR defasado em 1 coluna em relação ao próprio rótulo (mesma família de quirk "labels dumped, values dumped", mas aqui por DESLOCAMENTO DE COLUNA em vez de por blocos separados) - ordem real observada no texto: INSS, IRRF, CSLL, PIS, COFINS, Outras Retenções, Base de Cálculo, Deduções, Alíquota, Vlr ISS, IBS, CBS, Vlr Líquido (mapeado por índice fixo, documentado no código). "Desc. Incondicional" nunca aparece impresso nesta plataforma (nem "0,00" nem placeholder) - mantido em 0,00 (default do model). IBS/CBS (Reforma Tributária) não têm tag no ABRASF 2.01 - descartados após a leitura.
+
+LAYOUT_SAUBARA = 'saubara_ba'  # Prefeitura Municipal de Saubara/BA (plataforma Link3 Tecnologia), template 1: "Nota Fiscal Eletrônica de Serviços" com blocos "DADOS DO EMITENTE"/"DADOS DO DESTINATÁRIO" e grade de valores no rodapé (rótulo e valor em linhas vizinhas). PDF DIGITAL (pdfminer, sem OCR). Não imprime CEP, Inscrição Municipal nem competência. Achado real 2026-09-14: nota 202600000000351, ASSOCIAÇÃO RELIOGIOSA E CULTURAL BABÁ OKÉ -> TEMIS Projetos de Meio Ambiente e Sustentabilidade, R$1.600,00 (antes: "Layout não reconhecido" -> nenhum XML, com a mensagem enganosa "parece ser baseado em imagem/scan"). Parsing em `saubara_nfse.py`. Detecção estreita (cabeçalho "MUNICIPIO DE SAUBARA" nos primeiros 600 caracteres + CNPJ/Secretaria da PREFEITURA + título da NFS-e); o CNPJ 13.040.233/0001-60 do cabeçalho é o da prefeitura, nunca o do prestador/tomador
+LAYOUT_SAUBARA_2 = 'saubara_ba_2'  # Prefeitura Municipal de Saubara/BA (plataforma Link3), template 2: "NOTA FISCAL ELETRÔNICA DE SERVIÇOS - NFS-e" com blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS", código IBGE impresso ao lado de "CIDADE -", CNAE/NBS/item LC 116, regime especial e grade de tributos de 12 colunas. PDF DIGITAL. Achado real 2026-09-14: nota 202600000000080, VIVA COMUNICAÇAO E SERVIÇOS LTDA -> TEMIS, R$120,00 (Simples/Microempresa Municipal). Mesma detecção do LAYOUT_SAUBARA, variante decidida pelo rótulo de bloco exclusivo ("PRESTADOR DE SERVIÇOS" vs "DADOS DO EMITENTE")
+_LAYOUTS_SAUBARA = (LAYOUT_SAUBARA, LAYOUT_SAUBARA_2)
 
 # Marcas do template da PRÓPRIA Prefeitura de Lauro de Freitas/BA (cabeçalho
 # "MUNICIPIO DE LAURO DE FREITAS / Secretaria da Fazenda / Coordenação
@@ -569,6 +574,16 @@ class SPPdfExtractor:
             return LAYOUT_NACIONAL_REFORMA
         if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
             return LAYOUT_NACIONAL
+        # Saubara/BA (plataforma Link3) logo depois da DANFSe Nacional e ANTES de
+        # qualquer fallback municipal/de cidade solta: o texto cita "Salvador"
+        # (município do tomador) e a nota nunca traz marca de outro layout. Gate
+        # ESTREITO e estrutural (cabeçalho "MUNICIPIO DE SAUBARA" no início + CNPJ/
+        # Secretaria da prefeitura + título da NFS-e) - a palavra "Saubara" solta,
+        # que prestador/tomador de outro município pode citar no endereço, NUNCA
+        # basta. Ver `saubara_nfse.variante` e LAYOUT_SAUBARA/LAYOUT_SAUBARA_2.
+        _var_saubara = _saubara.variante(t)
+        if _var_saubara:
+            return LAYOUT_SAUBARA if _var_saubara == _saubara.VARIANTE_1 else LAYOUT_SAUBARA_2
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
         # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
         # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
@@ -1077,6 +1092,16 @@ class SPPdfExtractor:
             return LAYOUT_NACIONAL_REFORMA
         if re.search(r'DANFSe\s+v\d|Documento\s+Auxiliar\s+da\s+NFS-?e', t, re.IGNORECASE):
             return LAYOUT_NACIONAL
+        # Saubara/BA (plataforma Link3) logo depois da DANFSe Nacional e ANTES de
+        # qualquer fallback municipal/de cidade solta: o texto cita "Salvador"
+        # (município do tomador) e a nota nunca traz marca de outro layout. Gate
+        # ESTREITO e estrutural (cabeçalho "MUNICIPIO DE SAUBARA" no início + CNPJ/
+        # Secretaria da prefeitura + título da NFS-e) - a palavra "Saubara" solta,
+        # que prestador/tomador de outro município pode citar no endereço, NUNCA
+        # basta. Ver `saubara_nfse.variante` e LAYOUT_SAUBARA/LAYOUT_SAUBARA_2.
+        _var_saubara = _saubara.variante(t)
+        if _var_saubara:
+            return LAYOUT_SAUBARA if _var_saubara == _saubara.VARIANTE_1 else LAYOUT_SAUBARA_2
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
         # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
         # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
@@ -1510,6 +1535,13 @@ class SPPdfExtractor:
         layout = self.layout or LAYOUT_GENERICO
         result: Optional[datetime] = None
 
+        if layout in _LAYOUTS_SAUBARA:
+            # Nenhum dos 2 templates de Saubara imprime competência: adota o mês
+            # da emissão (convenção do projeto para nota sem competência), sem
+            # deixar a extração genérica capturar um "MM/AAAA" qualquer do texto
+            # livre da discriminação (ex.: "mês de Setembro de 2026").
+            return datetime(data_emissao.year, data_emissao.month, 1)
+
         if layout == LAYOUT_JOAO_PESSOA:
             # Mesma grade de 3 campos por linha da emissão/número (ver
             # `_extrair_data_emissao`) — "Competência" é o 2º valor
@@ -1824,6 +1856,16 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
+        if self.layout in _LAYOUTS_SAUBARA:
+            # Só o campo rotulado "Data Emissão"/"DATA E HORA DA EMISSÃO" vale. O
+            # carimbo "dd/mm/aaaa hh:mm:ss" impresso no topo do documento é de
+            # impressão/geração e nunca é usado como emissão. Sem o campo: data
+            # atual + aviso (nunca o carimbo do topo).
+            data = self._saubara_campos().data_emissao
+            if data:
+                return data
+            self._data_emissao_fallback = True
+            return datetime.now()
         if self.layout == LAYOUT_JOAO_PESSOA:
             # Grade "Data e hora de emissão / Competência / Número" numa
             # linha só, valores na linha seguinte ("14/08/2026 15:27:19
@@ -2565,8 +2607,27 @@ class SPPdfExtractor:
                 return chave[:50]
         return None
 
+    def _saubara_campos(self) -> '_saubara.NotaSaubara':
+        """Campos da NFS-e de Saubara/BA (LAYOUT_SAUBARA/LAYOUT_SAUBARA_2),
+        extraídos UMA vez por texto (cache) por `saubara_nfse.extrair` - todo
+        `_extrair_*` do layout lê daqui. O cache é descartado no início de cada
+        `parse()` (o `_ibge_resolver` registra os municípios fora da tabela
+        durante a extração, e `parse()` limpa esse registro antes)."""
+        cache = getattr(self, '_saubara_cache', None)
+        if cache is not None and cache[0] == self.raw_text:
+            return cache[1]
+        var = _saubara.VARIANTE_1 if self.layout == LAYOUT_SAUBARA else _saubara.VARIANTE_2
+        campos = _saubara.extrair(self.raw_text, var, _ibge_resolver, self._validate_cnpj_cpf)
+        self._saubara_cache = (self.raw_text, campos)
+        return campos
+
     def _extrair_numero(self) -> str:
         t = self.raw_text
+
+        if self.layout in _LAYOUTS_SAUBARA:
+            # Número impresso (15 dígitos, ex. "202600000000351"), sem normalizar.
+            # Sentinela "00000000" quando ausente - nunca o nome do arquivo.
+            return self._saubara_campos().numero
 
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             # Número = nNFSe (13 dígitos) da chave autoverificável. NUNCA do
@@ -3329,6 +3390,8 @@ class SPPdfExtractor:
         return '00000000'
 
     def _extrair_discriminacao(self) -> str:
+        if self.layout in _LAYOUTS_SAUBARA:
+            return self._saubara_campos().discriminacao
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             return self._extrair_discriminacao_feira_nacional()
         t = self.raw_text
@@ -3944,6 +4007,8 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
+        if self.layout in _LAYOUTS_SAUBARA:
+            return self._saubara_campos().codigo_servico
         if self.layout == LAYOUT_RIBEIRAO_PRETO:
             # "| Código CNAE | Item LC 116/2003 Cód. NBS | Atividade do
             # Município\n| 6911701 17.14 1.1301.20.00 | ...". Ancorado no
@@ -4390,6 +4455,10 @@ class SPPdfExtractor:
         existir."""
         t = self.raw_text
 
+        if self.layout in _LAYOUTS_SAUBARA:
+            # Variante 2 imprime "CÓDIGO CNAE\n7319099"; a variante 1 não tem CNAE.
+            return self._saubara_campos().codigo_cnae
+
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             # Só o valor VOTADO por leituras de zooms distintos (o dígito final
             # varia entre zooms: 1/3/4) e plausível; senão o default 0000000.
@@ -4431,6 +4500,9 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
+        if self.layout in _LAYOUTS_SAUBARA:
+            # Alfanumérico em MAIÚSCULAS como impresso; sentinela "XXXX-XXXX" se ausente.
+            return self._saubara_campos().codigo_verificacao
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             # Mesma convenção do DANFSe Nacional (decisão do usuário): a chave
             # de acesso validada é o código de verificação; sem ela, sentinela.
@@ -5144,6 +5216,13 @@ class SPPdfExtractor:
         t = self.raw_text
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
+
+        if self.layout in _LAYOUTS_SAUBARA:
+            # Os 2 templates não têm bloco de intermediário.
+            if is_intermediario:
+                return None
+            campos = self._saubara_campos()
+            return campos.prestador if is_prestador else campos.tomador
 
         if self.layout == LAYOUT_BARREIRAS and not is_intermediario:
             # Marcadores do resgate da camada de OCR de terceiros (ver
@@ -14275,6 +14354,9 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        if self.layout in _LAYOUTS_SAUBARA:
+            return self._saubara_campos().valores
+
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             return self._extrair_valores_feira_nacional()
 
@@ -21758,6 +21840,7 @@ class SPPdfExtractor:
         _ibge_resolver.limpar_fallbacks_capital()
         self.layout = self._detect_layout()
         self._feira_nac_avisos: List[str] = []
+        self._saubara_cache = None
 
         if self.layout == LAYOUT_DANFE_PRODUTO:
             # Documento de PRODUTO (NF-e Modelo 55), estruturalmente distinto
@@ -21849,7 +21932,14 @@ class SPPdfExtractor:
         # Opções de regime e incentivo
         optante_simples = False
         regime_especial = None
-        if re.search(r'Optante\s*[-–]?\s*Microempreendedor\s+Individual\s*\(MEI\)', self.raw_text, re.IGNORECASE):
+        if self.layout in _LAYOUTS_SAUBARA:
+            # Variante 2: "EMPRESA OPTANTE DO SIMPLES" + "Regime Tributação
+            # Especial: Microempresa Municipal" (ABRASF 1). Variante 1 não
+            # imprime nenhum dos dois: fica False/None, sem presumir regime.
+            _campos_sau = self._saubara_campos()
+            optante_simples = _campos_sau.optante_simples
+            regime_especial = _campos_sau.regime_especial
+        elif re.search(r'Optante\s*[-–]?\s*Microempreendedor\s+Individual\s*\(MEI\)', self.raw_text, re.IGNORECASE):
             optante_simples = True
             regime_especial = "5" # MEI
         elif re.search(r'Optante\s*[-–]?\s*(?:Simples\s+Nacional|Microempresa|EPP|Empresa\s+de\s+Pequeno\s+Porte)', self.raw_text, re.IGNORECASE):
@@ -21928,6 +22018,8 @@ class SPPdfExtractor:
             avisos.append("Dados do tomador não identificados")
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
+        if self.layout in _LAYOUTS_SAUBARA:
+            avisos.extend(a for a in self._saubara_campos().avisos if a not in avisos)
         avisos.extend(avisos_flash)
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
             # Mesma natureza (NFCom, ICMS) dos layouts NFCom abaixo, mas este

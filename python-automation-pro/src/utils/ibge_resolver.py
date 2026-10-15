@@ -154,6 +154,15 @@ class IBGEResolver:
         # oficial do IBGE (servicodados.ibge.gov.br/api/v1/localidades/
         # municipios/2611101 -> "Petrolina", UF PE).
         "PETROLINA": "2611101",
+        # Saubara/BA - sede do LAYOUT_SAUBARA/LAYOUT_SAUBARA_2 (NFS-e da
+        # Prefeitura Municipal de Saubara, plataforma Link3; achado real
+        # 2026-09-14, notas 202600000000351 e 202600000000080). Sem esta
+        # entrada caía no fallback silencioso de Salvador/BA (2927408). Código
+        # 2929750 conferido na API oficial do IBGE (servicodados.ibge.gov.br/
+        # api/v1/localidades/municipios/2929750 -> "Saubara", UF BA; também
+        # em /estados/BA/municipios) e impresso na própria nota ("COD.
+        # MUNICIPIO GERADOR 2929750BA").
+        "SAUBARA": "2929750",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
