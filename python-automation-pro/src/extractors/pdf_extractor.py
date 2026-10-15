@@ -3841,20 +3841,9 @@ class SPPdfExtractor:
             return res
 
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
-            # Coleta os itens da tabela "ITENS DA FATURA" até "TOTAL A PAGAR"
-            m = re.search(
-                r'ITENS\s+DA\s+FATURA.*?\n(.*?)(?=TOTAL\s+A\s+PAGAR|VENCIMENTO|$)',
-                t, re.IGNORECASE | re.DOTALL
-            )
-            if m:
-                linhas = [
-                    l.strip() for l in m.group(1).split('\n')
-                    if l.strip() and not re.match(r'^[\d\.,\s]+$', l.strip())
-                    and not re.match(r'^(UN|cClass|QUANT|VALOR|DESC|PIS|BC|AL[IÍ]Q)', l.strip(), re.IGNORECASE)
-                ]
-                if linhas:
-                    return ' | '.join(linhas[:15])
-            return 'Serviços de telecomunicação conforme nota fiscal.'
+            # Só as linhas de item da tabela "ITENS DA FATURA" (ver
+            # `_discriminacao_telecom`).
+            return self._discriminacao_telecom(t) or 'Serviços de telecomunicação conforme nota fiscal.'
 
         if self.layout == LAYOUT_NFCOM_SALVADOR:
             # A descrição do item vem logo após o cabeçalho da tabela "ITENS DA
@@ -7877,6 +7866,187 @@ class SPPdfExtractor:
             telefone=telefone
         )
 
+    # Nome-sentinela do emitente do layout `telecom_comunicacao` quando nenhuma
+    # linha do cabeçalho é um nome confiável (gera aviso em `parse_multiple`).
+    _RAZAO_PRESTADOR_TELECOM_SENTINELA = "Prestador de Telecomunicação"
+
+    # Tipo de logradouro que abre o endereço do emitente (`\b`: sem ele
+    # "Avisos Regulatórios" casaria "Av").
+    _TIPO_LOGRADOURO_TELECOM = r'(?i:Rua|Av(?:enida)?|Alameda|Rod(?:ovia)?|Estrada|Trav(?:essa)?)\b\.?'
+
+    # Endereço de UMA linha, com ou sem vírgulas: "<logradouro> <número>
+    # <bairro> <CEP> [<município> - <UF>]". O número é o 1º token numérico
+    # que deixa um bairro SEM dígitos antes do CEP (aceita "Rua 7 de Setembro
+    # 123 Centro 40000000"); "0"/"O" e "S/N" são os "sem número" impressos.
+    _RE_END_TELECOM_CAUDA = (
+        r'[ \t,]+(?P<num>\d{1,6}[A-Za-z]?|S/?N|[0O])'
+        r'[ \t,]+(?P<bairro>[^\d\n,|]+?)'
+        r'[ \t,]+(?P<cep>\d{5}-?\d{3})(?![\d-])'
+        r'(?:[ \t,]+(?P<mun>[^\d\n,|]+?)[ \t]*[-–/][ \t]*(?P<uf>[A-Z]{2})\b)?'
+    )
+    _RE_END_TELECOM_PRESTADOR = re.compile(
+        r'(?P<log>' + _TIPO_LOGRADOURO_TELECOM + r'[^\n]*?)' + _RE_END_TELECOM_CAUDA
+    )
+    _RE_END_TELECOM_TOMADOR = re.compile(
+        r'^[ \t]*(?P<log>[^\s|][^\n]*?)' + _RE_END_TELECOM_CAUDA
+    )
+
+    @classmethod
+    def _parse_endereco_telecom(cls, linha: str, prestador: bool) -> Optional[dict]:
+        """Lê UMA linha de endereço do layout `telecom_comunicacao`.
+
+        Nunca atravessa a quebra de linha (o antigo `\\s*` do regex fazia o
+        "número" engolir o telefone da linha seguinte - achado real, nota
+        nº 35972) e não exige vírgula (o emitente imprime "Rua Senhor do
+        Bonfim 544 Monte Gordo 42839852 Camacari - BA"). Devolve `None`
+        quando a linha não tem a estrutura logradouro+número+bairro+CEP -
+        o chamador então NÃO inventa nenhum desses campos.
+        """
+        padrao = cls._RE_END_TELECOM_PRESTADOR if prestador else cls._RE_END_TELECOM_TOMADOR
+        m = padrao.search(linha)
+        if not m:
+            return None
+        numero = m.group('num').upper()
+        if numero in ('O', '0'):
+            numero = '0'
+        elif numero in ('SN', 'S/N'):
+            numero = 'S/N'
+        return {
+            'logradouro': m.group('log').strip(' ,'),
+            'numero': numero,
+            'bairro': m.group('bairro').strip(' ,'),
+            'cep': re.sub(r'\D', '', m.group('cep')),
+            'municipio': (m.group('mun') or '').strip(),
+            'uf': (m.group('uf') or '').strip(),
+        }
+
+    @staticmethod
+    def _municipio_conhecido_telecom(nome: str) -> bool:
+        chave = re.sub(r'[^\w\s]', '', nome or '').strip().upper()
+        return bool(chave) and chave in _ibge_resolver.KNOWN_CITIES
+
+    @staticmethod
+    def _nome_municipio_para_hint(municipio: str) -> Optional[str]:
+        """O município só vale como `city_hint` do resolvedor quando é um
+        NOME isolado (curto, sem dígito nem quebra de linha) - nunca uma linha
+        de endereço inteira."""
+        if municipio and len(municipio) <= 60 and not re.search(r'[\d\n]', municipio):
+            return municipio
+        return None
+
+    @staticmethod
+    def _limpar_nome_emitente_telecom(nome: str) -> str:
+        """Tira pontuação/ruído solto das pontas do nome do emitente sem
+        tocar na pontuação legítima do MEIO ("F&F", "LTDA.")."""
+        # A cópia deste nome que vem do recorte de zoom alto costuma trazer
+        # ruído solto colado nas pontas ("; Grupo FeF ." em vez de "Grupo
+        # FeF"); tokens sem NENHUMA letra ("4", "|", "»") não são nome.
+        tokens = nome.split()
+        while tokens and not re.search(r'[A-Za-zÀ-ú]', tokens[0]):
+            tokens.pop(0)
+        while tokens and not re.search(r'[A-Za-zÀ-ú]', tokens[-1]):
+            tokens.pop()
+        limpo = re.sub(r'^\W+|\W+$', '', ' '.join(tokens), flags=re.UNICODE).strip()
+        return limpo
+
+    @staticmethod
+    def _consenso_nome_emitente_telecom(nomes: List[str]) -> str:
+        """Nome do emitente a partir das leituras de OCR de cada cópia do
+        cabeçalho. Cópias independentes (zoom alto + padrão) trazem o MESMO
+        nome com ruídos de logotipo DIFERENTES colados na frente ('cm" à
+        Grupo FeF' x 'o Grupo FeF'): a concordância entre elas - o maior
+        sufixo de palavras em comum - é a parte confiável. Sem concordância,
+        vale a 1ª leitura (como vem do OCR); sem leitura nenhuma, `''`."""
+        nomes = [n for n in nomes if n]
+        if not nomes:
+            return ''
+        if len(nomes) == 1:
+            return nomes[0]
+        tokens = [n.split() for n in nomes]
+        chaves = [[re.sub(r'\W', '', tk).lower() for tk in lista] for lista in tokens]
+        comum = 0
+        for i in range(1, min(len(c) for c in chaves) + 1):
+            if len({c[-i] for c in chaves}) == 1 and chaves[0][-i]:
+                comum = i
+            else:
+                break
+        if comum and len(re.sub(r'[^A-Za-zÀ-ú]', '', ''.join(tokens[0][-comum:]))) >= 3:
+            return ' '.join(tokens[0][-comum:])
+        return nomes[0]
+
+    # Fim da tabela "ITENS DA FATURA": o que vem depois (totais, tributos,
+    # área do fisco, informações complementares, avisos da ANATEL) NÃO é item.
+    _RE_FIM_ITENS_TELECOM = re.compile(
+        r'V\w{0,3}LOR\s*TOTAL\s*N[FE]|TOTAL\s+BASE\s+DE\s+C[ÁA]LCULO|RESERVADO\s*AO\s*FISCO'
+        r'|INFORMA[ÇC][ÃA]O\s+DOS\s+TRIBUTOS|INFORMA[ÇC][ÕO]ES\s+C'
+        r'|TOTAL\s+A\s+PAGAR|VENCIMENTO',
+        re.IGNORECASE)
+    # Onde a coluna "descrição" acaba e as demais (cClass, UN, quantidade,
+    # valores) começam: coluna "|", código cClass de 6-8 dígitos, "UN" ou
+    # o 1º valor monetário.
+    _RE_CORTE_DESCRICAO_TELECOM = re.compile(
+        r'\s*\|\s*|\s+(?=\d{6,8}\b)|\s+(?=UN\b)|\s+(?=\d{1,3}(?:\.\d{3})*,\d{2}\b)')
+    # Linhas do CABEÇALHO da tabela que o OCR quebra em várias linhas.
+    _RE_CABECALHO_ITENS_TELECOM = re.compile(
+        r'^(UN|cClass|QUANT|VALOR|DESC|PIS|BC|AL[IÍ]Q|TOTAL\s*\(R|\(R)', re.IGNORECASE)
+
+    @classmethod
+    def _discriminacao_telecom(cls, t: str) -> str:
+        """Descrição dos itens da tabela "ITENS DA FATURA" do layout
+        `telecom_comunicacao`, sem as colunas numéricas.
+
+        O texto traz o cabeçalho "ITENS DA FATURA" em mais de uma cópia (zoom
+        alto + padrão): cada uma é lida só até o fim da PRÓPRIA tabela
+        (`_RE_FIM_ITENS_TELECOM`), e a 1ª cópia com algum item legível vale
+        (nunca a mistura das duas). A regex antiga ia até o 1º "TOTAL A PAGAR"
+        APÓS o cabeçalho - que, na cópia de zoom alto, vem ANTES da tabela - e
+        caía no fim do texto, levando para a Discriminacao tributos, "RESERVADO
+        AO FISCO", avisos regulatórios da ANATEL e telefone (achado real, nota
+        nº 35972). Cada linha é um item (ou a continuação de uma descrição que
+        quebrou) e sai separada por " | ", como antes; linhas de ruído de OCR
+        (muitos tokens de 1-2 caracteres) e as colunas numéricas ficam de fora."""
+        for m_cab in re.finditer(r'ITENS\s+DA\s+FATURA[^\n]*\n', t, re.IGNORECASE):
+            resto = t[m_cab.end():]
+            m_fim = cls._RE_FIM_ITENS_TELECOM.search(resto)
+            if not m_fim:
+                continue
+            itens: List[str] = []
+            for linha in resto[:m_fim.start()].split('\n'):
+                linha = re.sub(r'^[\s|(\[]+', '', linha.strip())
+                if (not linha or re.fullmatch(r'[\d\.,\s|/\]\[-]+', linha)
+                        or cls._RE_CABECALHO_ITENS_TELECOM.match(linha)):
+                    continue
+                m_corte = cls._RE_CORTE_DESCRICAO_TELECOM.search(linha)
+                descricao = linha[:m_corte.start()] if m_corte else linha
+                descricao = re.sub(r'^\W+|[\s|]+$', '', descricao)
+                tokens = descricao.split()
+                curtos = sum(1 for tk in tokens if len(tk) <= 2)
+                if (not re.search(r'[A-Za-zÀ-ú]{3}', descricao) or len(descricao) > 100
+                        or (len(tokens) >= 5 and curtos / len(tokens) >= 0.4)):
+                    continue
+                itens.append(descricao)
+            if itens:
+                return ' | '.join(itens[:15])
+        return ''
+
+    @staticmethod
+    def _cabecalhos_emitente_telecom(t: str) -> List[str]:
+        """Trechos do texto que são o cabeçalho do EMITENTE (uma cópia de OCR
+        por título "DOCUMENTO AUXILIAR..."): do título até o 1º CNPJ formatado
+        (ou ~350 caracteres). Só aí vale procurar o endereço do prestador - o
+        resto do texto traz o do TOMADOR (e o CEP dele), que nunca pode virar
+        o do emitente quando o do emitente não foi lido."""
+        cabecalhos: List[str] = []
+        fim_anterior = -1
+        for m_tit in re.finditer(r'DOCUMENTO\s+AUXILIAR|FATURA\s+DE\s+SERVI[ÇC]O', t, re.IGNORECASE):
+            if m_tit.start() < fim_anterior:
+                continue
+            m_cnpj = re.search(r'\d{2}[.,]\d{3}[.,]\d{3}[/.]\d{4}-\d{2}', t[m_tit.start():m_tit.start() + 450])
+            fim = m_tit.start() + (m_cnpj.end() if m_cnpj else 350)
+            cabecalhos.append(t[m_tit.start():fim])
+            fim_anterior = fim
+        return cabecalhos
+
     def _extrair_prestador_telecom(self, t: str) -> Entidade:
         """Extrai o emitente (prestador) de uma NF-e de serviço de comunicação.
 
@@ -7925,69 +8095,115 @@ class SPPdfExtractor:
         if not cnpj_prest and achada:
             cnpj_prest = achada[0][6:20]
 
-        # Nome: primeiras linhas não-vazias APÓS o título fixo "DOCUMENTO
-        # AUXILIAR..." do cabeçalho deste layout (senão o loop parava nele
-        # por engano, achando que era o nome do prestador). `re.search` (não
-        # `re.match`): o OCR às vezes cola ruído solto ANTES do título
-        # (". | DOCUMENTO AUXILIAR..."), e `re.match` (ancorado no início da
-        # linha) não pulava essa variante — achado real, nota F&F
+        # Nome do emitente: o texto impresso logo ACIMA do endereço, no
+        # cabeçalho que começa no título fixo "DOCUMENTO AUXILIAR..." (senão o
+        # loop parava nele por engano, achando que era o nome do prestador).
+        # `re.search` (não `re.match`): o OCR às vezes cola ruído solto ANTES
+        # do título (". | DOCUMENTO AUXILIAR..."), e `re.match` (ancorado no
+        # início da linha) não pulava essa variante — achado real, nota F&F
         # Comunicações nº 31696.
         #
-        # Achado real, nota Grupo FeF nº 22570: nesta nota o ruído do OCR não
-        # sai colado NA MESMA linha do título (como na nº 31696 acima), mas
-        # numa linha SEPARADA e INTEIRA logo ANTES dele ("sr rent er rr ar e
-        # e rr..."). Como essa linha de ruído também tem letras e mais de 3
-        # caracteres, o loop antigo (que só pulava a própria linha do título,
-        # sem exigir tê-lo visto primeiro) escolhia essa linha de ruído como
-        # nome — nunca chegava a ver "Grupo FeF", 2 linhas depois do título.
-        # Corrigido para só começar a considerar candidatos DEPOIS de ver o
-        # título pela 1ª vez.
+        # Achado real, nota Grupo FeF nº 22570: o ruído do OCR pode sair numa
+        # linha SEPARADA e INTEIRA logo ANTES do título ("sr rent er rr ar e
+        # e rr...") — só se consideram candidatos DEPOIS de ver o título.
+        #
+        # Achado real, nota Grupo FeF nº 35972: o letreiro do LOGOTIPO
+        # ("GRUPO", impresso em cima do "F&F") sai como uma linha própria
+        # ANTES do nome ("GRUPO |"), e a antiga regra "1ª linha com letras
+        # depois do título" a escolhia - RazaoSocial "GRUPO", truncada em 1
+        # palavra (o nome impresso é "Grupo FeF", na linha logo acima do
+        # endereço). Agora vale a ÚLTIMA linha candidata antes do fim do
+        # cabeçalho do emitente (CNPJ, telefone ou CEP), e o texto sai de um
+        # consenso entre as cópias do cabeçalho (o OCR concatena a leitura
+        # de zoom alto e a padrão, com ruídos de logotipo DIFERENTES colados
+        # na frente do mesmo nome).
         linhas = [l.strip() for l in t.split('\n') if l.strip()]
-        nome_prest = "Prestador de Telecomunicação"
-        titulo_visto = False
+        nomes_por_cabecalho: List[str] = []
+        candidatas: List[str] = []
+        cabecalho_aberto = False
         for l in linhas:
             if re.search(r'DOCUMENTO\s+AUXILIAR', l, re.IGNORECASE):
-                titulo_visto = True
+                if cabecalho_aberto and candidatas:
+                    nomes_por_cabecalho.append(candidatas[-1])
+                candidatas, cabecalho_aberto = [], True
                 continue
-            if not titulo_visto:
+            if not cabecalho_aberto:
                 continue
-            if re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\(\d{2}\)\s*\d{4}', l):
-                break
-            if re.search(r'[A-Za-zÀ-ú]', l) and len(l) > 3:
-                nome_prest = l
-                break
-        # A cópia deste nome que vem do recorte de zoom alto (prependado)
-        # costuma trazer ruído de pontuação solto colado nas pontas
-        # ("; Grupo FeF ." em vez de "Grupo FeF") — remove sem tocar em
-        # pontuação legítima NO MEIO do nome (ex.: "F&F", "LTDA.").
-        nome_prest = re.sub(r'^\W+|\W+$', '', nome_prest, flags=re.UNICODE).strip() or nome_prest
+            if re.search(
+                r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\(\d{2}\)\s*\d{4}|(?<![\d-])\d{5}-?\d{3}(?![\d-])',
+                l,
+            ):
+                if candidatas:
+                    nomes_por_cabecalho.append(candidatas[-1])
+                candidatas, cabecalho_aberto = [], False
+                continue
+            if (re.search(r'[A-Za-zÀ-ú]', l) and len(l) > 3
+                    and not re.search(self._TIPO_LOGRADOURO_TELECOM, l)):
+                candidatas.append(l)
+        if cabecalho_aberto and candidatas:
+            nomes_por_cabecalho.append(candidatas[-1])
+        nome_prest = self._consenso_nome_emitente_telecom(
+            [self._limpar_nome_emitente_telecom(n) for n in nomes_por_cabecalho]
+        ) or self._RAZAO_PRESTADOR_TELECOM_SENTINELA
 
-        # Endereço: linha que contém CEP de 8 dígitos ou padrão "Rua/Av"
+        # Endereço: as 3 leituras do mesmo endereço impresso numa linha só
+        # ("Rua Senhor do Bonfim 544 Monte Gordo 42839852 Camacari - BA",
+        # SEM vírgulas) - ver `_parse_endereco_telecom`. A página traz o
+        # cabeçalho em 2 cópias de OCR (zoom alto + padrão): entre as
+        # linhas que casam, vale a que traz um município que o conversor
+        # conhece (cópias independentes - a outra pode ter "Camacarl").
         logradouro, numero, bairro, municipio, uf, cep = ("Não informado", "S/N", "Não informado", "Não informado", "BA", "00000000")
-        m_end = re.search(
-            r'((?:Rua|Av(?:enida)?|Alameda|Rod(?:ovia)?|Estrada|Trav(?:essa)?)[^,\n]+),?\s*(\d+[^\n,]*?)[\n,]',
-            t, re.IGNORECASE
+        cabecalhos = self._cabecalhos_emitente_telecom(t)
+        achadas = [
+            end for end in (
+                self._parse_endereco_telecom(l, prestador=True)
+                for cabecalho in cabecalhos for l in cabecalho.split('\n'))
+            if end
+        ]
+        escolhido = next(
+            (end for end in achadas if self._municipio_conhecido_telecom(end['municipio'])),
+            achadas[0] if achadas else None,
         )
-        if m_end:
-            logradouro = m_end.group(1).strip()
-            numero = m_end.group(2).strip() or "S/N"
+        if escolhido:
+            logradouro, numero, bairro = escolhido['logradouro'], escolhido['numero'], escolhido['bairro']
+            cep = escolhido['cep']
+            if escolhido['municipio']:
+                municipio, uf = escolhido['municipio'], escolhido['uf']
+        else:
+            # Formato com vírgulas ("Rua X, 123, Centro"): confinado a UMA linha
+            # (`[ \t]` em vez de `\s`, que também atravessava a quebra de linha
+            # e fazia o "número" engolir o telefone da linha seguinte - achado
+            # real, nota nº 35972: "5 (71) 4062-8609").
+            cabecalho_emitente = cabecalhos[0] if cabecalhos else ''
+            m_end = re.search(
+                r'((?:Rua|Av(?:enida)?|Alameda|Rod(?:ovia)?|Estrada|Trav(?:essa)?)\b[^,\n]+?)[ \t]*,[ \t]*(\d+[^\n,]*?)[ \t]*[\n,]',
+                cabecalho_emitente, re.IGNORECASE
+            )
+            if m_end:
+                logradouro = m_end.group(1).strip()
+                numero = m_end.group(2).strip() or "S/N"
+            m_cep = re.search(r'(?<![\d-])(\d{5}-?\d{3})(?![\d-])', cabecalho_emitente)
+            if m_cep:
+                cep = re.sub(r'\D', '', m_cep.group(1))
 
-        m_cep = re.search(r'(\d{5}[-\s]?\d{3})', t)
-        if m_cep:
-            cep = re.sub(r'\D', '', m_cep.group(1))
+        if municipio == "Não informado":
+            # Confinado a UMA linha (`[^\n]` em vez de `\s`, que também casa
+            # quebra de linha): sem essa borda, o município saía com todo o
+            # bloco anterior colado ("Boutique Guarajuba PH Gestao\n\nGUARAJUBA
+            # 0 Guarajuba 42840310\nCamacari" em vez de só "Camacari").
+            m_mun = re.search(
+                r'([^\d\n]+?)[ \t]*[-–][ \t]*([A-Z]{2})\b',
+                cabecalhos[0] if cabecalhos else '')
+            if m_mun:
+                municipio = m_mun.group(1).strip()
+                uf = m_mun.group(2).strip()
 
-        # Confinado a UMA linha (`[^\n]` em vez de `\s`, que também casa
-        # quebra de linha): sem essa borda, o município saía com todo o
-        # bloco anterior colado ("Boutique Guarajuba PH Gestao\n\nGUARAJUBA
-        # 0 Guarajuba 42840310\nCamacari" em vez de só "Camacari") — a
-        # resolução por IBGE ainda funcionava por sorte (acha "Camacari"
-        # dentro do lixo), mas o campo bruto ficava poluído.
-        m_mun = re.search(r'([^\d\n][^\n]*?)[ \t]*[-–][ \t]*([A-Z]{2})\b', t)
-        if m_mun:
-            municipio = m_mun.group(1).strip()
-            uf = m_mun.group(2).strip()
-
-        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+        # `city_hint`: o município LIDO isolado. Sem ele o resolvedor só
+        # considerava o texto quando ele era curto/sem dígito, e uma linha
+        # de endereço inteira (com número e CEP) caía na capital da UF em
+        # silêncio (Camaçari saía 2927408 = Salvador, sem aviso nenhum).
+        mun_cod = _ibge_resolver.extract_and_validate(
+            municipio, uf, city_hint=self._nome_municipio_para_hint(municipio))
 
         return Entidade(
             cnpj_cpf=cnpj_prest or "00000000000000",
@@ -8085,19 +8301,35 @@ class SPPdfExtractor:
         inicio_bloco = pos_nome_tom if pos_nome_tom != -1 else max(0, pos_cnpj - 400)
         bloco_tom = t[inicio_bloco: pos_cnpj + 400]
 
-        logradouro, numero, bairro = "Não informado", "S/N", "Não informado"
-        m_end = re.search(
-            r'((?:Rua|Av(?:enida)?|Alameda|Rod(?:ovia)?|Estrada|Trav(?:essa)?)[^,\n]+),?\s*(\d+[^\n,]*?)[\n,]',
-            bloco_tom, re.IGNORECASE
-        )
-        if m_end:
-            logradouro = m_end.group(1).strip()
-            numero = m_end.group(2).strip() or "S/N"
-
-        cep = "00000000"
-        m_cep = re.search(r'(\d{5}[-\s]?\d{3})', bloco_tom)
-        if m_cep:
-            cep = re.sub(r'\D', '', m_cep.group(1))
+        logradouro, numero, bairro, cep = "Não informado", "S/N", "Não informado", "00000000"
+        # Endereço do destinatário: UMA linha "<logradouro> <número> <bairro>
+        # <CEP>" logo abaixo do nome e acima do rótulo "CNPJ/CPF" (achado real,
+        # nota nº 35972: "GUARAJUBA 0 Guarajuba 42840310" - sem "Rua/Av" e
+        # sem vírgulas, então a regex antiga de logradouro nunca casava e o
+        # endereço inteiro saía "Não informado"/"S/N").
+        end_tom = None
+        for linha_bloco in bloco_tom.split('\n'):
+            if re.search(r'CNPJ\s*[/Il|]?\s*CPF', linha_bloco, re.IGNORECASE):
+                break
+            end_tom = self._parse_endereco_telecom(linha_bloco, prestador=False)
+            if end_tom:
+                break
+        if end_tom:
+            logradouro, numero, bairro = end_tom['logradouro'], end_tom['numero'], end_tom['bairro']
+            cep = end_tom['cep']
+        else:
+            # Formato com "Rua/Av" e vírgulas, confinado a UMA linha (ver
+            # `_extrair_prestador_telecom`).
+            m_end = re.search(
+                r'((?:Rua|Av(?:enida)?|Alameda|Rod(?:ovia)?|Estrada|Trav(?:essa)?)\b[^,\n]+?)[ \t]*,[ \t]*(\d+[^\n,]*?)[ \t]*[\n,]',
+                bloco_tom, re.IGNORECASE
+            )
+            if m_end:
+                logradouro = m_end.group(1).strip()
+                numero = m_end.group(2).strip() or "S/N"
+            m_cep = re.search(r'(?<![\d-])(\d{5}-?\d{3})(?![\d-])', bloco_tom)
+            if m_cep:
+                cep = re.sub(r'\D', '', m_cep.group(1))
 
         municipio, uf = "Não informado", "BA"
         # Confinado a UMA linha (ver mesma correção em _extrair_prestador_telecom).
@@ -8106,7 +8338,8 @@ class SPPdfExtractor:
             municipio = m_mun.group(1).strip()
             uf = m_mun.group(2).strip()
 
-        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf)
+        mun_cod = _ibge_resolver.extract_and_validate(
+            municipio, uf, city_hint=self._nome_municipio_para_hint(municipio))
 
         return Entidade(
             cnpj_cpf=cnpj_tom,
@@ -21332,6 +21565,24 @@ class SPPdfExtractor:
             avisos.append("Dados do tomador não identificados")
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
+        if self.layout == LAYOUT_TELECOM_COMUNICACAO:
+            # Mesma natureza (NFCom, ICMS) dos layouts NFCom abaixo, mas este
+            # layout NÃO zera Base de Cálculo/Alíquota: leva o BC ICMS/ALÍQ ICMS
+            # impressos na fatura (ou o valor total, se o OCR não os leu). O
+            # texto dos irmãos ("mantidos zerados") seria falso aqui.
+            avisos.append(
+                "Documento tributado por ICMS (NFCom - Nota Fiscal de Comunicação "
+                "Eletrônica), não sujeito a ISS - Valor do ISS mantido zerado "
+                "propositalmente; Base de Cálculo/Alíquota deste layout refletem o "
+                "BC ICMS/ALÍQ ICMS da fatura (ou o valor total, quando o OCR não os "
+                "leu) e NÃO são base/alíquota de ISS"
+            )
+            if prestador and prestador.razao_social == self._RAZAO_PRESTADOR_TELECOM_SENTINELA:
+                avisos.append(
+                    "Razão social do prestador não identificada de forma confiável "
+                    "no cabeçalho da fatura (nenhuma linha de nome antes do "
+                    "endereço) - conferir na nota"
+                )
         if self.layout in (LAYOUT_NFCOM_SALVADOR, LAYOUT_NFCOM_RLGR, LAYOUT_NFCOM_LOTEC_FIBRA, LAYOUT_NFCOM_SETE_CONNECT, LAYOUT_NFCOM_NET_MUND, LAYOUT_NFCOM_BANDEIRANTES):
             avisos.append(
                 "Documento tributado por ICMS (NFCom - Nota Fiscal de Comunicação "
