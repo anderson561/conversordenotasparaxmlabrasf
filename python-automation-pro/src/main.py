@@ -8,8 +8,52 @@ from .models.contrato_locacao_model import ContratoLocacao
 from .models.nfe_produto_models import NfeProduto
 from .models.cte_os_model import CteOS
 from .utils.pdf_senha import pdf_desprotegido
-from .utils.erros import descrever_erro
+from .utils.erros import descrever_erro, NenhumCteOsError
 import os
+
+# Opção "CT-e OS (DACTE OS - Modelo 67)" da GUI/CLI: converte SÓ os `CteOS`
+# do PDF e ignora as demais páginas (NFS-e, NF-e). Nos outros formatos um
+# CT-e OS continua sendo auto-roteado pelo tipo (ver `_pick_transformer`).
+FORMATO_CTE_OS = "cteos"
+
+
+def separar_por_formato(nfse_list, output_format: str):
+    """Devolve `(mantidos, ignorados)`. Só o formato "cteos" filtra: mantém os
+    `CteOS` e devolve o resto como ignorado; qualquer outro formato mantém a
+    lista inteira (comportamento anterior, sem mudança). Filtro pelo TIPO do
+    objeto extraído - a mesma fonte de verdade de `_pick_transformer`."""
+    if output_format != FORMATO_CTE_OS:
+        return list(nfse_list), []
+    mantidos = [n for n in nfse_list if isinstance(n, CteOS)]
+    ignorados = [n for n in nfse_list if not isinstance(n, CteOS)]
+    return mantidos, ignorados
+
+
+def _tipo_documento(nota) -> str:
+    return "NF-e" if isinstance(nota, NfeProduto) else "NFS-e"
+
+
+def mensagens_ignoradas(ignorados, prefixo: str = "") -> list:
+    """Uma linha por documento ignorado pela opção CT-e OS + um resumo."""
+    if not ignorados:
+        return []
+    msgs = []
+    for n in ignorados:
+        pag = getattr(n, "pagina_origem", None)
+        onde = f"Página {pag}" if pag else f"Nota {getattr(n, 'numero', '?')}"
+        msgs.append(
+            f"[AVISO] {prefixo}{onde} não é DACTE OS (Modelo 67) — ignorada nesta opção "
+            f"(reconhecida como {_tipo_documento(n)} nº {getattr(n, 'numero', '?')})"
+        )
+    msgs.append(f"[*] {prefixo}Opção CT-e OS: {len(ignorados)} página(s) ignorada(s) por não serem DACTE OS (Modelo 67).")
+    return msgs
+
+
+def _reportar(msgs, progress_callback=None, progresso: float = 0.0):
+    for m in msgs:
+        print(m)
+        if progress_callback:
+            progress_callback(progresso, m)
 
 
 def _pick_transformer(nfse_obj, output_format: str):
@@ -85,6 +129,11 @@ def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "ab
         if not nfse_list:
             raise ValueError("Nenhuma nota encontrada nas páginas selecionadas.")
 
+    nfse_list, ignorados = separar_por_formato(nfse_list, output_format)
+    _reportar(mensagens_ignoradas(ignorados), progress_callback)
+    if not nfse_list:
+        raise NenhumCteOsError(os.path.basename(pdf_path), paginas_selecionadas=selected_pages is not None)
+
     print(f"[*] Transformando para {output_format.upper()}...")
     os.makedirs(os.path.dirname(output_xml_path), exist_ok=True)
 
@@ -148,6 +197,16 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
 
             if not nfse_list:
                 msg = f"[AVISO] {filename} IGNORADO (Nenhuma nota fiscal reconhecida)"
+                print(f"[!] {msg}")
+                if progress_callback:
+                    progress_callback(i / total_files, msg)
+                skip_count += 1
+                continue
+
+            nfse_list, ignorados = separar_por_formato(nfse_list, output_format)
+            _reportar(mensagens_ignoradas(ignorados, prefixo=f"{filename} - "), progress_callback, i / total_files)
+            if not nfse_list:
+                msg = f"[AVISO] {filename} IGNORADO (Nenhum DACTE OS (Modelo 67) encontrado)"
                 print(f"[!] {msg}")
                 if progress_callback:
                     progress_callback(i / total_files, msg)

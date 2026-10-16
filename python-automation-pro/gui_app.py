@@ -2,7 +2,7 @@ import flet as ft
 import os
 import threading
 from datetime import datetime, date
-from src.main import run_batch_conversion, run_contrato_conversion
+from src.main import run_batch_conversion, run_contrato_conversion, separar_por_formato
 from src.models.contrato_locacao_model import ContratoLocacao, EntidadeContrato
 from src.version import APP_VERSION
 from src.utils import auto_updater
@@ -181,6 +181,8 @@ def main(page: ft.Page):
         options=[
             ft.dropdown.Option("abrasf",          "NFS-e (Padrão ABRASF 2.01)"),
             ft.dropdown.Option("nfe",              "NF-e (DANFE Estadual - Modelo 55)"),
+            # Só os DACTE OS do PDF; NFS-e/NF-e são ignoradas (ver `separar_por_formato`).
+            ft.dropdown.Option("cteos",            "CT-e OS (DACTE OS - Modelo 67)"),
             ft.dropdown.Option("contrato_locacao", "Contrato de Locação (ABRASF XML)"),
         ],
         width=350
@@ -618,6 +620,10 @@ def main(page: ft.Page):
                         extractor = SPPdfExtractor(pdf_legivel)
                         nfse_list = extractor.parse_multiple()
                         invalid_pages = getattr(extractor, 'invalid_pages', [])
+
+                    # Opção CT-e OS: avisos e seleção de páginas só dos DACTE OS
+                    # (as demais páginas serão ignoradas e logadas pela conversão).
+                    nfse_list, _ = separar_por_formato(nfse_list, format_dropdown.value)
 
                     msgs = [f"Pág {p['page']}: {p['reason']}" for p in invalid_pages]
                     for n in nfse_list:
