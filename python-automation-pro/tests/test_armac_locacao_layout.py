@@ -88,7 +88,7 @@ def test_extract_armac_locacao_layout(monkeypatch):
         assert tom.razao_social == "SINAL CONSTRUTORA LTDA"
         assert tom.endereco.numero == "9995"
         assert tom.endereco.municipio == "POJUCA"
-        assert tom.endereco.codigo_municipio == "2925303"
+        assert tom.endereco.codigo_municipio == "2925204"  # Pojuca/BA (2925303 era Porto Seguro - API IBGE)
         assert tom.endereco.uf == "BA"
         assert tom.endereco.cep == "48120000"
 

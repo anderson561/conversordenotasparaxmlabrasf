@@ -3453,7 +3453,20 @@ class SPPdfExtractor:
                 r'TRIBUTA[ÇC][ÃA]O\s+MUNICIPAL',
                 t, re.IGNORECASE | re.DOTALL)
             if m:
-                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                trecho = m.group(1)
+                # Achado real 2026-10-20 (nota nº 73, W M K CONSTRUCOES): quando
+                # o rótulo "Descrição do Serviço" sai DEPOIS do "Local da
+                # Prestação" na ordem de leitura, o recorte trazia junto a
+                # descrição do item da LC 116 (texto padrão do código de
+                # tributação, truncado com "…") e o próprio rótulo — "07.02 -
+                # Execução; ... perfuraçã… Descrição do Serviço SERVIÇOS DE
+                # SUBEMPREITADAS ...". O que o prestador escreveu é só o que
+                # vem DEPOIS do rótulo; com o rótulo dentro do recorte, corta
+                # nele (se sobrar texto).
+                m_rot = re.search(r'Descri[çc][ãa]o\s+do\s+Servi[çc]o\s*\n', trecho, re.IGNORECASE)
+                if m_rot and trecho[m_rot.end():].strip():
+                    trecho = trecho[m_rot.end():]
+                disc = re.sub(r'\s+', ' ', trecho).strip()
                 if disc:
                     return disc
 
@@ -11863,6 +11876,34 @@ class SPPdfExtractor:
             ),
         )
 
+    def _doc_emitente_chave_nacional_reforma(self) -> Optional[str]:
+        """CNPJ/CPF do EMITENTE decodificado da Chave de Acesso de 50 dígitos
+        da DANFSe v2.0 (`cMun(7) | amb(1) | tpInsc(1) | doc(14) | ...`), só
+        quando a nota declara "EMITENTE DA NFS-e: Prestador" (senão a chave
+        identifica outra parte) e o documento passa no dígito verificador.
+        Devolve None em qualquer dúvida — nunca um documento não verificado."""
+        t = self.raw_text
+        # Valor do campo na linha seguinte ao rótulo (o OCR pode fundir o
+        # rótulo vizinho "SITUAÇÃO DA NFS-e" na mesma linha). "Prestador" em
+        # caixa mista, de propósito: o cabeçalho "PRESTADOR / FORNECEDOR"
+        # logo abaixo não pode valer como valor do campo.
+        if not re.search(r'(?i:EMITENTE\s+DA\s+NFS-?e)[^\n]*\n+\s*Prestador\b', t):
+            return None
+        m = re.search(r'CHAVE\s+DE\s+ACESSO\s+DA\s+NFS-?e\s*\n+\s*((?:\d\s*){50,60})', t, re.IGNORECASE)
+        if not m:
+            return None
+        chave = re.sub(r'\D', '', m.group(1))[:50]
+        if len(chave) != 50 or not (11 <= int(chave[:2]) <= 53):
+            return None
+        tp_insc, doc14 = chave[8], chave[9:23]
+        if tp_insc == '2':
+            doc = doc14
+        elif tp_insc == '1' and doc14.startswith('000'):
+            doc = doc14[3:]
+        else:
+            return None
+        return doc if self._validate_cnpj_cpf(doc) else None
+
     def _extrair_entidade_nacional_reforma(self, is_prestador: bool,
                                            is_intermediario: bool = False) -> Optional[Entidade]:
         """Extrai prestador/tomador/intermediário da DANFSe v2.0 (pós-reforma).
@@ -12054,7 +12095,11 @@ class SPPdfExtractor:
             return s2 if '@' in s2 else self._corrigir_arroba_ocr(s)
 
         def _ac_municipio(l):
-            m = re.match(r'^([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*/\s*([A-Za-z]{2})$', l)
+            # Achado real 2026-10-20 (notas nº 44/45/53 do mesmo prestador da
+            # nº 73, outro gerador da v2.0): o tomador imprime "Pojuca - BA"
+            # (hífen em vez de barra) — o valor era rejeitado e o tomador
+            # saía com o município-padrão do transformer (São Paulo/SP).
+            m = re.match(r'^([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*(?:/|\s-)\s*([A-Za-z]{2})$', l)
             return (re.sub(r'\s+', ' ', m.group(1)).strip(), m.group(2).upper()) if m else None
 
         def _ac_ibge_cep(l):
@@ -12095,7 +12140,11 @@ class SPPdfExtractor:
             # a linha inteira (`match` + `$`); CNPJ/IM nunca colidem com esse
             # padrão (CNPJ tem pontos/barra dentro do MESMO token, sem os
             # parênteses/hífen na posição certa de telefone).
-            m = re.search(r'\(?\d{2}\)?\s*\d{4,5}-?\s?\d{4}', l)
+            # Achado real 2026-10-20 (nota nº 73, tomador SINAL CONSTDRUTORA):
+            # o DDD também pode vir separado por HÍFEN ("71-3273-2450") — o
+            # padrão só aceitava espaço/parênteses e o telefone do tomador
+            # sumia do XML apesar de impresso.
+            m = re.search(r'\(?\d{2}\)?[\s-]*\d{4,5}-?\s?\d{4}', l)
             return m.group(0) if m else None
 
         def _ac_im(l):
@@ -12120,6 +12169,15 @@ class SPPdfExtractor:
             # reescrever a janela de busca compartilhada por outros campos.
             if '/' in l:
                 return None
+            # Achado real 2026-10-20 (nota nº 73, tomador SINAL CONSTDRUTORA,
+            # Indicador Municipal em BRANCO): a busca seguia até a linha do
+            # ENDEREÇO ("RUA Z EVANGELINA SIQUEIRA DIAS 9995 - NOVA PAJUCA") e
+            # aceitava o número do imóvel, 9995, como Inscrição Municipal. Uma
+            # linha de valor de IM/Telefone nunca traz palavras — qualquer
+            # palavra de 3+ letras indica outra coluna (endereço, nome,
+            # rótulo), não o IM.
+            if re.search(r'[A-Za-zÀ-ú]{3,}', l):
+                return None
             for tok in l.split():
                 if re.match(r'^\d{4,}$', tok):
                     return tok
@@ -12139,7 +12197,16 @@ class SPPdfExtractor:
             cod_mun = _ibge_resolver.extract_and_validate(
                 municipio, uf, city_hint=municipio, raw_doc_text=t) or ''
 
-        m_doc = re.search(r'(\d{2}\.?\d{3}\.?\d{3}/\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})', bloco)
+        # Achado real 2026-10-20 (nota nº 73, W M K CONSTRUCOES, Serrinha/BA):
+        # este gerador imprime o CNPJ do PRESTADOR só com dígitos, sem
+        # pontuação ("08058923000106"). A 1ª alternativa exigia a barra e a
+        # 2ª (CPF, 11 dígitos) casava os 11 PRIMEIROS dígitos do CNPJ — o XML
+        # saía com <Cpf>08058923000</Cpf>: CNPJ truncado, emitido como CPF.
+        # Agora 14 dígitos crus são CNPJ e nenhuma das alternativas pode
+        # começar/terminar no meio de uma sequência maior de dígitos.
+        m_doc = re.search(
+            r'(?<![\d.])(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}|\d{3}\.?\d{3}\.?\d{3}-?\d{2})(?![\d])',
+            bloco)
         if m_doc:
             cnpj = re.sub(r'\D', '', m_doc.group(1))
         else:
@@ -12155,6 +12222,29 @@ class SPPdfExtractor:
             m_doc_tol = re.search(r'\b[DO](\d\.?\d{3}\.?\d{3}/\d{4}-?\d{2})\b', bloco, re.IGNORECASE)
             candidato = ('0' + re.sub(r'\D', '', m_doc_tol.group(1))) if m_doc_tol else ''
             cnpj = candidato if (candidato and self._validate_cnpj_cpf(candidato)) else '00000000000000'
+
+        # Prova independente do documento do PRESTADOR: a Chave de Acesso de
+        # 50 dígitos carrega `cMun(7) | ambiente(1) | tpInsc(1) | CNPJ/CPF(14)
+        # | nNFSe(13) | AAMM(4) | cód+DV(10)` e identifica o EMITENTE da
+        # NFS-e — que é o prestador quando a nota diz "EMITENTE DA NFS-e:
+        # Prestador". Só entra quando o documento lido do bloco NÃO passa no
+        # dígito verificador (ou não foi lido): um CPF de 11 dígitos que é
+        # prefixo do CNPJ da chave é exatamente o sintoma de truncamento da
+        # nota nº 73. Documento lido que passa no DV nunca é sobrescrito.
+        if is_prestador and not self._validate_cnpj_cpf(cnpj):
+            doc_chave = self._doc_emitente_chave_nacional_reforma()
+            if doc_chave:
+                cnpj = doc_chave
+            elif not cnpj.startswith('00000000000'):
+                self.__dict__.setdefault('_reforma_avisos', []).append(
+                    f"CPF/CNPJ do prestador lido na nota ({cnpj}) não passa no "
+                    "dígito verificador e a chave de acesso não o confirma - "
+                    "confira o documento do prestador manualmente")
+        elif not is_prestador and not cnpj.startswith('00000000000') \
+                and not self._validate_cnpj_cpf(cnpj):
+            self.__dict__.setdefault('_reforma_avisos', []).append(
+                f"CPF/CNPJ do tomador lido na nota ({cnpj}) não passa no dígito "
+                "verificador - confira o documento do tomador manualmente")
 
         m_nome = re.search(r'Nome\s*/\s*Nome\s+Empresarial\s*\n+\s*([^\n]+)', bloco, re.IGNORECASE)
         razao = m_nome.group(1).strip() if m_nome else ''
@@ -12326,11 +12416,47 @@ class SPPdfExtractor:
                     if re.match(r'^[^@\s]+@[^@\s]+\.[A-Za-z][^@\s]*$', candidato_email):
                         email = candidato_email
             segs = [s.strip() for s in valor_end.split(',') if s.strip()]
+            # Achado real 2026-10-20 (nota nº 73, tomador SINAL CONSTDRUTORA):
+            # endereço SEM vírgula nenhuma, no formato "<logradouro> <número> -
+            # <bairro>" ("RUA Z EVANGELINA SIQUEIRA DIAS 9995 - NOVA PAJUCA").
+            # Antes a linha inteira virava logradouro, com número S/N e bairro
+            # "Não informado". Só dispara sem vírgula e com o número isolado
+            # entre o logradouro e o " - " — o mesmo tomador aparece no layout
+            # Iaçu como "RUA EVANGELINA SIQUEIRA DIAS 9995, - NOVA POJUCA".
+            m_sem_virgula = (re.match(r'^(.+?)\s+(\d+[A-Za-z]?|S/?N)\s+-\s+(.+)$', segs[0], re.IGNORECASE)
+                             if len(segs) == 1 else None)
+            if m_sem_virgula:
+                segs = [m_sem_virgula.group(1).strip(), m_sem_virgula.group(2),
+                        m_sem_virgula.group(3).strip()]
             if segs:
                 logradouro = segs[0]
+                # Achado real 2026-10-20 (nota nº 73, prestador W M K
+                # CONSTRUCOES): "AV LOMANTO JUNIOR, 400 ANEXO A CASA" — o 2º
+                # segmento traz o número COLADO ao complemento, sem vírgula
+                # entre eles. O teste de número exigia o segmento inteiro
+                # numérico, então "400 ANEXO A CASA" inteiro ia para o BAIRRO.
+                # Agora o número é o token inicial e o texto colado a ele é
+                # complemento (não há segmento de bairro nesta nota — o bairro
+                # fica "Não informado" em vez de receber um complemento).
+                m_num_colado = (re.match(r'^(\d+[A-Za-z]?)\s+(.+)$', segs[1])
+                                if len(segs) >= 2 else None)
                 if len(segs) >= 2 and re.match(r'^\d+[A-Za-z]?$|^S/?N$', segs[1], re.IGNORECASE):
                     numero = segs[1]
                     resto = segs[2:]
+                elif m_num_colado:
+                    numero = m_num_colado.group(1)
+                    complemento_colado = m_num_colado.group(2).strip()
+                    resto = segs[2:]
+                    if complemento_colado.startswith('-'):
+                        # Outro gerador imprime "<número> - <bairro>" no 2º
+                        # segmento ("1250 - COSTA AZUL", "554 - VILAS DO
+                        # ATLANTICO"): o texto após o " - " continua sendo o
+                        # bairro (comportamento anterior), só sem o número.
+                        resto = [complemento_colado.lstrip('- ').strip()] + resto
+                    elif not resto:
+                        complemento = complemento_colado
+                    else:
+                        resto = [complemento_colado] + resto
                 else:
                     resto = segs[1:]
                 if resto:
@@ -15239,6 +15365,33 @@ class SPPdfExtractor:
             if not serv and liquido and not (iss_retido or irrf or inss or contrib_sociais or iss):
                 serv = liquido
 
+            # "Total Deduções / Reduções" da seção TRIBUTAÇÃO MUNICIPAL (ISSQN)
+            # — achado real 2026-10-20, nota nº 73 (W M K CONSTRUCOES ->
+            # SINAL CONSTDRUTORA, Serrinha/BA, subempreitada 07.02 com 50% de
+            # material): a nota imprime "Total Deduções / Reduções R$
+            # 146.150,94" e "BC ISSQN R$ 146.150,94" sobre um serviço de R$
+            # 292.301,88, mas o XML saía com ValorDeducoes 0,00 e BaseCalculo
+            # 146.150,94 — a identidade ABRASF (Base = Serviços - Deduções -
+            # Desconto incondicionado) não fechava por R$ 146 mil. Lido com a
+            # MESMA adjacência estrita rótulo->valor das retenções federais
+            # ("-" = ausente) e aceito só quando fecha a identidade com o BC
+            # ISSQN impresso (tolerância de centavos): um valor que não fecha
+            # pode ser o vizinho errado da grade, e dedução errada reduz base
+            # de imposto. NÃO confundir com "Exclusões e Reduções da Base de
+            # Cálculo" (IBS/CBS, mais abaixo — ver nota a seguir).
+            deducoes = _valor_apos_rotulo_grade_v2(
+                r'Total\s+Dedu[çc][õo]es\s*/\s*Redu[çc][õo]es')
+            desc_incond = _valor_apos_rotulo_grade_v2(r'Desconto\s+Incondicionado')
+            if deducoes:
+                fecha = (base and serv
+                         and abs(serv - deducoes - desc_incond - base) <= 0.02)
+                if not fecha:
+                    deducoes = 0.0
+                    self.__dict__.setdefault('_reforma_avisos', []).append(
+                        "\"Total Deduções / Reduções\" impresso na nota não fecha com "
+                        "Valor da Operação - BC ISSQN - mantido ValorDeducoes 0,00; "
+                        "confira as deduções desta nota manualmente")
+
             # NÃO extraídos de propósito:
             # - "PIS/COFINS - Débito Apuração Própria": débito tributário do
             #   próprio prestador, não retenção do tomador (decisão do usuário
@@ -15252,7 +15405,7 @@ class SPPdfExtractor:
             #   contribuições sociais), não de fonte.
             return Valores(
                 valor_servicos=serv,
-                valor_deducoes=0.0,
+                valor_deducoes=deducoes,
                 valor_pis=0.0,
                 valor_cofins=0.0,
                 valor_csll=0.0,
@@ -21840,6 +21993,7 @@ class SPPdfExtractor:
         _ibge_resolver.limpar_fallbacks_capital()
         self.layout = self._detect_layout()
         self._feira_nac_avisos: List[str] = []
+        self._reforma_avisos: List[str] = []
         self._saubara_cache = None
 
         if self.layout == LAYOUT_DANFE_PRODUTO:
@@ -22172,6 +22326,9 @@ class SPPdfExtractor:
                 avisos.append(_aviso_mun)
 
         municipio_incidencia_override = self._extrair_municipio_incidencia_override()
+        if self.layout == LAYOUT_NACIONAL_REFORMA:
+            # Avisos levantados pela própria leitura da incidência (acima).
+            avisos.extend(a for a in self.__dict__.get('_reforma_avisos', []) if a not in avisos)
 
         return Nfse(
             numero=numero,
@@ -23736,15 +23893,61 @@ class SPPdfExtractor:
             # prestador saía errado (Salvador) e o resultado batia por
             # acidente; com o prestador corrigido para Lauro de Freitas, sem
             # este override a incidência migraria para o município errado.
+            # Achado real 2026-10-20 (nota nº 73, W M K CONSTRUCOES, Serrinha/
+            # BA -> obra em Lajedinho/BA): este gerador imprime o rótulo SEM
+            # "Sigla" ("Município / UF / País de Incidência do ISSQN") — o
+            # regex exigia "Sigla UF", não casava, e a incidência caía no
+            # padrão do transformer (município do PRESTADOR, Serrinha), ou
+            # seja, ISS atribuído ao município errado.
             m = re.search(
-                r'Munic[íi]pio\s*/\s*Sigla\s+UF\s*/\s*Pa[íi]s\s+de\s+Incid[êe]ncia\s+do\s+ISSQN'
+                r'Munic[íi]pio\s*/\s*(?:Sigla\s+)?UF\s*/\s*Pa[íi]s\s+de\s+Incid[êe]ncia\s+do\s+ISSQN'
                 r'[\s\S]{0,80}?\n\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*/\s*([A-Za-z]{2})\s*/',
                 t, re.IGNORECASE)
             if not m:
                 return None
             municipio, uf = re.sub(r'\s+', ' ', m.group(1)).strip(), m.group(2).upper()
-            return _ibge_resolver.extract_and_validate(
+
+            # O código IBGE do município de incidência vem IMPRESSO na linha
+            # da grade IBS/CBS ("Indicador de Operação / Código IBGE
+            # Incidência / Município Incidência / Sigla UF" -> "020201 /
+            # 2919009 / LAJEDINHO / BA"). Quando o NOME dessa linha é o mesmo
+            # da incidência do ISSQN e o código pertence à UF, ele é a melhor
+            # fonte — o resolver por nome, para um município fora da tabela,
+            # devolvia o 1º código "29xxxxx" do documento inteiro (o do
+            # prestador), um valor plausível porém errado.
+            def _norm(s):
+                s = unicodedata.normalize('NFKD', s)
+                return re.sub(r'\s+', ' ', ''.join(c for c in s if not unicodedata.combining(c))).strip().upper()
+
+            m_ibs = re.search(
+                r'C[óo]digo\s+IBGE\s+Incid[êe]ncia[^\n]*\n+\s*[^\n/]*/\s*(\d{7})\s*/\s*'
+                r'([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*/\s*([A-Za-z]{2})\s*$',
+                t, re.IGNORECASE | re.MULTILINE)
+            prefixo_uf = _ibge_resolver.UF_PREFIXES.get(uf)
+            # O valor capturado pode trazer texto de célula vizinha fundida à
+            # frente ("Operação Tributável Barreiras") — compara pelo FINAL.
+            nome_ibs = _norm(m_ibs.group(2)) if m_ibs else ''
+            if (m_ibs and nome_ibs
+                    and (_norm(municipio) == nome_ibs or _norm(municipio).endswith(' ' + nome_ibs))
+                    and m_ibs.group(3).upper() == uf
+                    and prefixo_uf and m_ibs.group(1).startswith(prefixo_uf)):
+                return m_ibs.group(1)
+
+            codigo = _ibge_resolver.extract_and_validate(
                 municipio, uf, city_hint=municipio, raw_doc_text=t)
+            conhecidas = {_norm(k) for k in _ibge_resolver.KNOWN_CITIES}
+            palavras_mun = _norm(municipio).split(' ')
+            sufixo_conhecido = any(' '.join(palavras_mun[-n:]) in conhecidas
+                                   for n in range(1, min(4, len(palavras_mun)) + 1))
+            # A capital da UF já é resolvida pelo próprio fallback do resolver
+            # (código certo): avisar só quando o município NÃO é a capital.
+            capital = _norm(_ibge_resolver.CAPITAL_NAMES_BY_UF.get(uf, ''))
+            if not sufixo_conhecido and _norm(municipio) != capital:
+                self.__dict__.setdefault('_reforma_avisos', []).append(
+                    f"Município de incidência do ISSQN \"{municipio}/{uf}\" não consta "
+                    f"na tabela IBGE do conversor e o código não está impresso na "
+                    f"nota - código {codigo} não confirmado; confira a incidência")
+            return codigo
 
         if self.layout == LAYOUT_GUARULHOS:
             if not re.search(r'Tributa[çc][ãa]o\s+fora\s+do\s+munic[íi]pio', t, re.IGNORECASE):

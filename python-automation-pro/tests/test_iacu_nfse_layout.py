@@ -158,7 +158,7 @@ def test_extract_iacu_nfse_layout(monkeypatch):
         assert tom.endereco.numero == "9995"
         assert tom.endereco.bairro == "NOVA POJUCA"
         assert tom.endereco.municipio == "POJUCA"
-        assert tom.endereco.codigo_municipio == "2925303"
+        assert tom.endereco.codigo_municipio == "2925204"  # Pojuca/BA (2925303 era Porto Seguro - API IBGE)
         assert tom.endereco.uf == "BA"
         assert tom.endereco.cep == "48120000"
 
