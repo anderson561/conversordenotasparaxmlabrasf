@@ -82,7 +82,19 @@ class IBGEResolver:
         "SAO PAULO": "3550308", "SÃO PAULO": "3550308",
         "RIO DE JANEIRO": "3304557",
         "VARGEM GRANDE PAULISTA": "3556453",
-        "POJUCA": "2925303",
+        # Pojuca/BA - corrigido 2026-10-20: o valor anterior (2925303) é o de
+        # PORTO SEGURO/BA. A nota nº 73 (DANFSe v2.0, tomador SINAL
+        # CONSTDRUTORA, Pojuca) imprime "Código IBGE / CEP 2925204 /
+        # 48120-000", e a API oficial do IBGE confirma 2925204 = Pojuca e
+        # 2925303 = Porto Seguro (servicodados.ibge.gov.br/api/v1/
+        # localidades/municipios/<código>). Afeta o mesmo tomador SINAL nos
+        # layouts ARMAC e Iaçu, que imprimem só o NOME do município.
+        "POJUCA": "2925204",
+        # Lajedinho/BA (incidência do ISSQN da nota nº 73, obra CONDER) e
+        # Serrinha/BA (prestador W M K CONSTRUCOES) - códigos impressos na
+        # própria nota e conferidos na API oficial do IBGE (2026-10-20).
+        "LAJEDINHO": "2919009",
+        "SERRINHA": "2930501",
         "IACU": "2912707", "IAÇU": "2912707",
         "MATA DE SAO JOAO": "2921005", "MATA DE SÃO JOÃO": "2921005",
         "ROSARIO DA LIMEIRA": "3156452", "ROSÁRIO DA LIMEIRA": "3156452",
