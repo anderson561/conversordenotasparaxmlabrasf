@@ -10307,6 +10307,58 @@ class SPPdfExtractor:
         conteudo = [l for l in linhas if not cls._LABEL_TOKEN_SAO_PAULO.match(l)]
         return conteudo[:n]
 
+    # CPF/CNPJ IMPRESSO FORMATADO (pontos/barra/hífen), como token isolado: não
+    # pode encostar em outro dígito nem dos lados. É o que separa o CNPJ real
+    # de um "colado" a um vizinho numérico pela varredura tolerante
+    # (`_scavenge_all_cnpjs`, que atravessa quebras de linha).
+    _RE_DOC_FORMATADO_ISOLADO = re.compile(
+        r'(?<![\d.,/\-])(?:\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2})(?![\d.,/\-]*\d)')
+
+    def _docs_formatados_validos(self, t: str) -> List[tuple]:
+        """[(início, fim, dígitos)] de cada CPF/CNPJ impresso formatado e com
+        dígito verificador válido, na ordem do texto."""
+        docs = []
+        for m in self._RE_DOC_FORMATADO_ISOLADO.finditer(t):
+            dig = re.sub(r'\D', '', m.group(0))
+            if self._validate_cnpj_cpf(dig):
+                docs.append((m.start(), m.end(), dig))
+        return docs
+
+    def _sp_cnpj_entidade_ancorado(self, t: str, nomes_razao: list, is_prestador: bool) -> str:
+        """CPF/CNPJ do prestador/tomador no template SP digital com rótulos
+        deslocados (ver `_extrair_entidade_sao_paulo`), ANCORADO na estrutura
+        do bloco e não na ordem de aparição no documento inteiro:
+          - tomador: 1º documento formatado DEPOIS do rótulo "Nome/Razão" real
+            do tomador (a 2ª ocorrência do rótulo; a 1ª é o trio decorativo sem
+            valor do prestador) — o "CPF/CNPJ" do tomador vem logo a seguir à
+            razão social dele nas duas ordens de pdfminer conhecidas;
+          - prestador: 1º documento formatado ANTES desse rótulo (vaza sozinho
+            antes de "PRESTADOR DE SERVIÇOS").
+        Achado real (nota 72483704 AMIL -> SAMP, 2026-10-20): a regra antiga
+        "1º CNPJ válido do documento = prestador, 2º = tomador" usava a
+        varredura tolerante `_scavenge_all_cnpjs`, que atravessa quebras de
+        linha — o "3" final do código de verificação "8CHGHGH3" grudava no CNPJ
+        do prestador logo abaixo ("329309127000179", 15 dígitos, descartado),
+        o 1º CNPJ válido passava a ser o do TOMADOR e o 2º o da AMIL repetido no
+        boleto: prestador e tomador saíam com os CNPJs TROCADOS, ambos com DV
+        válido. Sem âncora (texto fora deste formato), cai na regra antiga."""
+        docs = self._docs_formatados_validos(t)
+        ancora = nomes_razao[1] if len(nomes_razao) >= 2 else None
+        cnpj = None
+        if ancora is not None:
+            if is_prestador:
+                antes = [d for d in docs if d[1] <= ancora.start()]
+                cnpj = antes[0][2] if antes else None
+            else:
+                prest = self._sp_cnpj_entidade_ancorado(t, nomes_razao, True)
+                depois = [d for d in docs if d[0] >= ancora.end() and d[2] != prest]
+                cnpj = depois[0][2] if depois else None
+        if cnpj:
+            return cnpj
+        all_cnpjs = self._scavenge_all_cnpjs()
+        idx = 0 if is_prestador else 1
+        return all_cnpjs[idx] if len(all_cnpjs) > idx else "00000000000000"
+
     def _extrair_entidade_sao_paulo(self, is_prestador: bool) -> Entidade:
         """Extrai prestador/tomador do layout São Paulo/SP quando o pdfminer
         desloca os cabeçalhos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS"
@@ -10321,16 +10373,8 @@ class SPPdfExtractor:
         `_primeiro_conteudo_sao_paulo`."""
         t = self.raw_text
 
-        # CNPJ: 1ª ocorrência de checksum válido no documento = prestador, 2ª =
-        # tomador. Mais robusto aqui que delimitar por cabeçalho, já que o CNPJ
-        # do prestador pode vazar para ANTES de "PRESTADOR DE SERVIÇOS".
-        all_cnpjs = self._scavenge_all_cnpjs()
-        if is_prestador:
-            cnpj = all_cnpjs[0] if len(all_cnpjs) >= 1 else "00000000000000"
-        else:
-            cnpj = all_cnpjs[1] if len(all_cnpjs) >= 2 else "00000000000000"
-
         nomes_razao = list(re.finditer(r'Nome\s*/\s*Raz[ãa]o(?:\s+Social)?\s*:?', t, re.IGNORECASE))
+        cnpj = self._sp_cnpj_entidade_ancorado(t, nomes_razao, is_prestador)
         m_prest_header = re.search(r'PRESTADOR\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
 
         razao, logradouro_raw, insc, bloco_campos = "", "", None, t
@@ -14325,6 +14369,96 @@ class SPPdfExtractor:
         apos = [l for l in linhas[idx_end + 1:] if _elegivel_razao(l)]
         return {'razao': razao, 'endereco': endereco, 'municipio': municipio, 'uf': uf,
                 'texto_apos_endereco': apos}
+
+    def _docs_do_boleto(self, t: str) -> dict:
+        """CPF/CNPJ que o BOLETO anexo à nota associa EXPLICITAMENTE a cada
+        papel: {'beneficiario': (cnpj, janela), 'pagador': (cnpj, janela)} —
+        só os papéis encontrados. Evidência independente da grade da NFS-e
+        (o boleto tem rótulos próprios): o beneficiário é quem cobra (o
+        prestador), o pagador é quem paga (o tomador).
+
+        - Beneficiário/Cedente: o rótulo isolado (não "Código Beneficiário" da
+          caixa "Agência / Código Beneficiário"), com um rótulo "CNPJ" e um
+          documento formatado nos ~300 caracteres seguintes, antes do
+          "Pagador".
+        - Pagador/Sacado: o rótulo em caixa de título ("RECIBO DO PAGADOR" é
+          título de seção, não rótulo; "Pagador Avalista" é outro papel), com
+          o documento colado a "CPF/CNPJ:"/"CNPJ:" nos ~500 caracteres
+          seguintes, antes do avalista."""
+        achados = {}
+        for m in re.finditer(r'(?<!C[óo]digo )\b(?:Benefici[áa]rio|Cedente)\b\s*:?', t):
+            janela = t[m.end():m.end() + 300]
+            corte = re.search(r'\bPagador\b|\bSacado\b', janela)
+            if corte:
+                janela = janela[:corte.start()]
+            rot = re.search(r'\bCNPJ\b', janela)
+            if not rot:
+                continue
+            docs = [d for d in self._docs_formatados_validos(janela) if d[0] >= rot.start()]
+            if docs:
+                achados['beneficiario'] = (docs[0][2], janela)
+                break
+        for m in re.finditer(r'\b(?:Pagador|Sacado)\b(?!\s*/?\s*Avalista|\s+Avalista)\s*:?', t):
+            janela = t[m.end():m.end() + 500]
+            corte = re.search(r'Avalista|Sacador', janela, re.IGNORECASE)
+            if corte:
+                janela = janela[:corte.start()]
+            m_doc = re.search(r'(?:CPF\s*/\s*)?CNPJ\s*:?\s*(\d[\d./\-]{12,17}\d)', janela)
+            if m_doc:
+                dig = re.sub(r'\D', '', m_doc.group(1))
+                if len(dig) in (11, 14) and self._validate_cnpj_cpf(dig):
+                    achados['pagador'] = (dig, janela)
+                    break
+        return achados
+
+    def _conferir_papeis_pelo_boleto(self, prestador, tomador):
+        """Guarda geral contra prestador/tomador com CPF/CNPJ TROCADOS: o erro
+        passa calado por qualquer validação de dígito verificador (os dois
+        documentos são válidos), mas contradiz o boleto anexo quando ele existe.
+
+        Só age quando os papéis CRUZAM — o CNPJ atribuído ao prestador é o que o
+        boleto dá ao PAGADOR e/ou o do tomador é o do BENEFICIÁRIO. (Um
+        beneficiário apenas diferente do prestador é normal — filial, banco,
+        securitizadora — e não dispara nada.)
+          - Cruzamento completo (prestador = pagador E tomador = beneficiário),
+            com a razão social de pelo menos um dos dois confirmada no bloco
+            correspondente do boleto: troca os CPF/CNPJ e avisa.
+          - Qualquer outro cruzamento: mantém o extraído e avisa para conferir.
+        Devolve `(prestador, tomador, avisos)`."""
+        if prestador is None or tomador is None:
+            return prestador, tomador, []
+        cp = re.sub(r'\D', '', prestador.cnpj_cpf or '')
+        ct = re.sub(r'\D', '', tomador.cnpj_cpf or '')
+        if not cp or not ct or cp == ct:
+            return prestador, tomador, []
+        boleto = self._docs_do_boleto(self.raw_text)
+        benef = boleto.get('beneficiario')
+        pag = boleto.get('pagador')
+        cruza_p = bool(pag and pag[0] == cp)
+        cruza_t = bool(benef and benef[0] == ct)
+        if not (cruza_p or cruza_t):
+            return prestador, tomador, []
+
+        def _nome_na_janela(razao, janela) -> bool:
+            chave = _normaliza_nome(razao or '')
+            return len(chave) >= 6 and chave[:20] in _normaliza_nome(janela or '')
+
+        corroborado = ((benef and _nome_na_janela(prestador.razao_social, benef[1]))
+                       or (pag and _nome_na_janela(tomador.razao_social, pag[1])))
+        if cruza_p and cruza_t and corroborado:
+            aviso = ("CPF/CNPJ de prestador e tomador saíram TROCADOS da grade da nota e "
+                     "foram corrigidos pelo boleto anexo (Beneficiário/Pagador): prestador "
+                     f"{cp} -> {ct}, tomador {ct} -> {cp}; conferir")
+            return (prestador.model_copy(update={'cnpj_cpf': ct}),
+                    tomador.model_copy(update={'cnpj_cpf': cp}), [aviso])
+        partes = []
+        if cruza_p:
+            partes.append(f"o CPF/CNPJ do prestador ({cp}) é o do PAGADOR do boleto anexo")
+        if cruza_t:
+            partes.append(f"o CPF/CNPJ do tomador ({ct}) é o do BENEFICIÁRIO do boleto anexo")
+        aviso = ("Possível troca de prestador/tomador: " + " e ".join(partes)
+                 + " - mantido como extraído da nota; conferir")
+        return prestador, tomador, [aviso]
 
     def _sp_refinar_entidades(self, prestador, tomador):
         """NFS-e de São Paulo digital cujo pdfminer entrega os blocos de
@@ -22048,6 +22182,9 @@ class SPPdfExtractor:
         tomador   = self._extrair_entidade("Tomador")
         intermediario = self._extrair_entidade("Intermediario")
         prestador, tomador = self._sp_refinar_entidades(prestador, tomador)
+        # Guarda geral: CPF/CNPJ de prestador/tomador trocados contradizem o
+        # boleto anexo (Beneficiário/Pagador) — corrige ou avisa, nunca calado.
+        prestador, tomador, avisos_boleto = self._conferir_papeis_pelo_boleto(prestador, tomador)
 
         # DANFSe Nacional: quando o TOMADOR vem "não identificado" na própria nota
         # (o documento imprime, em tarja de largura total, "TOMADOR DO SERVIÇO NÃO
@@ -22175,6 +22312,7 @@ class SPPdfExtractor:
         if self.layout in _LAYOUTS_SAUBARA:
             avisos.extend(a for a in self._saubara_campos().avisos if a not in avisos)
         avisos.extend(avisos_flash)
+        avisos.extend(a for a in avisos_boleto if a not in avisos)
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
             # Mesma natureza (NFCom, ICMS) dos layouts NFCom abaixo, mas este
             # layout NÃO zera Base de Cálculo/Alíquota: leva o BC ICMS/ALÍQ ICMS
