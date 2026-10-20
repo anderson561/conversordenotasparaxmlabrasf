@@ -3438,6 +3438,20 @@ class SPPdfExtractor:
             if m:
                 return m.group(1).strip()
 
+        if self.layout == LAYOUT_NACIONAL_REFORMA and self._reforma_variante_gissonline():
+            # Variante GissOnline (nota nº 42, Jundiaí/SP): rótulo "DESCRIÇÃO
+            # DO SERVIÇO" sozinho na linha e o texto livre logo abaixo, até o
+            # cabeçalho da seção do ISSQN ("TIPO TRIBUTAÇÃO (ISSQN)"); não há
+            # "TRIBUTAÇÃO MUNICIPAL" para o recorte da v2.0 nacional.
+            m = re.search(
+                r'^\s*DESCRI[ÇC][ÃA]O\s+DO\s+SERVI[ÇC]O\s*\n(.*?)\n\s*'
+                r'(?:TIPO\s+(?:DE\s+)?TRIBUTA[ÇC][ÃA]O|TRIBUTA[ÇC][ÃA]O\s+MUNICIPAL)',
+                t, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                if disc:
+                    return disc
+
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             # DANFSe v2.0: o rótulo "Descrição do Serviço" fica na coluna da
             # ESQUERDA da grade da seção "SERVIÇO PRESTADO", enquanto o texto
@@ -4427,6 +4441,19 @@ class SPPdfExtractor:
                 m = re.search(r'(\d{2})\.(\d{2})\.\d{2}', t[ancora.end():ancora.end() + 120])
                 if m:
                     return m.group(1) + m.group(2)
+            # Variante GissOnline (achado real 2026-10-20, nota nº 42,
+            # Jundiaí/SP): "SERVIÇO PRESTADO" sai no meio dos rótulos vazios do
+            # INTERMEDIÁRIO, longe do código, e o código vem com o item da LC
+            # 116 SEM zero à esquerda ("7.11.01 / 366"). Âncora no rótulo
+            # próprio, valor na linha seguinte; o item vira 4 dígitos (0711),
+            # mesma normalização das demais DANFSe. Gated pela variante para
+            # não mexer na extração já validada das outras v2.0.
+            if self._reforma_variante_gissonline():
+                v = self._valor_rotulo_gissonline(
+                    r'C[ÓO]DIGO\s+DE\s+TRIBUTA[ÇC][ÃA]O\s+NACIONAL\s*/\s*MUNICIPAL') or ''
+                m = re.match(r'^(\d{1,2})\.(\d{2})\.\d{2}\b', v)
+                if m:
+                    return m.group(1).zfill(2) + m.group(2)
 
         if self.layout == LAYOUT_NACIONAL:
             # DANFSe: "Código de Tributação Nacional ... 16.02.01 - Outros serviços
@@ -11948,6 +11975,267 @@ class SPPdfExtractor:
             return None
         return doc if self._validate_cnpj_cpf(doc) else None
 
+    # Rótulos da variante GissOnline da DANFSe v2.0 (um rótulo por linha, em
+    # CAIXA ALTA, valor na linha seguinte ou linha seguinte já é outro rótulo
+    # quando o campo vem em branco).
+    _RE_ROTULO_GISSONLINE = re.compile(
+        r'^(?:CNPJ\s*/\s*CPF\s*/\s*NIF|INSCRI[ÇC][ÃA]O\s+MUNICIPAL|TELEFONE|'
+        r'NOME\s*/\s*NOME\s+EMPRESARIAL|ENDERE[ÇC]O|MUNIC[ÍI]PIO\s*/\s*SIGLA\s+UF|'
+        r'E-?MAIL|C[ÓO]DIGO\s+IBGE\s*/\s*CEP|SIMPLES\s+NACIONAL\b.*|REGIME\b.*|'
+        r'PRESTADOR|TOMADOR\b.*|DESTINAT[ÁA]RIO\b.*|INTERMEDI[ÁA]RIO\b.*|'
+        r'EMITENTE\b.*|SERVI[ÇC]O\s+PRESTADO)$')
+
+    def _reforma_variante_gissonline(self) -> bool:
+        """DANFSe v2.0 gerada pelo GissOnline (achado real 2026-10-20, nota nº
+        42, Jundiaí/SP). Marca ESTRUTURAL, não o nome do sistema: o bloco do
+        prestador tem o cabeçalho "PRESTADOR" sozinho na linha (o leiaute
+        nacional imprime "PRESTADOR / FORNECEDOR") — ou, sem ele, o bloco
+        "EMITENTE DA NFS-E" abre direto em "CNPJ / CPF / NIF" (no nacional o
+        valor do emitente é "Prestador") — e os rótulos vêm um por
+        linha com o valor logo abaixo ("INSCRIÇÃO MUNICIPAL" em vez de
+        "Indicador Municipal (Inscrição)"). Esta variante não imprime a chave
+        de acesso de 50 dígitos."""
+        t = self.raw_text
+        return bool(
+            (re.search(r'^\s*PRESTADOR\s*$', t, re.MULTILINE)
+             or re.search(r'^\s*EMITENTE\s+DA\s+NFS-?E\s*\n+\s*CNPJ\s*/\s*CPF\s*/\s*NIF\s*$', t,
+                          re.MULTILINE | re.IGNORECASE))
+            and not re.search(r'PRESTADOR\s*/\s*FORNECEDOR', t, re.IGNORECASE)
+            and re.search(r'^\s*TOMADOR\s*/\s*ADQUIRENTE\s*$', t, re.MULTILINE)
+            and re.search(r'^\s*INSCRI[ÇC][ÃA]O\s+MUNICIPAL\s*$', t, re.MULTILINE)
+            and not re.search(r'Indicador\s+Municipal', t, re.IGNORECASE))
+
+    def _extrair_entidade_reforma_gissonline(self, is_prestador: bool,
+                                             is_intermediario: bool = False) -> Optional[Entidade]:
+        """Entidades da variante GissOnline da DANFSe v2.0 (ver
+        `_reforma_variante_gissonline`).
+
+        Ordem de leitura real (pdfminer, nota nº 42):
+        - "EMITENTE DA NFS-E" (CNPJ e, depois do título do documento, os
+          demais campos do emitente) — usado só quando o bloco PRESTADOR
+          faltar;
+        - "PRESTADOR": todos os rótulos com o valor logo abaixo;
+        - "TOMADOR / ADQUIRENTE" e "DESTINATÁRIO DA OPERAÇÃO": cada um com
+          CNPJ/Nome/Endereço no próprio bloco, e as colunas da direita
+          (Inscrição Municipal, Município/UF, E-mail, Telefone, Código
+          IBGE/CEP) despejadas DEPOIS dos dois blocos, em pares — tomador
+          primeiro, destinatário depois (mesmo princípio ordinal da v2.0
+          nacional). Por isso o tomador fica com a 1ª ocorrência de cada
+          rótulo na região que vai de "TOMADOR / ADQUIRENTE" até o
+          intermediário;
+        - "INTERMEDIÁRIO DO SERVIÇO": só rótulos, sem valores (ausente).
+
+        O valor é sempre a linha não vazia logo após o rótulo; se essa linha
+        for outro rótulo, o campo veio em branco (nunca se procura mais
+        adiante — foi assim que outras variantes vazaram valor de outra
+        coluna)."""
+        t = self.raw_text
+        if is_intermediario:
+            m_int = re.search(r'^\s*INTERMEDI[ÁA]RIO\s+D[OA]\s+(?:SERVI[ÇC]O|OPERA[ÇC][ÃA]O)\s*$', t,
+                              re.MULTILINE | re.IGNORECASE)
+            if not m_int:
+                return None
+            m_fim_int = re.search(r'^\s*C[ÓO]DIGO\s+DE\s+TRIBUTA[ÇC][ÃA]O', t[m_int.end():],
+                                  re.MULTILINE | re.IGNORECASE)
+            bloco_int = t[m_int.end(): m_int.end() + (m_fim_int.start() if m_fim_int else 600)]
+            if not re.search(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}', bloco_int):
+                return None
+            # Intermediário preenchido nunca foi visto nesta variante: não
+            # adivinhamos o pareamento — o prestador/tomador seguem certos e o
+            # usuário é avisado.
+            self.__dict__.setdefault('_reforma_avisos', []).append(
+                "DANFSe GissOnline com INTERMEDIÁRIO DO SERVIÇO preenchido - "
+                "intermediário não extraído, confira manualmente")
+            return None
+
+        m_emit = re.search(r'^\s*EMITENTE\s+DA\s+NFS-?E\s*$', t, re.MULTILINE | re.IGNORECASE)
+        m_prest = re.search(r'^\s*PRESTADOR\s*$', t, re.MULTILINE)
+        m_tom = re.search(r'^\s*TOMADOR\s*/\s*ADQUIRENTE\s*$', t, re.MULTILINE)
+        m_int = re.search(r'^\s*INTERMEDI[ÁA]RIO\s+D[OA]\s+(?:SERVI[ÇC]O|OPERA[ÇC][ÃA]O)', t,
+                          re.MULTILINE | re.IGNORECASE)
+        m_serv = re.search(r'^\s*SERVI[ÇC]O\s+PRESTADO\s*$', t, re.MULTILINE | re.IGNORECASE)
+        fim_tom = min([m.start() for m in (m_int, m_serv) if m] or [len(t)])
+        if is_prestador:
+            if m_prest and m_tom and m_prest.start() < m_tom.start():
+                regiao = t[m_prest.end():m_tom.start()]
+            elif m_emit:
+                regiao = t[m_emit.end():(m_tom.start() if m_tom else fim_tom)]
+            else:
+                regiao = ''
+        else:
+            regiao = t[m_tom.end():fim_tom] if m_tom else ''
+
+        linhas = [ln.strip() for ln in regiao.split('\n') if ln.strip()]
+
+        def _valor(rotulo_re: str) -> str:
+            """Valor da 1ª ocorrência do rótulo na região ('' se em branco)."""
+            for i, ln in enumerate(linhas):
+                if re.match(rotulo_re + r'$', ln, re.IGNORECASE):
+                    if i + 1 < len(linhas) and not self._RE_ROTULO_GISSONLINE.match(linhas[i + 1]):
+                        return linhas[i + 1]
+                    return ''
+            return ''
+
+        doc_txt = _valor(r'CNPJ\s*/\s*CPF\s*/\s*NIF')
+        cnpj = re.sub(r'\D', '', doc_txt)
+        if len(cnpj) not in (11, 14):
+            cnpj = '00000000000000'
+        elif not self._validate_cnpj_cpf(cnpj):
+            self.__dict__.setdefault('_reforma_avisos', []).append(
+                f"CPF/CNPJ do {'prestador' if is_prestador else 'tomador'} lido na nota ({cnpj}) "
+                "não passa no dígito verificador - confira o documento manualmente")
+
+        razao = _valor(r'NOME\s*/\s*NOME\s+EMPRESARIAL')
+        inscricao = _valor(r'INSCRI[ÇC][ÃA]O\s+MUNICIPAL')
+        inscricao = inscricao if re.match(r'^[\d.\-/]+$', inscricao or '') else None
+        telefone = _valor(r'TELEFONE')
+        telefone = telefone if re.search(r'\d{4,5}-?\s?\d{4}', telefone or '') else None
+        email = _valor(r'E-?MAIL')
+        email = email if re.match(r'^[^@\s]+@[^@\s]+\.[A-Za-z][^@\s]*$', email or '') else None
+
+        municipio, uf = '', ''
+        m_mun = re.match(r'^([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*(?:/|\s-)\s*([A-Za-z]{2})$',
+                         _valor(r'MUNIC[ÍI]PIO\s*/\s*SIGLA\s+UF'))
+        if m_mun:
+            municipio, uf = re.sub(r'\s+', ' ', m_mun.group(1)).strip(), m_mun.group(2).upper()
+
+        # "CÓDIGO IBGE / CEP": este gerador imprime só o CEP ("13211540");
+        # o leiaute nacional imprime "<IBGE> / <CEP>". Aceita os dois.
+        cod_mun, cep = '', ''
+        ibge_cep = _valor(r'C[ÓO]DIGO\s+IBGE\s*/\s*CEP')
+        m_par = re.match(r'^([\d.]{7,9})\s*/\s*([\d.\-]{8,10})$', ibge_cep)
+        if m_par:
+            ibge_d, cep_d = re.sub(r'\D', '', m_par.group(1)), re.sub(r'\D', '', m_par.group(2))
+            cod_mun = ibge_d if len(ibge_d) == 7 else ''
+            cep = cep_d if len(cep_d) == 8 else ''
+        elif re.match(r'^\d{5}-?\d{3}$', ibge_cep):
+            cep = re.sub(r'\D', '', ibge_cep)
+        if not cod_mun and municipio:
+            cod_mun = _ibge_resolver.extract_and_validate(
+                municipio, uf, city_hint=municipio, raw_doc_text=t) or ''
+
+        # Endereço "<logradouro>, <número> - <complemento> - <bairro>"; o
+        # gerador antepõe "Sem tipo de logradouro" quando o logradouro não
+        # tem tipo (mesmo filler da plataforma Ginfes/Santos) e deixa o
+        # complemento vazio entre dois hífens ("175 -  - Chácara Malota").
+        logradouro, numero, complemento, bairro = 'Não informado', 'S/N', None, 'Não informado'
+        end_txt = re.sub(r'^Sem\s+tipo\s+de\s+logradouro\s+', '', _valor(r'ENDERE[ÇC]O'), flags=re.IGNORECASE)
+        if end_txt:
+            log_txt, _, resto = end_txt.partition(',')
+            logradouro = log_txt.strip() or logradouro
+            partes = [p.strip() for p in re.split(r'\s+-(?=\s|$)', resto.strip())]
+            if partes and re.match(r'^(\d+[A-Za-z]?|S/?N)$', partes[0], re.IGNORECASE):
+                numero = partes[0]
+                partes = partes[1:]
+            partes = [p for p in partes if p]
+            if partes:
+                bairro = partes[-1]
+                if len(partes) > 1:
+                    complemento = ' - '.join(partes[:-1])
+
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=inscricao,
+            razao_social=razao or ('Prestador Não Identificado' if is_prestador else 'Tomador Não Identificado'),
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=cod_mun,
+                municipio=municipio or 'Não informado',
+                uf=uf,
+                cep=cep or '00000000',
+            ),
+            email=email,
+            telefone=telefone,
+        )
+
+    def _valor_rotulo_gissonline(self, rotulo_re: str) -> Optional[str]:
+        """Linha de valor logo abaixo do rótulo (variante GissOnline): None
+        quando o rótulo não existe, '' quando o campo veio em branco (a linha
+        seguinte já é outro rótulo, em CAIXA ALTA, sem dígito)."""
+        m = re.search(r'^\s*' + rotulo_re + r'\s*$', self.raw_text, re.MULTILINE | re.IGNORECASE)
+        if not m:
+            return None
+        for ln in self.raw_text[m.end():].split('\n'):
+            ln = ln.strip()
+            if ln:
+                return '' if (ln.upper() == ln and not re.search(r'\d', ln)) else ln
+        return ''
+
+    def _extrair_valores_reforma_gissonline(self) -> Valores:
+        """Grade de valores da variante GissOnline da DANFSe v2.0: os mesmos
+        rótulos da v2.0 nacional, mas valores SEM "R$" ("4.800,00") e alíquota
+        sem "%" ("5.00"). Adjacência estrita rótulo -> linha seguinte; campo
+        em branco nunca pesca o número de outro campo.
+
+        Mesma regra de valor da v2.0 nacional: ValorServicos = "VALOR DA
+        OPERAÇÃO / SERVIÇO" (BC ISSQN só na base). Este gerador não imprime
+        o "VALOR LÍQUIDO DA NFS-e" isolado, só "VALOR LÍQUIDO DA NFS-E +
+        IBS/CBS" — com IBS/CBS = 0,00 os dois coincidem, então ele só é usado
+        quando o "TOTAL DO IBS/CBS" impresso é zero; senão o líquido é o valor
+        da operação menos o total de retenções impresso.
+
+        "ISSQN APURADO" vem em BRANCO nas notas do Simples Nacional (ISS
+        recolhido no DAS): ValorIss fica 0,00 + aviso — nunca derivado de
+        BC × alíquota (mesma decisão já tomada em Santos/SP e Aracaju)."""
+        def _num(rotulo_re):
+            v = self._valor_rotulo_gissonline(rotulo_re)
+            m = re.match(r'^(?:R\$\s*)?(-?\d[\d.,]*)\s*%?$', v or '')
+            return self._parse_valor_tolerante(m.group(1)) if m else None
+
+        serv = _num(r'VALOR\s+DA\s+OPERA[ÇC][ÃA]O\s*/\s*SERVI[ÇC]O') or 0.0
+        base = _num(r'BC\s+ISSQN') or 0.0
+        aliq = _num(r'AL[ÍI]QUOTA\s+APLICADA')
+        iss = _num(r'ISSQN\s+APURADO')
+        irrf = _num(r'IRRF') or 0.0
+        inss = _num(r'CONTRIBUI[ÇC][ÃA]O\s+PREVIDENCI[ÁA]RIA\s*-\s*RETIDA') or 0.0
+        contrib = _num(r'CONTRIBUI[ÇC][ÕO]ES\s+SOCIAIS\s*-\s*RETIDAS') or 0.0
+        deducoes = _num(r'TOTAL\s+DEDU[ÇC][ÕO]ES\s*/\s*REDU[ÇC][ÕO]ES') or 0.0
+        desc_incond = _num(r'DESCONTO\s+INCONDICIONADO') or 0.0
+        total_ret = _num(r'TOTAL\s+DAS\s+RETEN[ÇC][ÕO]ES\s*\(ISSQN\s*/\s*FEDERAIS\)')
+        total_ibs_cbs = _num(r'TOTAL\s+DO\s+IBS\s*/\s*CBS')
+        liq_ibs = _num(r'VALOR\s+L[ÍI]QUIDO\s+DA\s+NFS-?E\s*\+\s*IBS\s*/\s*CBS')
+
+        ret_txt = self._valor_rotulo_gissonline(r'RETEN[ÇC][ÃA]O\s+DO\s+ISSQN') or ''
+        iss_retido = bool(re.match(r'^(?:Sim|Retido\b)', ret_txt, re.IGNORECASE))
+
+        avisos = self.__dict__.setdefault('_reforma_avisos', [])
+        if iss is None:
+            iss = 0.0
+            avisos.append(
+                "\"ISSQN APURADO\" em branco na nota (prestador do Simples Nacional: "
+                "ISS recolhido no DAS) - ValorIss mantido em 0,00, não derivado de "
+                "BC ISSQN x alíquota")
+        if deducoes and not (base and serv and abs(serv - deducoes - desc_incond - base) <= 0.02):
+            deducoes = 0.0
+            avisos.append(
+                "\"Total Deduções / Reduções\" impresso na nota não fecha com "
+                "Valor da Operação - BC ISSQN - mantido ValorDeducoes 0,00; "
+                "confira as deduções desta nota manualmente")
+
+        if liq_ibs is not None and not total_ibs_cbs:
+            liquido = liq_ibs
+        elif total_ret is not None:
+            liquido = round(serv - total_ret, 2)
+        else:
+            liquido = serv
+
+        return Valores(
+            valor_servicos=serv,
+            valor_deducoes=deducoes,
+            valor_inss=inss,
+            valor_ir=irrf,
+            valor_contribuicoes_sociais_retidas=contrib,
+            base_calculo=base or serv,
+            aliquota=(aliq / 100) if aliq else 0.0,
+            valor_iss=iss,
+            iss_retido=iss_retido,
+            valor_iss_retido=iss if iss_retido else 0.0,
+            valor_liquido_nfse=liquido or serv,
+        )
+
     def _extrair_entidade_nacional_reforma(self, is_prestador: bool,
                                            is_intermediario: bool = False) -> Optional[Entidade]:
         """Extrai prestador/tomador/intermediário da DANFSe v2.0 (pós-reforma).
@@ -11974,6 +12262,9 @@ class SPPdfExtractor:
         consumir a posição do outro — senão o valor do prestador escorregaria
         para o tomador."""
         t = self.raw_text
+
+        if self._reforma_variante_gissonline():
+            return self._extrair_entidade_reforma_gissonline(is_prestador, is_intermediario)
 
         m_prest = re.search(r'PRESTADOR\s*/\s*FORNECEDOR', t, re.IGNORECASE)
         # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES INTEGRADAS DE SEGURANÇA
@@ -15414,6 +15705,9 @@ class SPPdfExtractor:
             # esse o erro quando a nota caía no parser da v1.0, que procura
             # "Valor do Serviço" (rótulo inexistente na v2.0) e, sem achar,
             # copiava o líquido: 9.817,41 no lugar de 12.353,68.
+            if self._reforma_variante_gissonline():
+                return self._extrair_valores_reforma_gissonline()
+
             m_rs = r'R\$\s*(\d[\d.,]*\d)'
 
             def _rs_apos_v2(label, janela=120):
@@ -22266,6 +22560,14 @@ class SPPdfExtractor:
             # dos demais ramos ME/EPP.
             optante_simples = True
             regime_especial = "6"
+        elif self.layout == LAYOUT_NACIONAL_REFORMA and self._reforma_variante_gissonline() and \
+                re.match(r'^Sim\b', self._valor_rotulo_gissonline(
+                    r'SIMPLES\s+NACIONAL\s+NA\s+DATA\s+DE\s+COMPET[ÊE]NCIA') or '', re.IGNORECASE):
+            # Variante GissOnline da DANFSe v2.0 (nota nº 42, Jundiaí/SP):
+            # "SIMPLES NACIONAL NA DATA DE COMPETÊNCIA" / "Sim" — o valor não
+            # diz se é ME/EPP ou MEI, e o "REGIME ESPECIAL DE TRIBUTAÇÃO DO
+            # ISSQN" impresso é "0-Nenhum": só o optante, sem presumir regime.
+            optante_simples = True
         elif self.layout == LAYOUT_SANTOS:
             # Santos/SP (Ginfes): grade "labels dumped, depois values dumped"
             # ("Identificação Prestação de Serviços") — "Simples Nacional" (o
@@ -22467,6 +22769,10 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             # Avisos levantados pela própria leitura da incidência (acima).
             avisos.extend(a for a in self.__dict__.get('_reforma_avisos', []) if a not in avisos)
+            if self._reforma_variante_gissonline() and not self._extrair_codigo_cnae():
+                avisos.append(
+                    "CNAE não impresso na DANFSe (GissOnline) - CodigoCnae emitido "
+                    "como 0000000; informe o CNAE no Domínio se a importação exigir")
 
         return Nfse(
             numero=numero,
@@ -24401,13 +24707,29 @@ class SPPdfExtractor:
             # descartar — o guard nunca dispararia.
             _RE_DOC_NOTA = r'\d{2}\.?\d{3}\.?\d{3}\s*/\s*\d{4}-?\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}'
 
+            # Terceira condição (achado real 2026-10-20, DANFSe v2.0 emitida
+            # pelo GissOnline, Jundiaí/SP, nota nº 42): esse gerador imprime
+            # um bloco "EMITENTE DA NFS-E" com o CNPJ do emitente ANTES do
+            # título "DANFSe v2.0" (~300 caracteres) — o preâmbulo passava
+            # nas duas condições acima e a página única virava 2 notas (uma
+            # só com número/código de verificação, outra com o resto e número
+            # "09" pescado da competência). Uma 1ª nota genuína colada na
+            # mesma página sempre traz, antes do título da 2ª, o próprio bloco
+            # do TOMADOR — o preâmbulo de cabeçalho nunca.
+            _RE_TOMADOR_NOTA = r'\bTOMADOR\b'
+
             final_parts = []
             for p in parts:
-                split_positions = [
-                    m.start() for m in re.finditer(r'\n\s*\bDANFSe\b', p, flags=re.I)
-                    if m.start() >= DANFSE_HEADER_MIN_OFFSET
-                    and re.search(_RE_DOC_NOTA, p[:m.start()])
-                ]
+                # O TOMADOR é procurado só no trecho desde o último corte
+                # aceito: o da nota anterior não pode validar o preâmbulo da
+                # seguinte.
+                split_positions = []
+                for m in re.finditer(r'\n\s*\bDANFSe\b', p, flags=re.I):
+                    ini = split_positions[-1] if split_positions else 0
+                    if m.start() >= DANFSE_HEADER_MIN_OFFSET \
+                            and re.search(_RE_DOC_NOTA, p[:m.start()]) \
+                            and re.search(_RE_TOMADOR_NOTA, p[ini:m.start()], flags=re.I):
+                        split_positions.append(m.start())
                 if split_positions:
                     bounds = [0] + split_positions + [len(p)]
                     sub_parts = [p[bounds[i]:bounds[i + 1]] for i in range(len(bounds) - 1)]
