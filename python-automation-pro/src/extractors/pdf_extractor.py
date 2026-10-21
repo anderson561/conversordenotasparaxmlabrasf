@@ -1879,6 +1879,24 @@ class SPPdfExtractor:
                 res = _parse_dmy(m.group(1), m.group(2))
                 if res: return res
 
+        if self.layout == LAYOUT_SEM_PARAR:
+            # Achado real 2026-10-21 (nota nº 709678135): a fatura imprime
+            # "Data de Emissão: 08/09/26" com ANO DE 2 DÍGITOS, que nenhum
+            # rótulo genérico aceita — a emissão caía no início do período
+            # do plano contratado ("01/09/2026 a 30/09/2026"), 2026-09-01.
+            # Só o rótulo próprio vale; "Data de Fechamento"/"Vencimento"
+            # nunca são usados no lugar dele.
+            m = re.search(r'Data\s+de\s+Emiss[ãa]o\s*:?\s*(\d{2})/(\d{2})/(\d{4}|\d{2})\b',
+                          t, re.IGNORECASE)
+            if m:
+                ano = int(m.group(3))
+                if ano < 100:
+                    ano += 2000
+                try:
+                    return datetime(ano, int(m.group(2)), int(m.group(1)))
+                except ValueError:
+                    pass
+
         if self.layout == LAYOUT_RIBEIRAO_PRETO:
             # A leitura de página inteira só recupera "RPS: 261 - Data:
             # 03/08/2026", sem horário. A data COM horário
@@ -3427,6 +3445,27 @@ class SPPdfExtractor:
             # de borda de tabela colado à esquerda do valor.
             m = re.search(r'Descri[çc][ãa]o\s+do\s+Servi[çc]o\s*\n+\s*\|?\s*([^\n]+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
+
+        if self.layout == LAYOUT_SEM_PARAR:
+            # A fatura não tem campo de discriminação: tem um título ("NOTA
+            # FISCAL FATURA DE SERVIÇOS"), o nº da fatura e o período do
+            # plano contratado em cada linha do "Detalhamento de Plano
+            # Contratado". A discriminação é montada SÓ com esses três dados
+            # impressos (achado real 2026-10-21, nota nº 709678135, que saía
+            # com o texto genérico). Os nomes dos itens do plano ficam de
+            # fora de propósito: o OCR da tabela perde linhas inteiras e cola
+            # palavras ("PARCERIASERVIÇOSDESAUDE"), e uma lista parcial
+            # pareceria completa.
+            m_fat = re.search(r'N[ºo°]\s*DA\s+FATURA\s*:?\s*(\d[\d ]{8,}\d)', t, re.IGNORECASE)
+            periodos = re.findall(r'(\d{2}/\d{2}/\d{4})\s+a\s+(\d{2}/\d{2}/\d{4})', t)
+            partes = ['Nota Fiscal Fatura de Serviços Sem Parar']
+            if m_fat:
+                partes.append('Fatura nº ' + re.sub(r'\s', '', m_fat.group(1)))
+            if periodos:
+                ini, fim = max(periodos, key=periodos.count)  # o mais frequente; empate = o 1º
+                partes.append(f'Plano contratado - período {ini} a {fim}')
+            if len(partes) > 1:
+                return ' - '.join(partes)
 
         if self.layout == LAYOUT_ISBET:
             # A discriminação real é só a linha do item ("Referente a receita
@@ -13020,33 +13059,11 @@ class SPPdfExtractor:
 
         Devolve '' em qualquer falha (sem PDF, sem página, rótulo não achado):
         é um recorte ADITIVO, o chamador mantém o que já tinha."""
-        pagina = getattr(self, '_pagina_hint', None)
-        if not pagina:
-            return ''
         try:
-            import os
-            import pymupdf
             import pytesseract
-            from pytesseract import Output
             from PIL import Image
 
-            tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-            if os.path.exists(tess_path):
-                pytesseract.pytesseract.tesseract_cmd = tess_path
-
-            doc = pymupdf.open(self.pdf_path)
-            try:
-                idx = pagina - 1
-                if not (0 <= idx < len(doc)):
-                    return ''
-                pix = doc[idx].get_pixmap(dpi=300)
-                base = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
-            finally:
-                doc.close()
-
-            for angulo in (0, 180):
-                img = base.rotate(-angulo, expand=True) if angulo else base
-                dados = pytesseract.image_to_data(img, lang='por', output_type=Output.DICT)
+            for img, dados in self._orientacoes_sem_parar():
                 alvo = None
                 for i, palavra in enumerate(dados['text']):
                     if 'CNPJ' in palavra.strip().upper():
@@ -13066,6 +13083,98 @@ class SPPdfExtractor:
                 texto = pytesseract.image_to_string(rec, lang='por', config='--psm 6')
                 if re.search(r'CNPJ', texto, re.IGNORECASE):
                     return texto
+            return ''
+        except Exception:
+            return ''
+
+    def _orientacoes_sem_parar(self):
+        """Imagem a 300 dpi da página da fatura Sem Parar em 0° e 180°, cada
+        uma com o `image_to_data` de página inteira, para os recortes
+        dedicados (`_ocr_cabecalho_sem_parar`, `_ocr_nome_cliente_sem_parar`)
+        localizarem seus rótulos. GERADOR preguiçoso com cache por página: o
+        `image_to_data` de página inteira é a parte cara — a orientação de
+        180° só é calculada se algum recorte não achar o rótulo em 0°, como
+        antes, e o que já foi calculado é reaproveitado pelo outro recorte.
+        Não produz nada em qualquer falha (sem PDF, sem página)."""
+        pagina = getattr(self, '_pagina_hint', None)
+        if not pagina:
+            return
+        chave = (self.pdf_path, pagina)
+        cache = getattr(self, '_cache_orientacoes_sem_parar', None)
+        if not cache or cache['chave'] != chave:
+            cache = {'chave': chave, 'base': None, 'itens': []}
+            self._cache_orientacoes_sem_parar = cache
+        try:
+            import os
+            import pymupdf
+            import pytesseract
+            from pytesseract import Output
+            from PIL import Image
+
+            for angulo in (0, 180):
+                ja = [it for ang, it in cache['itens'] if ang == angulo]
+                if ja:
+                    yield ja[0]
+                    continue
+                if cache['base'] is None:
+                    tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+                    if os.path.exists(tess_path):
+                        pytesseract.pytesseract.tesseract_cmd = tess_path
+                    doc = pymupdf.open(self.pdf_path)
+                    try:
+                        idx = pagina - 1
+                        if not (0 <= idx < len(doc)):
+                            return
+                        pix = doc[idx].get_pixmap(dpi=300)
+                        cache['base'] = Image.frombytes('RGB', (pix.width, pix.height), pix.samples)
+                    finally:
+                        doc.close()
+                base = cache['base']
+                img = base.rotate(-angulo, expand=True) if angulo else base
+                dados = pytesseract.image_to_data(img, lang='por', output_type=Output.DICT)
+                cache['itens'].append((angulo, (img, dados)))
+                yield (img, dados)
+        except Exception:
+            return
+
+    def _ocr_nome_cliente_sem_parar(self) -> str:
+        """Recorte dedicado da linha `Nome:` do bloco do CLIENTE na fatura
+        Sem Parar.
+
+        Achado real 2026-10-21 (nota nº 709678135, pág. 3 do
+        "Scan2026-10-16_110738.pdf"): no OCR de página inteira a linha saiu
+        cortada no meio de uma palavra — `Nome: Stammaq Servicos Tecnicos
+        Aut:` para o impresso `Stammaq Servicos Tecnicos Automocao Motores E
+        Maq` —, e a razão social do tomador ia truncada para o XML. Lida
+        sozinha, a linha sai inteira.
+
+        Âncora: a palavra `Nome` localizada por `image_to_data` (nunca posição
+        fixa). A faixa vai até 55% da largura — a caixa "Nº da Fatura / Nº da
+        Nota Fiscal ..." começa logo depois e sangraria para dentro. Devolve
+        só o valor do rótulo, ou '' em qualquer falha (aditivo: o chamador
+        decide se o recorte é melhor que o que já tinha)."""
+        try:
+            import pytesseract
+            from PIL import Image
+
+            for img, dados in self._orientacoes_sem_parar():
+                alvo = None
+                for i, palavra in enumerate(dados['text']):
+                    if re.fullmatch(r'Nome:?', palavra.strip(), re.IGNORECASE):
+                        alvo = (dados['left'][i], dados['top'][i], dados['height'][i])
+                        break
+                if not alvo:
+                    continue
+                x, y, h = alvo
+                larg, alt = img.size
+                caixa = (max(0, x - h), max(0, y - int(h * 0.8)),
+                         int(larg * 0.55), min(alt, y + int(h * 1.8)))
+                rec = img.crop(caixa)
+                rec = rec.resize((rec.width * 2, rec.height * 2), Image.LANCZOS)
+                texto = pytesseract.image_to_string(rec, lang='por', config='--psm 6')
+                m = re.search(r'Nome\s*:\s*([^\n]+)', texto, re.IGNORECASE)
+                if m:
+                    return m.group(1).strip()
             return ''
         except Exception:
             return ''
@@ -13214,17 +13323,27 @@ class SPPdfExtractor:
             # O cabeçalho do emitente não tem rótulo "Endereço:"/"Bairro:": a
             # 3ª linha é "05425-902 - Pinheiros - São Paulo/SP", e a razão
             # social e o logradouro só saem legíveis no recorte dedicado.
-            m_cab = re.search(
-                r'(\d{5}-?\d{3})\s*-\s*([^\n\-]+?)\s*-\s*([^\n/]+?)\s*/\s*([A-Z]{2})\b', bloco)
+            re_cab = (r'(\d{5}-?\d{3})\s*-\s*([^\n\-]+?)\s*-\s*([^\n/]+?)\s*/\s*([A-Z]{2})\b')
+            m_cab = re.search(re_cab, bloco)
+            recorte = self._ocr_cabecalho_sem_parar()
+            if not m_cab:
+                # Achado real 2026-10-21 (nota nº 709678135): no OCR de
+                # página o "0" inicial do CEP se perdeu ("5425-902 -
+                # Pinheiros - ..."), a linha deixou de casar e CEP/bairro iam
+                # vazios. O recorte do cabeçalho já cobre essa linha e a lê
+                # inteira ("05425-902 - Pinheiros - São Paulo/SP Nº DA") —
+                # mesma regex, nunca um CEP de 4 dígitos completado à mão.
+                m_cab = re.search(re_cab, recorte or '')
             if m_cab:
                 cep = re.sub(r'\D', '', m_cab.group(1))
                 bairro = m_cab.group(2).strip()
                 municipio = m_cab.group(3).strip()
                 uf = m_cab.group(4).upper()
 
-            recorte = self._ocr_cabecalho_sem_parar()
             for linha in (recorte or '').split('\n'):
-                linha = linha.strip()
+                # Aspas/pontuação solta de borda antes do logradouro (real:
+                # `" Av. Dra. Ruth Cardoso, 7221, ...`) impediam o casamento.
+                linha = linha.strip().lstrip('"\'“”‘’`´|:;,. ').strip()
                 if not razao and re.search(r'SEM\s*PARAR', linha, re.IGNORECASE):
                     # Corta a sangria da coluna da direita ("... LTDA. NOS").
                     razao = re.sub(r'\s+N[OoºÍ\[“”\'"´`]+\S*\s*$', '', linha).strip(' .:|-')
@@ -13245,6 +13364,19 @@ class SPPdfExtractor:
                                   t, re.IGNORECASE)
                 if m_rod:
                     razao = _limpa_razao(m_rod.group(1))
+
+        if self.layout == LAYOUT_SEM_PARAR and not is_prestador and razao:
+            # A linha "Nome:" do cliente pode sair TRUNCADA no OCR de página
+            # (real, nota nº 709678135: "Stammaq Servicos Tecnicos Aut:" para
+            # o impresso "...Automocao Motores E Maq"). O recorte dedicado só
+            # substitui a leitura de página quando a ESTENDE: é mais longo e
+            # o seu começo confere com o que a página leu (tolerância de OCR
+            # para trocas como q/g) — nunca troca um nome por outro.
+            from difflib import SequenceMatcher
+            nome_rec = _limpa_razao(self._ocr_nome_cliente_sem_parar())
+            if (len(nome_rec) > len(razao) and SequenceMatcher(
+                    None, razao.lower(), nome_rec[:len(razao)].lower()).ratio() >= 0.85):
+                razao = nome_rec
 
         cod_mun = _ibge_resolver.extract_and_validate(
             municipio, uf or uf_padrao, city_hint=municipio) if municipio else ''
@@ -14734,7 +14866,13 @@ class SPPdfExtractor:
             # impressas para chegar ao total impresso é ler a aritmética do
             # documento, não inventá-la. Se qualquer uma faltar, fica zerado:
             # não existe "meio total".
-            m_sub = re.search(r'Subtotal\s*R?\$?\s*([\d.]+,\d{2})', t, re.IGNORECASE)
+            # Achado real 2026-10-21 (nota nº 709678135): o OCR leu
+            # "Subtotal | R$3438,18D" — borda de tabela "|" entre rótulo e
+            # valor e milhar sem ponto. Sem tolerar o "|" o rótulo não casava,
+            # e o código caía no ramo SEM Subtotal (abaixo), que somou células
+            # soltas da tabela por placa (incluindo a coluna Plano Contratado)
+            # e entregou R$ 673,54 para um TOTAL impresso de R$ 3.465,48.
+            m_sub = re.search(r'Subtotal\s*[|:]?\s*R?\$?\s*(\d[\d.]*,\d{2})', t, re.IGNORECASE)
             m_arrec = re.search(r'Outras\s*Arrec[^\n]*\n\s*([^\n]+)', t, re.IGNORECASE)
             total = 0.0
             if m_sub:
