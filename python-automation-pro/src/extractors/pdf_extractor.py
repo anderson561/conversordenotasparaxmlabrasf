@@ -3410,6 +3410,9 @@ class SPPdfExtractor:
         # Procura o rótulo e pega o primeiro número que aparece depois dele (até 100 caracteres de distância)
         label_patterns = [
             r'N[uú]mero\s+(?:da\s+)?NFS-e', 
+            # OCR de scan lê o "F" de NFS-E como "r" ("NÚMERO DA Nrs E");
+            # só com o rótulo sozinho na linha (DANFSe v2.0 por coluna).
+            r'N[uú]mero\s+da\s+N[FR]S[-.\s]?E(?=[ \t]*\n)',
             r'N[uú]mero\s+da\s+Nota\s+Fiscal', 
             r'N[ºo]\s+da\s+Nota\s+Fiscal',
             r'N[uú]mero\s+da\s+Nota'
@@ -3450,7 +3453,7 @@ class SPPdfExtractor:
             r'N[uú]mero[:\s]+(\d+)',
             r'NFS-e\s*n[uú]mero[:\s]+(\d+)',
             r'NFS-e\s*[:\s\n]*(\d+)',
-            r'N[ºo]\s*[:\s\n]*(\d+)',
+            r'(?<!Lei )N[ºo]\s*[:\s\n]*(\d+)',
             r'Nota\s*n[ºo]\s*[:\s\n]*(\d+)',
         ]
         for p in patterns:
@@ -3632,6 +3635,32 @@ class SPPdfExtractor:
                     trecho = trecho[m_rot.end():]
                 disc = re.sub(r'\s+', ' ', trecho).strip()
                 if disc:
+                    return disc
+            # Achado real 2026-10-21 (nota nº 2600000000058, GERENCIAR
+            # TECNOLOGIA EM TRANSPORTES, escaneada e reconstruída pela grade —
+            # ver `_ocr_celulas_danfse_v2`): o texto livre vem logo abaixo do
+            # próprio rótulo "Descrição do Serviço" (forma rótulo->valor), e o
+            # "Local da Prestação" é seguido direto por "TRIBUTAÇÃO MUNICIPAL"
+            # — o recorte acima sai vazio e a nota caía na discriminação
+            # genérica. Lê do rótulo até o próximo rótulo da grade/seção.
+            # O valor precisa vir LOGO abaixo do rótulo: se o que segue é outro
+            # rótulo da grade (OCR em ordem de colunas, ex.: "Descrição do
+            # Serviço\n\nCódigo da NBS\n1.2001.50.00"), não há discriminação
+            # aqui — nunca devolver o rótulo/valor vizinho como texto livre.
+            _prox_rotulo = (r'(?:C[óo]digo\s+(?:de\s+Tributa|da\s+NBS)|Local\s+da\s+Presta|'
+                            r'TRIBUTA[ÇC][ÃA]O\s+MUNICIPAL)')
+            m = re.search(
+                r'Descri[çc][ãa]o\s+do\s+Servi[çc]o[ \t]*\n(?!\s*' + _prox_rotulo + r')(.*?)\n\s*' + _prox_rotulo,
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                disc = re.sub(r'\s+', ' ', m.group(1)).strip()
+                # Leitura OCR fora de ordem (nota nº 2293, VALDEMAR MEDEIROS):
+                # abaixo do rótulo vêm as colunas do TOMADOR ("Indicador
+                # Municipal (Inscrição) 1492591 Município / Sigla UF ...") —
+                # rótulo de grade dentro do "texto livre" = não é discriminação.
+                if disc and not re.search(
+                        r'Indicador\s+Municipal|Sigla\s+UF|E-?\s*mail\b|CNPJ\s*/\s*CPF|Nome\s*/\s*Nome',
+                        disc, re.IGNORECASE):
                     return disc
 
         if self.layout == LAYOUT_BARUERI:
@@ -4586,13 +4615,18 @@ class SPPdfExtractor:
             m_servico = re.search(r'SERVI[ÇC]O\s+PRESTADO', t, re.IGNORECASE)
             m_label = re.search(
                 r'C[óo]digo\s+de\s+Tributa[çc][ãa]o\s+Nacional', t, re.IGNORECASE)
-            ancora = None
-            if m_servico and (not m_label or m_servico.start() < m_label.start()):
-                ancora = m_servico
-            elif m_label:
-                ancora = m_label
-            if ancora:
-                m = re.search(r'(\d{2})\.(\d{2})\.\d{2}', t[ancora.end():ancora.end() + 120])
+            # Achado real 2026-10-21 (nota nº 2600000000058, GERENCIAR
+            # TECNOLOGIA EM TRANSPORTES, escaneada e reconstruída pela grade —
+            # ver `_ocr_celulas_danfse_v2`): "SERVIÇO PRESTADO" vem primeiro,
+            # mas seguido da descrição do item e da discriminação inteira (bem
+            # mais que 120 caracteres) antes do par "Código de Tributação
+            # Nacional / Municipal\n16.01.01/-". As duas âncoras são tentadas
+            # na ordem em que aparecem; a 1ª que tiver o código na janela vale
+            # (as notas acima continuam resolvendo pela 1ª âncora). O código
+            # não pode ser pedaço de um número maior: o Código da NBS logo ao
+            # lado ("1.1409.11.00") contém "09.11.00" e viraria o item 0911.
+            for ancora in sorted((a for a in (m_servico, m_label) if a), key=lambda a: a.start()):
+                m = re.search(r'(?<![\d.])(\d{2})\.(\d{2})\.\d{2}(?![\d.])', t[ancora.end():ancora.end() + 120])
                 if m:
                     return m.group(1) + m.group(2)
             # Variante GissOnline (achado real 2026-10-20, nota nº 42,
@@ -12499,7 +12533,17 @@ class SPPdfExtractor:
         # o CNPJ/razão de ambos estarem perfeitamente legíveis no texto). O
         # separador passa a tolerar qualquer sequência curta de pontuação/ruído
         # entre as duas palavras, não só a barra.
+        #
+        # Achado real 2026-10-21 (nota nº 2600000000058, GERENCIAR TECNOLOGIA
+        # EM TRANSPORTES -> STAUMMAQ, Simões Filho/BA, escaneada): este
+        # gerador da v2.0 intitula o bloco do tomador "TOMADOR DO SERVIÇO"
+        # (o título da v1.0), não "TOMADOR / ADQUIRENTE" — sem o cabeçalho, os
+        # blocos das DUAS entidades saíam vazios. Só vale DEPOIS do bloco do
+        # prestador (o rótulo é genérico demais para valer em qualquer ponto).
         m_tom = re.search(r'TOMADOR\s*\W{0,4}\s*ADQUIRENTE', t, re.IGNORECASE)
+        if not m_tom and m_prest:
+            m_tom_v1 = re.compile(r'TOMADOR\s+DO\s+SERVI[ÇC]O\b', re.IGNORECASE).search(t, m_prest.end())
+            m_tom = m_tom_v1
         # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES): a palavra
         # "OPERAÇÃO" sai tão degradada pelo OCR ("O) ÃO", "OPERA O" — sem os
         # caracteres "PER"/sem a cedilha+til contíguos) que nem
@@ -12619,9 +12663,42 @@ class SPPdfExtractor:
         else:
             regiao = t[m_prest.start():fim] if m_prest else t[:fim]
 
+        # Achado real 2026-10-21 (DANFSe v2.0 escaneadas reconstruídas pela
+        # grade — `_ocr_celulas_danfse_v2` —, notas nº 2600000000058/GERENCIAR
+        # e nº 34/PROJECT OBRAS): no texto reconstruído cada entidade traz as
+        # PRÓPRIAS colunas dentro da sua seção (não despejadas depois dos dois
+        # blocos), e o OCR às vezes perde um rótulo de uma delas (ex.: o
+        # "Município / Sigla UF" do prestador). Na contagem por ordinal a
+        # ocorrência do TOMADOR passava a ser a 1ª — o prestador ganhava o
+        # município do tomador e o tomador ficava sem UF (saía São Paulo/SP,
+        # padrão do transformer). Quando o bloco do prestador já contém
+        # alguma dessas colunas, a ordem pode ser "por seção": aí, CAMPO A
+        # CAMPO, se o rótulo aparece no máximo uma vez em cada seção, cada
+        # entidade lê só a sua. Se a seção do tomador traz o rótulo 2 vezes
+        # (colunas das duas entidades despejadas depois dos blocos — ex.:
+        # Telefone/Código IBGE da nota nº 63, digital, cujo bloco do prestador
+        # tem só Inscrição/Município/E-mail), vale o ordinal de sempre. Nas
+        # notas nº 11/SBS o bloco do prestador não tem coluna nenhuma e nada
+        # muda.
+        _colunas_entidade = (r'Indicador\s+Municipal|C[óo]digo\s+IBGE\s*/\s*CEP|Telefone|E-?\s*mail|'
+                             r'Munic[íi]pio\s*/\s*Sigla\s+UF')
+        secoes = None
+        if m_prest and m_tom and m_prest.end() < m_tom.start() and not (
+                m_int_meio and m_prest.start() < m_int_meio.start() < m_tom.start()) \
+                and re.search(_colunas_entidade, t[m_prest.end():m_tom.start()], re.IGNORECASE):
+            secoes = (t[m_prest.start():m_tom.start()], t[m_tom.start():fim])
+
         def _colher(label_re, aceita):
             """Um item por OCORRÊNCIA do rótulo (None quando o campo vem em
             branco), preservando o pareamento posicional prestador/tomador."""
+            regiao_ = regiao
+            if secoes and all(len(re.findall(label_re, s, re.IGNORECASE)) <= 1 for s in secoes):
+                regiao_ = secoes[0] if is_prestador else secoes[1]
+                # Lido só na própria seção: a 1ª (única) ocorrência é a dela.
+                return ([None] * idx) + _colher_em(regiao_, label_re, aceita)
+            return _colher_em(regiao_, label_re, aceita)
+
+        def _colher_em(regiao, label_re, aceita):
             ocorrencias = list(re.finditer(label_re, regiao, re.IGNORECASE))
             valores = []
             for i, m in enumerate(ocorrencias):
@@ -12648,6 +12725,10 @@ class SPPdfExtractor:
             if '@' in s:
                 return s
             s2 = re.sub(r'\(\s*[A-Z]', '@', s, count=1)
+            if '@' not in s2:
+                # Achado real 2026-10-21 (nota nº 10096, JUSTMIX, escaneada):
+                # o "@" sai como um "(" sozinho ("admbarreiras(justmix.com.br").
+                s2 = re.sub(r'(?<=[a-z0-9])\((?=[a-z0-9])', '@', s, count=1)
             return s2 if '@' in s2 else self._corrigir_arroba_ocr(s)
 
         def _ac_municipio(l):
@@ -12671,7 +12752,10 @@ class SPPdfExtractor:
             # Aceita 7 dígitos aqui também; o zero perdido só é reposto
             # abaixo, e só quando o IBGE já bate exatamente 7 dígitos válidos
             # — não generaliza para qualquer CEP curto.
-            m = re.match(r'^([\d.]{5,12})\s*/\s*([\d.\-]{7,12})$', l)
+            # Separador "/" lido como "[", "|" ou "!" no OCR de foto (achado
+            # real 2026-10-21, nota nº 15/PAULO ROBERTO ALVES: "2903201
+            # [47813-150").
+            m = re.match(r'^([\d.]{5,12})\s*[/\[|!]\s*([\d.\-]{7,12})$', l)
             if not m:
                 return None
             ibge, cep = re.sub(r'\D', '', m.group(1)), re.sub(r'\D', '', m.group(2))
@@ -12740,7 +12824,7 @@ class SPPdfExtractor:
             return None
 
         mun_uf = _pega(_colher(r'Munic[íi]pio\s*/\s*Sigla\s+UF(?!\s*/)', _ac_municipio)) or ('', '')
-        ibge_cep = _pega(_colher(r'C[óo]digo\s+IBGE\s*/\s*CEP', _ac_ibge_cep)) or ('', '')
+        ibge_cep = _pega(_colher(r'C[óo]digo\s+IBGE\s*[/\[|!]?\s*CEP', _ac_ibge_cep)) or ('', '')
         email = _pega(_colher(r'E-?\s*mail', _ac_email))
         telefone = _pega(_colher(r'Telefone', _ac_telefone))
         inscricao = _pega(_colher(r'Indicador\s+Municipal\s*\(Inscri[çc][ãa]o\)', _ac_im))
@@ -12942,6 +13026,16 @@ class SPPdfExtractor:
         # sem separador>") — sem uma barra/vírgula entre elas.
         logradouro, numero, complemento, bairro = 'Não informado', 'S/N', None, 'Não informado'
         m_end = re.search(r'^\s*Ender[ae][çc]o\b[^\n]*\n+\s*([^\n]+)', bloco, re.IGNORECASE | re.MULTILINE)
+        # A linha seguinte ao rótulo pode ser OUTRO rótulo da grade quando o
+        # OCR perde a linha do logradouro (achado real no lote: "nfs 16.10",
+        # pág. 5, prestador ATRIO CONTAINERS — "Simples Nacional na Data de
+        # Competência Regime de Apuração..." virava o logradouro). Rótulo não
+        # é endereço: mantém "Não informado".
+        if m_end and re.match(
+                r'\s*(?:Simples\s+Nacional|Regime\s+de\s+Apura|Indicador\s+Municipal|'
+                r'C[óo]digo\s+IBGE|Munic[íi]pio\s*/|Telefone\b|E-?\s*mail\b|CNPJ\s*/)',
+                m_end.group(1), re.IGNORECASE):
+            m_end = None
         if m_end:
             valor_end = m_end.group(1)
             # Remove um e-mail colado no fim da mesma linha do endereço (ver
@@ -13029,6 +13123,15 @@ class SPPdfExtractor:
                     bairro = re.sub(r'^\[(?=TINGA\b)', 'I', bairro, flags=re.IGNORECASE)
                     if len(resto) > 1:
                         complemento = ', '.join(resto[:-1])
+
+        # Achado real 2026-10-21 (nota nº 34, PROJECT OBRAS -> SAO PEDRO
+        # CONSTRUTORA, escaneada): o OCR perdeu o rótulo "Município / Sigla
+        # UF" mas o "Código IBGE / CEP" impresso foi lido (2919207). Sem UF o
+        # transformer completava com SP — UF de outro estado para um código
+        # da BA. Os 2 primeiros dígitos do código IBGE SÃO a UF (tabela fixa
+        # do IBGE), então a UF vem do próprio código impresso.
+        if not uf and len(cod_mun) == 7:
+            uf = next((u for u, p in _ibge_resolver.UF_PREFIXES.items() if p == cod_mun[:2]), '')
 
         return Entidade(
             cnpj_cpf=cnpj,
@@ -16092,7 +16195,11 @@ class SPPdfExtractor:
                 return self._parse_valor_tolerante(m_v.group(1)) if m_v else 0.0
 
             irrf = _valor_apos_rotulo_grade_v2(r'\bIRRF\b')
-            inss = _valor_apos_rotulo_grade_v2(r'Contribui[çc][ãa]o\s+Previdenci[áa]ria\s*-\s*Retida')
+            # Achado real 2026-10-21 (nota nº 2600000000058, GERENCIAR
+            # TECNOLOGIA EM TRANSPORTES, escaneada): este gerador imprime
+            # "Contribuição Previdenciária - Retido" (masculino) — o INSS de
+            # R$ 61,14 caía em OutrasRetencoes em vez de ValorInss.
+            inss = _valor_apos_rotulo_grade_v2(r'Contribui[çc][ãa]o\s+Previdenci[áa]ria\s*-\s*Retid[ao]')
             contrib_sociais = _valor_apos_rotulo_grade_v2(r'Contribui[çc][õo]es\s+Sociais\s*-\s*Retidas')
 
             # Achado real 2026-09-15 (nota nº 5/SBS SOLUÇÕES INTEGRADAS DE
@@ -19720,6 +19827,36 @@ class SPPdfExtractor:
                         marcador = "\n<<<DANFE_PRODUTO_RECUT>>>\n"
                         best_text = marcador.join([recut_emitente, recut_calculo, recut_desc, recut_num, best_text])
 
+                # DANFSe v2.0 (LAYOUT_NACIONAL_REFORMA) ESCANEADA - achado real
+                # 2026-10-21, nota nº 2600000000058, GERENCIAR TECNOLOGIA EM
+                # TRANSPORTES LTDA (Simões Filho/BA) -> STAUMMAQ (lote
+                # "Scan2026-10-16_110738", pág. 8): a segmentação automática
+                # do Tesseract na página inteira mistura as 4 colunas da grade
+                # da DANFSe ora por coluna, ora por LINHA ("PRESTADOR /
+                # FORNECEDOR CNPJ/CPF/NIF Indicador Municipal Telefone" numa
+                # linha e os 3 valores na seguinte), e chega a jogar o endereço
+                # do prestador e o CNPJ/razão do tomador para ANTES do bloco
+                # "PRESTADOR / FORNECEDOR" — prestador e tomador saíam "Não
+                # Identificado" e o valor líquido pegava o "Total das
+                # Retenções". A ordem em que o Tesseract despeja o texto não é
+                # estável de um scan para outro, então o texto é reconstruído
+                # pela ESTRUTURA da grade (ver `_ocr_celulas_danfse_v2`):
+                # seções x colunas, com cada rótulo seguido do seu valor — a
+                # mesma forma "Rótulo\nvalor" do texto digital que o parser da
+                # v2.0 já entende.
+                #
+                # Só quando a leitura original NÃO permite identificar as duas
+                # entidades (`_danfse_v2_entidades_legiveis`): as DANFSe v2.0
+                # escaneadas que já saíam certas (regressão em lote sobre o
+                # corpus de Notas) continuam com o texto de sempre.
+                if self._detect_layout_page(best_text) == LAYOUT_NACIONAL_REFORMA \
+                        and not self._danfse_v2_entidades_legiveis(best_text):
+                    img_v2 = img.rotate(-best_angle, expand=True) if best_angle else img
+                    texto_celulas = self._ocr_celulas_danfse_v2(img_v2)
+                    if texto_celulas and self._detect_layout_page(texto_celulas) == LAYOUT_NACIONAL_REFORMA \
+                            and re.search(r'PRESTADOR\s*/\s*FORNECEDOR', texto_celulas, re.IGNORECASE):
+                        best_text = texto_celulas
+
                 return best_text
             finally:
                 doc.close()
@@ -20452,6 +20589,187 @@ class SPPdfExtractor:
             return tentativas[0]
         except Exception:
             return ""
+
+    def _danfse_v2_entidades_legiveis(self, t: str) -> bool:
+        """A leitura OCR original de uma DANFSe v2.0 já identifica as duas
+        entidades? Roda o próprio extrator da v2.0
+        (`_extrair_entidade_nacional_reforma`) sobre o texto: legível quando
+        prestador e tomador saem com CPF/CNPJ válido (DV), distintos, e com
+        razão social. Num extrator descartável — sem efeito colateral.
+
+        Também exige o título "DANFSe v2" ANTES do bloco do prestador: com o
+        título depois (achado real 2026-10-21, nota nº 34/PROJECT OBRAS,
+        "DANFSe v1.pdf"), o split de várias notas por página
+        (`DANFSE_HEADER_MIN_OFFSET`) parte a página em duas e a nota sai com
+        as entidades num pedaço e o resto no outro."""
+        m_titulo = re.search(r'DANFSe\s*v\s*2', t, re.IGNORECASE)
+        m_prest = re.search(r'PRESTADOR\s*/\s*FORNECEDOR', t, re.IGNORECASE)
+        if m_titulo and m_prest and m_titulo.start() > m_prest.start():
+            return False
+        try:
+            sonda = type(self)(self.pdf_path)
+            sonda.raw_text = t
+            sonda.layout = LAYOUT_NACIONAL_REFORMA
+            p = sonda._extrair_entidade_nacional_reforma(True)
+            tm = sonda._extrair_entidade_nacional_reforma(False)
+        except Exception:
+            return False
+        if not p or not tm:
+            return False
+        docs_ok = all(self._validate_cnpj_cpf(e.cnpj_cpf or '') for e in (p, tm))
+        # Razão social que é um RÓTULO da grade (achado real, nota nº 10096/
+        # JUSTMIX: "COMPETÊNCIA DA NFS-E") ou município não resolvido também
+        # denunciam leitura fora de ordem.
+        rotulo = re.compile(r'NFS-?e\b|Compet[êe]ncia|CNPJ|Endere[çc]o|Indicador|Munic[íi]pio|Nome\s*/',
+                            re.IGNORECASE)
+        nomes_ok = all(e.razao_social and 'Não Identificado' not in e.razao_social
+                       and not rotulo.search(e.razao_social) for e in (p, tm))
+        municipios_ok = all(e.endereco and e.endereco.codigo_municipio for e in (p, tm))
+        return docs_ok and nomes_ok and municipios_ok and p.cnpj_cpf != tm.cnpj_cpf
+
+    @staticmethod
+    def _ocr_celulas_danfse_v2(img) -> str:
+        """Reconstrói o texto de uma DANFSe v2.0 ESCANEADA pela estrutura da
+        grade, em vez da ordem de leitura do Tesseract.
+
+        A DANFSe v2.0 é uma grade de até 4 colunas dividida em seções, cada uma
+        aberta por um título na 1ª coluna (PRESTADOR / FORNECEDOR, TOMADOR,
+        SERVIÇO PRESTADO, TRIBUTAÇÃO MUNICIPAL/FEDERAL/IBS-CBS, VALOR TOTAL DA
+        NFS-E, INFORMAÇÕES COMPLEMENTARES) ou por uma tarja de largura total
+        (DESTINATÁRIO/INTERMEDIÁRIO DA OPERAÇÃO ...); em cada célula o rótulo
+        vem em cima e o valor logo abaixo, alinhado à esquerda com ele.
+
+        1. Palavras com caixa (`image_to_data`), agrupadas pelas linhas do
+           próprio Tesseract e quebradas em SEGMENTOS onde há um vão maior que
+           2,5x a altura do texto (fronteira entre colunas).
+        2. Inclinação do scan: mediana da inclinação das linhas largas do
+           Tesseract; todo Y é corrigido por ela (num scan torto a linha de
+           rótulos da coluna 4 fica 15-20 px abaixo da da coluna 1, o
+           bastante para cair na seção errada).
+        3. Seções delimitadas pelos TÍTULOS (rótulos fixos do leiaute
+           nacional), não por posição fixa nem pelos fios impressos (finos e
+           falhados demais no scan para servir de régua).
+        4. Colunas: os X iniciais que se repetem pela página toda (a grade é
+           a mesma em todas as seções). Em cada seção o texto sai coluna a
+           coluna, de cima para baixo — rótulo e valor em linhas
+           consecutivas, a mesma forma "Rótulo\\nvalor" do texto digital.
+        5. Coluna que não invade a seguinte (e não é invadida pela anterior)
+           é relida num recorte só dela (PSM 4): sem a vizinhança o Tesseract
+           lê células que na página inteira saíam corrompidas (achado real:
+           "Código IBGE / CEP 2930709 / 43700-000" do prestador saía
+           "C 2os0rdo STO"; "Município" saía partido em "Municij\\npio").
+           Coluna com texto que atravessa a seguinte (razão social, endereço,
+           discriminação, chave de acesso) mantém os segmentos da página.
+
+        Devolve '' em qualquer falha — o chamador mantém a leitura original."""
+        try:
+            import pytesseract
+
+            W, H = img.size
+            d = pytesseract.image_to_data(img, lang='por', output_type=pytesseract.Output.DICT)
+            linhas = {}
+            for i, txt in enumerate(d['text']):
+                if txt.strip():
+                    k = (d['block_num'][i], d['par_num'][i], d['line_num'][i])
+                    linhas.setdefault(k, []).append(
+                        (d['left'][i], d['top'][i], d['left'][i] + d['width'][i],
+                         d['top'][i] + d['height'][i], txt))
+            if not linhas:
+                return ''
+
+            # Inclinação: mediana das inclinações (mínimos quadrados dos
+            # centros das palavras) das linhas que cobrem boa parte da página.
+            inclinacoes = []
+            for ws in linhas.values():
+                if len(ws) < 3 or max(w[2] for w in ws) - min(w[0] for w in ws) < 0.3 * W:
+                    continue
+                xs = [(w[0] + w[2]) / 2 for w in ws]
+                ys = [(w[1] + w[3]) / 2 for w in ws]
+                mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+                den = sum((x - mx) ** 2 for x in xs)
+                if den:
+                    inclinacoes.append(sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den)
+            incl = sorted(inclinacoes)[len(inclinacoes) // 2] if inclinacoes else 0.0
+            if abs(incl) > 0.05:
+                incl = 0.0
+
+            segs = []
+            for ws in linhas.values():
+                ws.sort()
+                alt = sorted(w[3] - w[1] for w in ws)[len(ws) // 2]
+                atual = [ws[0]]
+                partes = []
+                for w in ws[1:]:
+                    if w[0] - atual[-1][2] > 2.5 * alt:
+                        partes.append(atual)
+                        atual = [w]
+                    else:
+                        atual.append(w)
+                partes.append(atual)
+                for p in partes:
+                    x0, x1 = min(w[0] for w in p), max(w[2] for w in p)
+                    y0, y1 = min(w[1] for w in p), max(w[3] for w in p)
+                    xc = (x0 + x1) / 2
+                    segs.append(dict(x0=x0, x1=x1, alt=alt, t=' '.join(w[4] for w in p),
+                                     y0=y0 - incl * xc, yc=(y0 + y1) / 2 - incl * xc))
+
+            tol = 0.04 * W
+            grupos_x = []
+            for x in sorted(s['x0'] for s in segs):
+                if grupos_x and x - grupos_x[-1][-1] < tol:
+                    grupos_x[-1].append(x)
+                else:
+                    grupos_x.append([x])
+            inicios = [g[len(g) // 2] for g in grupos_x if len(g) >= 6]
+            if len(inicios) < 2:
+                return ''
+
+            def _coluna(x):
+                c = 0
+                for i, x_ini in enumerate(inicios):
+                    if x >= x_ini - tol / 2:
+                        c = i
+                return c
+
+            titulo = re.compile(
+                r'^(?:PRESTADOR\s*/|TOMADOR\b|SERVI[ÇC]O\s+PRESTADO|TRIBUTA[ÇC][ÃA]O\s+'
+                r'(?:MUNICIPAL|FEDERAL|IBS)|VALOR\s+TOTAL\s+DA\s+NFS|INFORMA[ÇC][ÕO]ES\s+'
+                r'COMPLEMENTARES|DATA\s+CIENTIFICA)', re.IGNORECASE)
+            tarja = re.compile(r'(?:DESTINAT|STINAT|INTERMEDI)[ÁA]RIO\s+DA\s+OPERA', re.IGNORECASE)
+            if not any(re.match(r'PRESTADOR\s*/', s['t'], re.IGNORECASE) for s in segs):
+                return ''
+            cortes = sorted(s['y0'] - 0.3 * s['alt'] for s in segs
+                            if (_coluna(s['x0']) == 0 and titulo.match(s['t'])) or tarja.search(s['t']))
+            limites = [float('-inf')] + cortes + [float('inf')]
+
+            blocos = []
+            for f in range(len(limites) - 1):
+                topo, base = limites[f], limites[f + 1]
+                faixa = [s for s in segs if topo <= s['yc'] < base]
+                if not faixa:
+                    continue
+                colunas = {}
+                for s in faixa:
+                    colunas.setdefault(_coluna(s['x0']), []).append(s)
+                for c in sorted(colunas):
+                    col = sorted(colunas[c], key=lambda s: s['yc'])
+                    x_ini = inicios[c]
+                    x_prox = inicios[c + 1] if c + 1 < len(inicios) else W
+                    invadida = any(_coluna(s['x0']) < c and s['x1'] > x_ini - 5 for s in faixa)
+                    transborda = any(s['x1'] > x_prox - 5 for s in col)
+                    texto = ''
+                    if not invadida and not transborda and topo > float('-inf') and base < float('inf'):
+                        xa, xb = max(0, int(x_ini - tol / 2)), int(x_prox - tol / 4)
+                        desvio = incl * (xa + xb) / 2
+                        recorte = img.crop((xa, max(0, int(topo + desvio)), xb, min(H, int(base + desvio))))
+                        texto = pytesseract.image_to_string(recorte, lang='por', config='--psm 4')
+                        texto = '\n'.join(l.strip() for l in texto.split('\n') if l.strip())
+                    if not texto:
+                        texto = '\n'.join(s['t'] for s in col)
+                    blocos.append(texto)
+            return '\n\n'.join(blocos)
+        except Exception:
+            return ''
 
     @staticmethod
     def _ocr_recut_prestador_simoes_filho(page) -> str:
@@ -24802,7 +25120,10 @@ class SPPdfExtractor:
             # padrão do transformer (município do PRESTADOR, Serrinha), ou
             # seja, ISS atribuído ao município errado.
             m = re.search(
-                r'Munic[íi]pio\s*/\s*(?:Sigla\s+)?UF\s*/\s*Pa[íi]s\s+de\s+Incid[êe]ncia\s+do\s+ISSQN'
+                # "ISSQN?": no scan reconstruído pela grade o "N" final pode
+                # ficar na coluna vizinha ("... Incidência do ISSQ" - achado
+                # real 2026-10-21, nota nº 293/SUL&SEG -> ROSEMERY).
+                r'Munic[íi]pio\s*/\s*(?:Sigla\s+)?UF\s*/\s*Pa[íi]s\s+d[eo]\s+Incid[êe]ncia\s+do\s+ISSQN?'
                 r'[\s\S]{0,80}?\n\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s.\'-]*?)\s*/\s*([A-Za-z]{2})\s*/',
                 t, re.IGNORECASE)
             if not m:
@@ -24922,6 +25243,15 @@ class SPPdfExtractor:
                 r'N[ºo]\.?\s*da\s+Nota\s+Fiscal\s*:?\s*(\d+)',
                 r'N[uú]mero\s+da\s+Nota\s*:?\s*(\d+)',
                 r'N[ºo]\.?\s*da\s+Nota\s*:?\s*(\d+)',
+                # DANFSe v2.0 reconstruída coluna a coluna (scan): o rótulo
+                # fica sozinho na linha e o número na linha de baixo. Sem
+                # isto, o genérico abaixo caía no "Lei nº 12.741/2012" do
+                # rodapé, igual em TODAS as notas do PDF, e a nota seguinte
+                # era engolida como continuação (achado real: "nfs 16.10",
+                # pág. 5, NF 2600000000917). Exige fim de linha após o
+                # rótulo, então o texto por linha (rótulos lado a lado) não
+                # muda de comportamento.
+                r'N[uú]mero\s+da\s+N[FR]S[-.\s]?E[ \t]*\n\s*(\d{6,})',
             ]
             for p in especificos:
                 m = re.search(p, text, re.IGNORECASE)
@@ -24930,7 +25260,9 @@ class SPPdfExtractor:
             for m in re.finditer(r'(?:N[uú]mero|N[ºo])\.?\s*:?.*?(\d+)', text, re.IGNORECASE):
                 inicio_linha = text.rfind('\n', 0, m.start()) + 1
                 linha_ate_match = text[inicio_linha: m.start()]
-                if re.search(r'Endere[çc]o', linha_ate_match, re.IGNORECASE):
+                # "Lei nº 12.741/2012" (rodapé de tributos aproximados) nunca
+                # é o número da nota.
+                if re.search(r'Endere[çc]o|\bLei\s*$', linha_ate_match, re.IGNORECASE):
                     continue
                 return m.group(1)
             return None
