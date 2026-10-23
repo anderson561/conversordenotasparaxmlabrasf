@@ -104,6 +104,11 @@ class IBGEResolver:
         "SAO JOSE": "4216602", "SÃO JOSÉ": "4216602",  # São José/SC (Grande Florianópolis)
         "SANTOS": "3548500",
         "VINHEDO": "3556701",
+        # Jundiaí/SP - prestador da DANFSe v2.0 GissOnline (nota nº 42,
+        # YANKATU DESIGN, 2026-10-20). A nota imprime só o CEP no campo
+        # "CÓDIGO IBGE / CEP"; código conferido na API oficial do IBGE
+        # (servicodados.ibge.gov.br/api/v1/localidades/municipios/3525904).
+        "JUNDIAI": "3525904", "JUNDIAÍ": "3525904",
         "GOIANIA": "5208707", "GOIÂNIA": "5208707",
         "BARUERI": "3505708",
         # Rio Largo/AL - onde fica o Aeroporto Zumbi dos Palmares, sede da
@@ -131,6 +136,10 @@ class IBGEResolver:
         # (LAYOUT_NFCOM_SETE_CONNECT, nota nº 18770, achado real 2026-09-17).
         # Sem esta entrada caía no fallback silencioso de Salvador/BA.
         "DIAS DAVILA": "2910057", "DIAS DÁVILA": "2910057",
+        # Grafia "DIAS D AVILA" (apóstrofo vira espaço) do letterhead da ELEVAR
+        # (LAYOUT_NOTA_LOCACAO, nota nº 1245, achado real 2026-10-16); código
+        # conferido na API do IBGE (municipios/2910057 -> "Dias d'Ávila", BA).
+        "DIAS D AVILA": "2910057",
         # João Pessoa/PB - prestador do LAYOUT_JOAO_PESSOA (nota nº 1001671,
         # ESPACO A COMERCIO DE MOVEIS LTDA, achado real 2026-09-23). Já era o
         # fallback de capital de "PB" em DEFAULT_CODES_BY_UF, mas sem esta
