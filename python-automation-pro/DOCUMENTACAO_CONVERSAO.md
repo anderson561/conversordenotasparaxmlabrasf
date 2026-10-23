@@ -450,6 +450,16 @@ O extrator PDF (`SPPdfExtractor`) conta com um motor de heurística profunda, ca
 
 Layouts de emissores fixos (a razão social e o endereço do prestador são conhecidos e, em vários casos, fixados no código). Geralmente `CodigoVerificacao = "FATURA"` e item de serviço `0601` (locação de bens móveis).
 
+### 16i. Nota de Locação (impresso de locadora) — `nota_locacao`
+> Layout novo (2026-10-23). Achado real: lote STAUMMAQ de 16/10/2026, `Scan2026-10-16_110738.pdf` pág. 10 — ELEVAR LOCACAO E TRANSPORTES LTDA (CNPJ 22.471.804/0001-01, Dias d'Ávila/BA) → STAUMMAQ SERV TEC AUT MOTORES E MAQ LTDA (Simões Filho/BA), "NOTA DE LOCAÇÃO Nº 1245", 30/04/2026, locação de caminhão munck, R$ 18.500,00. Antes: "Layout não reconhecido" → nenhum XML.
+- **Natureza**: impresso de gráfica, NÃO é NFS-e. A nota declara "operação não sujeita a emissão de documento fiscal (Lei 8.846/94)" e "não incidência de ISS (LC 116/2003)". O XML segue a convenção das faturas de locação (Localiza/ARMAC/genérica): item 0601, `CodigoVerificacao` "FATURA", base/alíquota/ISS zerados, `IssRetido` 2, `ExigibilidadeISS` 1 (fixo do transformer) + aviso de que é nota de locação.
+- **Detecção (estrutural, simétrica)**: título "NOTA DE LOCAÇÃO Nº <n>" + "DESTINATÁRIO" + "VALOR TOTAL DA NOTA DE LOCAÇÃO" e nenhuma marca NFS-e/Nota Fiscal; logo após Saubara na cadeia. Não usa o nome da ELEVAR. `is_new_invoice` ganhou "NOTA DE LOCAÇÃO" como início de nota.
+- **OCR**: `nota_locacao.recortar` (no `_ocr_page`, imagem na orientação vencedora) prepende linhas `NOTALOC_CAB:` (caixa direita do cabeçalho, PSM 4: CNPJ, I.E., data), `NOTALOC_ITEM:` (grade de itens, PSM 6, só o bloco contíguo do topo — corta carimbo de vencimento/rubrica pelo vão vertical > 2,5× a altura da linha anterior) e `NOTALOC_DEST_<CAMPO>:` (grade DESTINATÁRIO por coluna, x dos rótulos via `image_to_data`).
+- **Campos**: número do título (sentinela se recorte e página divergem); data = rótulo "DATA DE EMISSÃO" ou a ÚNICA data do cabeçalho (o PERÍODO da descrição e o VENCIMENTO nunca valem); competência = mês da emissão; emitente do letterhead (razão = linha com sufixo societário, endereço = linha seguinte — 1º número isolado é o número, o resto vai como bairro —, "<CIDADE>-<UF> Cep:", "Tel:"); CNPJ do emitente só com DV válido; a I.E. (124719970) não vira Inscrição Municipal; discriminação = descrição do item (linhas unidas por espaço; itens por " | "); valor = "VALOR TOTAL DA NOTA DE LOCAÇÃO", conferido com a soma dos itens e com qtd × unitário.
+- **IBGE**: Dias d'Ávila/BA = 2910057 (grafia "DIAS D AVILA" adicionada a `KNOWN_CITIES`, conferida na API do IBGE); Simões Filho/BA = 2930709.
+- **Limitação conhecida**: a placa impressa "RPZ 0I95" é lida "RPZ 0195" pelo Tesseract em qualquer zoom/PSM; fica como lida + aviso de conferência.
+- **Testes**: `tests/test_nota_locacao_elevar_layout.py` (22), texto REAL do `_ocr_page` como fixture + palavras/linhas reais do `image_to_data`.
+
 ### 17. Localiza — `localiza_fatura`
 - Faturas de locação/revenda de serviços veiculares da Localiza Rent A Car.
 - Identificado por "LOCALIZA RENT A CAR S/A" ou "FATURA / DUPLICATA".
