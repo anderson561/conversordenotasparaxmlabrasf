@@ -146,3 +146,88 @@ def test_instituto_recut_falha_silenciosamente_sem_pagina_real(monkeypatch):
     finally:
         if os.path.exists(dummy_path):
             os.remove(dummy_path)
+
+
+# Texto REAL do OCR (Tesseract, via _extract_via_ocr) da nota "ISBET - 02081.pdf"
+# (Boleto nº 665168, SAL-2026-02081, BONI TRANSPORTES, 09/2026). Preservado
+# verbatim - o quirk que trava a regressão: o rótulo do CNPJ do tomador sai
+# "CNP):" (o "J" vira ")") no bloco USUÁRIO DOS SERVIÇOS, embora os 14 dígitos
+# ("04555283000350", válido pelo DV) saiam limpos. O regex antigo exigia "CNPJ"
+# literal e o tomador saía com o CNPJ sentinela 00000000000000. A tabela de
+# aprendizes traz só "045552830003" (o "50" quebra de linha no impresso e se
+# perde no OCR) - nunca é fonte do CNPJ.
+MOCK_TEXT_02081 = 'Instituto Brasileiro Pró Educação, Trabalho e NOTA DE CONTRIBUIÇÃO SOLIDÁRIA\n\nDesenvolvimento\nAv. Embaixador Abelardo Bueno 1111 Bloco 02, Nº:;SAL-2026-02081\nloja 109 - Rio de Janeiro - Tel: (21) 2122153066\nNatureza dos Jovem Aprendiz\nserviços:\nCNPJ.43.126.366/0001-14 Data de Emissão: 19/09/2026 10:26:58\n\nCNAS R0268/2003 / CEBAS Portaria nº 248, 20.09.18 - D.O.U. 28.09.2018. o.\nRegistro Civil Pessoas Jurídicas 86705 LA nº 27 Boleto Nº:665168\n\nUSUÁRIO DOS SERVIÇOS\n\nNome: BONI TRANSPORTES LOGISTICA E COMERCIO LTDA,\n\nEnd.: Rua Maria Quiteria 263 Galpão Desmembramento Diamante\n\nCEP: 42738205 Bairro: Itinga Município:Lauro de Freitas UF: BA\n\nCNP): 04555283000350 IE: 159096901 NO] IM: 10035914 Cond. Pagto: No vencimento contratado\n\n| Quant. | Discriminação dos serviços Unitário R$ Total R$\nReferente a receita institucional do mês 09/2026 130,00 130,00\n\nValor total da\nNota: R$\n\nAtestamos que os serviços constantes nesta Nota de Contribuição Solidária foram executados."\nOs valores desta nota referente a receita institucional, são dedutíveis do IR, conforme art. 13, da Lei 9.249/95,\ncombinado com a Instrução Normativa da Secretaria da Receita Federal 11/1996.\n\nNo:SAL-2026-02081\n\nRelação de Jovens Aprendizes\n\nNome Fantasia CNPJ Início Fim Ref. VLSalário VLRI Total\nContrato Contrato\nREBEKA SENA DA SILVA BONI TRANSPORTES 045552830003 17/07/2025 15/07/2027 09/2026 759,00 130,00 130,00\nJUNQUEIRA LOGISTICA E\nCOMERCIO LTDA\n'
+
+# Texto REAL do recorte `_ocr_recut_instituto_valor` da mesma nota.
+MOCK_RECUT_VALOR_02081 = '| Unid | Quant. Discriminação dos serviços Unitário R$ Total R$\nE RR Referente a receita institucional do mês 09/2026 130,00 130,00 |\n| | Valor total da 130,00 |\no RR | Nota: R$/ o\n'
+
+
+def _parse_isbet(monkeypatch, texto, recut, dummy_path):
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text", lambda path: "")
+    monkeypatch.setattr(SPPdfExtractor, "_extract_via_ocr", lambda self: texto)
+    monkeypatch.setattr(SPPdfExtractor, "_ocr_recut_instituto_valor", lambda self: recut)
+    try:
+        nfse_list = SPPdfExtractor(dummy_path).parse_multiple()
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+    assert len(nfse_list) == 1
+    return nfse_list[0]
+
+
+def test_isbet_02081_cnpj_tomador_com_rotulo_cnp_parentese(monkeypatch):
+    nfse = _parse_isbet(monkeypatch, MOCK_TEXT_02081, MOCK_RECUT_VALOR_02081,
+                        "tests/dummy_isbet_02081.pdf")
+
+    assert nfse.numero == "665168"
+    assert (nfse.data_emissao.year, nfse.data_emissao.month, nfse.data_emissao.day) == (2026, 9, 19)
+    assert (nfse.data_emissao.hour, nfse.data_emissao.minute, nfse.data_emissao.second) == (10, 26, 58)
+    assert (nfse.competencia.year, nfse.competencia.month, nfse.competencia.day) == (2026, 9, 1)
+    assert nfse.valores.valor_servicos == pytest.approx(130.00)
+    assert nfse.valores.valor_liquido_nfse == pytest.approx(130.00)
+
+    assert nfse.prestador.cnpj_cpf == "43126366000114"
+
+    tom = nfse.tomador
+    assert tom.cnpj_cpf == "04555283000350"
+    assert tom.razao_social == "BONI TRANSPORTES LOGISTICA E COMERCIO LTDA"
+    assert tom.inscricao_municipal == "10035914"
+    assert tom.endereco.logradouro == "Rua Maria Quiteria"
+    assert tom.endereco.numero == "263"
+    assert tom.endereco.complemento == "Galpão Desmembramento Diamante"
+    assert tom.endereco.bairro == "Itinga"
+    assert tom.endereco.municipio == "Lauro de Freitas"
+    assert tom.endereco.codigo_municipio == "2919207"
+    assert tom.endereco.uf == "BA"
+    assert tom.endereco.cep == "42738205"
+    assert nfse.discriminacao == "Referente a receita institucional do mês 09/2026"
+    assert not any("CNPJ do tomador" in a for a in nfse.avisos)
+
+
+def test_isbet_cnpj_tomador_com_pontuacao(monkeypatch):
+    texto = MOCK_TEXT_02081.replace("CNP): 04555283000350", "CNPJ: 04.555.283/0003-50")
+    nfse = _parse_isbet(monkeypatch, texto, MOCK_RECUT_VALOR_02081,
+                        "tests/dummy_isbet_02081_pont.pdf")
+    assert nfse.tomador.cnpj_cpf == "04555283000350"
+
+
+def test_isbet_cnpj_tomador_dv_invalido_vira_sentinela_com_aviso(monkeypatch):
+    # Um dígito trocado (OCR) reprova o DV: sentinela + aviso, nunca um CNPJ
+    # plausível errado - e nunca o CNPJ do próprio ISBET (prestador).
+    texto = MOCK_TEXT_02081.replace("CNP): 04555283000350", "CNP): 04555283000351")
+    nfse = _parse_isbet(monkeypatch, texto, MOCK_RECUT_VALOR_02081,
+                        "tests/dummy_isbet_02081_dv.pdf")
+    assert nfse.tomador.cnpj_cpf == "00000000000000"
+    assert nfse.tomador.razao_social == "BONI TRANSPORTES LOGISTICA E COMERCIO LTDA"
+    assert any("CNPJ do tomador" in a for a in nfse.avisos)
+
+
+def test_isbet_cnpj_do_prestador_no_bloco_tomador_nao_e_aceito(monkeypatch):
+    texto = MOCK_TEXT_02081.replace("CNP): 04555283000350", "CNPJ: 43126366000114")
+    nfse = _parse_isbet(monkeypatch, texto, MOCK_RECUT_VALOR_02081,
+                        "tests/dummy_isbet_02081_prest.pdf")
+    assert nfse.tomador.cnpj_cpf == "00000000000000"
+    assert any("CNPJ do tomador" in a for a in nfse.avisos)
