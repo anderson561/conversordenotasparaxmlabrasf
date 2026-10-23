@@ -26,6 +26,7 @@ from ..utils.ibge_resolver import IBGEResolver, _normaliza_nome
 from . import feira_nfse_nacional as _feira_nac
 from . import sp_identificador as _sp_ident
 from . import saubara_nfse as _saubara
+from . import localiza_fatura as _localiza
 from datetime import datetime
 
 _ibge_resolver = IBGEResolver()
@@ -3014,6 +3015,21 @@ class SPPdfExtractor:
             # vinha colado sem espaço logo após o número — `\d+` já para no
             # primeiro caractere não numérico, então essa colagem não vaza mais.
             m = re.search(r'N[ºo]:\s*[A-Z]*\s*-?\s*(\d+)', t, re.IGNORECASE)
+            # Fatura escaneada: o recorte dedicado da caixa "Nº:" (zoom 5x,
+            # linha única - ver localiza_fatura.py) vence a leitura de página
+            # inteira, que pode perder a caixa inteira (achado real
+            # AASSA-1517937: o "Nº:" não aparecia no texto e a nota saía com
+            # o sentinela 00000000) ou trocar dígitos.
+            recortado = (_localiza.ler_marcadores(t).get('NUMERO') or [None])[0] \
+                if self.layout == LAYOUT_LOCALIZA else None
+            if recortado:
+                numero_rec = recortado.rsplit('-', 1)[-1].strip()
+                if m and m.group(1).strip() != numero_rec:
+                    self._localiza_aviso(
+                        f"Número da fatura lido na página inteira ({m.group(1).strip()}) diverge do "
+                        f"recorte dedicado da caixa \"Nº:\" ({recortado}) - usado o do recorte; "
+                        f"confira no documento")
+                return numero_rec
             if m: return m.group(1).strip()
 
         if self.layout == LAYOUT_SAO_PAULO:
@@ -3389,9 +3405,54 @@ class SPPdfExtractor:
 
         return '00000000'
 
+    def _localiza_aviso(self, msg: str) -> None:
+        """Aviso da fatura Localiza, sem duplicar (os extratores de número e
+        valores podem ser chamados mais de uma vez para a mesma nota)."""
+        lista = self.__dict__.setdefault('_localiza_avisos', [])
+        if msg not in lista:
+            lista.append(msg)
+
+    def _extrair_discriminacao_localiza(self) -> Optional[str]:
+        """Descrição impressa na grade "DESCRIÇÃO | VALOR" da fatura.
+
+        Escaneada: linhas do recorte dedicado da célula (`LOCALIZA_DESCRICAO`,
+        ver localiza_fatura.py) - a página inteira embaralha a ordem das
+        linhas. Digital (pdfminer, tudo numa linha só): trecho entre o
+        cabeçalho "DESCRIÇÃO VALOR" e "VENCIMENTO", sem os "R$ valor" da
+        coluna da direita. Nenhum dos dois -> None (o chamador mantém o texto
+        genérico de antes, sem inventar descrição)."""
+        t = self.raw_text
+        marc = _localiza.ler_marcadores(t)
+        if marc.get('DESCRICAO'):
+            return _localiza.montar_discriminacao(marc['DESCRICAO'], marc.get('ITEM_VALOR', []))
+        m = re.search(r'DESCRI[ÇC][ÃA]O\s+VALOR\s+(.+?)\s*VENCIMENTO', t, re.IGNORECASE | re.DOTALL)
+        if m:
+            # pdfminer devolve a grade de 2 jeitos: tudo numa linha ("ITEM R$ v
+            # ITEM R$ v") ou em blocos separados por linha em branco, com TODOS
+            # os valores depois de todas as descrições - e o nº do contrato num
+            # bloco próprio (coluna separada no PDF), que volta a ser colado
+            # ao item anterior.
+            itens = []
+            for trecho in re.split(r'R\$\s*[\d.,]+', m.group(1)):
+                for bloco in re.split(r'\n\s*\n', trecho):
+                    bloco = re.sub(r'\s+', ' ', bloco).strip()
+                    if not bloco:
+                        continue
+                    if itens and re.fullmatch(r'[A-Z]{2,}\d{4,}', bloco):
+                        itens[-1] = f'{itens[-1]} {bloco}'
+                    else:
+                        itens.append(bloco)
+            valores = re.findall(r'R\$\s*([\d.,]+)', m.group(1))
+            return _localiza.montar_discriminacao(itens, valores)
+        return None
+
     def _extrair_discriminacao(self) -> str:
         if self.layout in _LAYOUTS_SAUBARA:
             return self._saubara_campos().discriminacao
+        if self.layout == LAYOUT_LOCALIZA:
+            disc = self._extrair_discriminacao_localiza()
+            if disc:
+                return disc
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             return self._extrair_discriminacao_feira_nacional()
         t = self.raw_text
@@ -6543,6 +6604,18 @@ class SPPdfExtractor:
                         razao = f"{nome1} {nome2}".strip()
                     else:
                         razao = nome2 or nome1
+                # Pontuação solta que o OCR põe no início da 2ª linha do nome
+                # ("...MOTORES\n. E MAQUINAS LTDA", achado real AASSA-1517937 /
+                # AGMTZ-11998441) nunca é parte de uma razão social.
+                razao = re.sub(r'(?<=\s)[.,;:\'"`´]+(?=\s)', ' ', razao)
+                razao = re.sub(r'\s+', ' ', razao).strip()
+                # Fatura escaneada: o recorte dedicado do bloco "CLIENTE:"
+                # (zoom 5x, só a coluna da esquerda - ver localiza_fatura.py)
+                # vence a página inteira, que troca letras do nome (achado real
+                # AGMTZ-11929076: "STAUMMAGQ", impresso "STAUMMAQ").
+                razao_rec = (_localiza.ler_marcadores(t).get('TOMADOR') or [None])[0]
+                if _localiza.razao_confiavel(razao_rec, razao):
+                    razao = razao_rec
 
                 # O CNPJ do tomador só é buscado DEPOIS do endereço (janela
                 # restrita) — buscar no texto inteiro pegava o 1º "CNPJ:" do
@@ -6553,6 +6626,15 @@ class SPPdfExtractor:
                     cnpj = re.sub(r'\D', '', m_cnpj.group(1)) if m_cnpj else ""
 
                 logradouro_raw = m_end.group(1).strip() if m_end else ""
+                # Rótulos da coluna da DIREITA do bloco do cliente ("CÓDIGO:",
+                # "INSC. ESTADUAL:", "DATA DE EMISSÃO:") intercalados pelo OCR
+                # na MESMA linha do endereço - o bairro é o último segmento
+                # após hífen e saía "CIA SUL INSC. ESTADUAL: 048137340" (achado
+                # real AGMTZ-11998441). Mesma limpeza já feita na razão social.
+                logradouro_raw = re.sub(r'C[ÓO]DIGO\s*:\s*\d*', ' ', logradouro_raw, flags=re.IGNORECASE)
+                logradouro_raw = re.sub(r'INSC\.?\s*ESTADUAL\s*:?\s*\d*', ' ', logradouro_raw, flags=re.IGNORECASE)
+                logradouro_raw = re.sub(r'DATA\s+DE\s+EMISS[ÃA]O\s*:?\s*[\d/]*', ' ', logradouro_raw, flags=re.IGNORECASE)
+                logradouro_raw = re.sub(r'\s+', ' ', logradouro_raw).strip()
                 logradouro, numero, bairro, complemento = _split_endereco_localiza(logradouro_raw)
                 cep = re.sub(r'\D', '', m_end.group(2)) if m_end else ""
                 mun = m_end.group(3).strip() if m_end else ""
@@ -17106,6 +17188,29 @@ class SPPdfExtractor:
             # e letra->dígito não é fronteira de palavra para o regex.
             m_val = re.search(r'VALOR\s+TOTAL[\s\S]{0,80}?R\$\s*([\d.,]+)', t, re.IGNORECASE)
             v = self._parse_valor(m_val.group(1)) if m_val else 0.0
+            # Fatura escaneada: a célula "VALOR TOTAL" relida pelo recorte
+            # dedicado (localiza_fatura.py) vence a página inteira, que pode
+            # deixá-la vazia (achado real AGMTZ-11998441: só "R$ 92443", sem
+            # vírgula, na coluna VALOR -> ValorServicos 0,00). Conferência
+            # cruzada com a soma da coluna VALOR: divergência vira aviso,
+            # nunca um valor recalculado.
+            marc = _localiza.ler_marcadores(t)
+            total_rec = [self._parse_valor(x) for x in marc.get('VALOR_TOTAL', [])]
+            itens_rec = [self._parse_valor(x) for x in marc.get('ITEM_VALOR', [])]
+            if total_rec and total_rec[0] > 0:
+                if m_val and v and abs(v - total_rec[0]) > 0.005:
+                    self._localiza_aviso(
+                        f"VALOR TOTAL lido na página inteira ({v:.2f}) diverge do recorte dedicado "
+                        f"da célula ({total_rec[0]:.2f}) - usado o do recorte; confira no documento")
+                v = total_rec[0]
+                if itens_rec and abs(sum(itens_rec) - v) > 0.005:
+                    self._localiza_aviso(
+                        f"Soma dos valores da coluna VALOR ({sum(itens_rec):.2f}) não fecha com o "
+                        f"VALOR TOTAL da fatura ({v:.2f}) - confira no documento")
+            if not v:
+                self._localiza_aviso(
+                    "VALOR TOTAL da fatura não legível no documento - valor mantido zerado; "
+                    "preencha manualmente")
             return Valores(
                 valor_servicos=v, valor_liquido_nfse=v,
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
@@ -19020,6 +19125,22 @@ class SPPdfExtractor:
                     recut_bio = self._ocr_recut_biocontrol(page)
                     if recut_bio.strip():
                         best_text = f"{recut_bio}\n{best_text}"
+
+                # Localiza "FATURA / DUPLICATA" escaneada (achado real
+                # 2026-10-21, lote STAUMMAQ: AGMTZ-11929076, AASSA-1517937,
+                # AGMTZ-11998441). A leitura de página inteira perde o número
+                # da fatura, a célula "VALOR TOTAL", a ordem das linhas da
+                # descrição e letras do nome do cliente, conforme a folha.
+                # Recortes ancorados pela estrutura da fatura (ver
+                # localiza_fatura.py) devolvem linhas SINTÉTICAS
+                # `LOCALIZA_*`, ANEXADAS ao fim (não prependidas): todos os
+                # regex de 1ª ocorrência já validados do layout (prestador =
+                # tudo antes de "FATURA / DUPLICATA", CNPJ/endereço do
+                # tomador, data) continuam lendo exatamente o mesmo texto.
+                if _localiza.eh_template(best_text):
+                    recorte_loc = _localiza.recortar_template(page, best_angle)
+                    if recorte_loc.strip():
+                        best_text = f"{best_text}\n{recorte_loc}"
 
                 # DANFE Modelo 55 (NF-e de PRODUTO) ESCANEADO - achado real,
                 # nota nº 764 (PENELI METAIS LTDA). O cabeçalho funde 3
@@ -22128,6 +22249,7 @@ class SPPdfExtractor:
         self.layout = self._detect_layout()
         self._feira_nac_avisos: List[str] = []
         self._reforma_avisos: List[str] = []
+        self._localiza_avisos: List[str] = []
         self._saubara_cache = None
 
         if self.layout == LAYOUT_DANFE_PRODUTO:
@@ -22431,6 +22553,8 @@ class SPPdfExtractor:
             avisos.extend(self._feira_nac_avisos)
         if self.layout == LAYOUT_SAO_PAULO_2:
             avisos.extend(a for a in self._sp_avisos if a not in avisos)
+        if self.layout == LAYOUT_LOCALIZA:
+            avisos.extend(a for a in self.__dict__.get('_localiza_avisos', []) if a not in avisos)
         if self.layout == LAYOUT_NACIONAL and re.search(r'\*{3,}', self.raw_text):
             # Achado real (Aracaju/SE, WebISS, nota 2026000000014): a
             # própria prefeitura imprime "*****" no lugar de Base de Cálculo
