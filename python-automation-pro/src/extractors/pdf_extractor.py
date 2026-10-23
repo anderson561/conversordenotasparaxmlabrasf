@@ -11843,7 +11843,10 @@ class SPPdfExtractor:
         # com "No" — casa com `N[ºo°]`) era lido como se fosse "Nº", e o
         # número do endereço saía "me" (resto de "Nome"). O "Nº" real desta
         # nota vem sempre seguido de pontuação ("Nº; 00022:", "Nº. 38").
-        numero = _campo(r'N[ºo°]\s*[:;.]\s*([A-Za-z0-9]+)')
+        # "S/N" é capturado inteiro (achado real 2026-10-21, nota nº 5084,
+        # GUINCHOS BEIRA RIO: "Nº: S/N" saía "S" — a classe de caracteres
+        # parava na barra). "SN" sem barra continua literal, como impresso.
+        numero = _campo(r'N[ºo°]\s*[:;.]\s*(S/N\b|[A-Za-z0-9]+)')
         # Tolera "l" no meio de "Bairro" (achado real: "Balro:") — sem isso o
         # lookahead nunca casa e o complemento inteiro ("LOTE 21 QUADRA 55")
         # se perde.
@@ -11866,8 +11869,12 @@ class SPPdfExtractor:
         #  - descarte de captura degenerada (< 3 alfanuméricos), mesma regra
         #    que o município já aplica logo abaixo: na PADUA o bairro saiu
         #    ilegível ("A") e "Não informado" é a resposta honesta.
+        # A grafia OCR "Beira" só vale como rótulo quando seguida de ":"/"."
+        # (achado real 2026-10-21, nota nº 5084: sem essa exigência o "BEIRA"
+        # da razão social "GUINCHOS BEIRA RIO LTDA" casava primeiro e o bairro
+        # saía "RIO LTDA" em vez do "SANTO ANTONIO" impresso).
         bairro = _sem_ruido_a_esquerda(
-            _campo(r'(?:B[ail]{1,2}r{1,2}o|Beira)\s*[:.]?\s*([^\n]*?)\s*(?:N[ºo°]\s*[:;.]|\n|$)'))
+            _campo(r'(?:B[ail]{1,2}r{1,2}o|Beira(?=\s*[:.]))\s*[:.]?\s*([^\n]*?)\s*(?:N[ºo°]\s*[:;.]|\n|$)'))
         bairro = re.sub(r'\s+\S*[a-z].*$', '', bairro)      # token minúsculo -> ruído
         bairro = re.sub(r'(?:\s+[^\w\s]+)+$', '', bairro)   # tokens só de pontuação
         # Sobra de margem em CAIXA ALTA e curta ("... (MONTE GORDO) ML"): só é
@@ -11895,6 +11902,17 @@ class SPPdfExtractor:
 
         m_mun = re.search(r'MUNIC[IÍ]PIO\s*:?\s*([A-Za-zÀ-ú][A-Za-zÀ-ú\s]+?)\s*(?:EaMiisia|UF|$)', bloco, re.IGNORECASE)
         municipio = m_mun.group(1).strip() if m_mun else ''
+        # O município é impresso em CAIXA ALTA neste layout: token com
+        # minúscula DEPOIS do nome é sujeira de OCR (achado real 2026-10-21,
+        # nota nº 4571: "Município: CAMAÇARI ida UF" -> "CAMAÇARI ida" não
+        # resolvia no IBGE e caía no default Salvador/2927408). O corte só é
+        # aceito quando o nome lido inteiro NÃO é município conhecido e o
+        # nome cortado É — nunca troca um nome que já resolvia.
+        def _conhecido(nome: str) -> bool:
+            return re.sub(r'[^\w\s]', '', nome).strip().upper() in _ibge_resolver.KNOWN_CITIES
+        municipio_cortado = re.sub(r'\s+\S*[a-zà-ú].*$', '', municipio, flags=re.DOTALL)
+        if municipio_cortado != municipio and not _conhecido(municipio) and _conhecido(municipio_cortado):
+            municipio = municipio_cortado
         if len(re.sub(r'[^A-Za-zÀ-ú]', '', municipio)) < 3:
             municipio = municipio_default
 
@@ -19254,6 +19272,8 @@ class SPPdfExtractor:
                 if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', best_text, re.IGNORECASE) or re.search(r'Data\s+da\s+presta[cç][aã]o\s+do\s+servi[cç]o', best_text, re.IGNORECASE):
                     body_cam = self._ocr_camacari_scan(page, best_angle)
                     if body_cam.strip():
+                        body_cam = self._camacari_reparar_metade_superior(
+                            page, best_angle, body_cam)
                         best_text = body_cam
                     header_cam = self._ocr_header_box_camacari(page, best_angle)
                     if header_cam.strip():
@@ -22455,6 +22475,70 @@ class SPPdfExtractor:
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
         except Exception:
             return ""
+
+    _RE_CAMACARI_RETENCOES = re.compile(r'^.*Reten[çc][õo]es\s*\(R\$\)', re.IGNORECASE | re.MULTILINE)
+
+    def _camacari_docs_entidades(self, texto: str) -> int:
+        """Quantos CPF/CNPJ formatados e com DV válido aparecem entre
+        "PRESTADOR DE SERVIÇOS" e "DISCRIMINAÇÃO" — 2 numa leitura sã
+        (prestador + tomador). Usado só como medida de qualidade da leitura
+        do corpo da NFS-e de Camaçari escaneada."""
+        m_ini = re.search(r'PRESTADOR\s*DE\s*SERVI[ÇC]OS', texto, re.IGNORECASE)
+        m_fim = re.search(r'DISCRIMINA[ÇC][ÃA]O', texto, re.IGNORECASE)
+        if not (m_ini and m_fim and m_fim.start() > m_ini.end()):
+            return 0
+        trecho = texto[m_ini.end():m_fim.start()]
+        docs = set()
+        for m in re.finditer(r'\d{2}[.,]\d{3}[.,]\d{3}/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}', trecho):
+            dig = re.sub(r'\D', '', m.group(0))
+            if self._validate_cnpj_cpf(dig):
+                docs.add(dig)
+        return len(docs)
+
+    def _camacari_reparar_metade_superior(self, page, angle: int, body: str) -> str:
+        """Achado real 2026-10-21 (nota nº 4571, ROSANA JULIAO CARDOSO & CIA
+        -> STAUMMAQ, pág. 5 do lote "Scan2026-10-16_110738"): a leitura
+        zoom 4 + PSM 6 de `_ocr_camacari_scan` segmentou mal a METADE DE CIMA
+        desta página (scan limpo, sem rasura): colunas intercaladas, a linha
+        "CPF/CNPJ" do TOMADOR e a "Inscrição Municipal" do prestador sumiram e
+        a discriminação virou lixo ("DESCRIÇÃO ma E Ni ... PP dd a naaao") —
+        enquanto a grade "Retenções x Totais" da MESMA leitura saiu perfeita.
+        A mesma nota escaneada de novo (pág. 11) lê limpa com os mesmos
+        parâmetros: é a segmentação do Tesseract, não o papel.
+
+        Só age quando a leitura atual NÃO tem os 2 documentos (prestador +
+        tomador) com DV válido entre "PRESTADOR DE SERVIÇOS" e
+        "DISCRIMINAÇÃO" — qualquer nota que já lia bem segue byte a byte
+        igual. Nesse caso relê a página em zoom 5 + PSM 6 (mesmo PSM, outra
+        escala muda a segmentação) e, se ESSA leitura tiver os 2 documentos
+        válidos, troca só a metade de cima (até a linha "Retenções (R$)"),
+        preservando a grade de valores da leitura original (no zoom 5 é a
+        grade que se desmonta nesta nota). Sem a âncora "Retenções" em
+        alguma das duas leituras, ou sem ganho, devolve o texto original."""
+        try:
+            if self._camacari_docs_entidades(body) >= 2:
+                return body
+            m_body = self._RE_CAMACARI_RETENCOES.search(body)
+            if not m_body:
+                return body
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            if angle:
+                img = img.rotate(-angle, expand=True)
+            cand = pytesseract.image_to_string(img, lang='por', config='--psm 6')
+            m_cand = self._RE_CAMACARI_RETENCOES.search(cand)
+            if not m_cand:
+                return body
+            topo = cand[:m_cand.start()]
+            if self._camacari_docs_entidades(topo) < 2:
+                return body
+            return f"{topo}\n{body[m_body.start():]}"
+        except Exception:
+            return body
 
     @staticmethod
     def _ocr_header_box_camacari(page, angle: int = 0) -> str:
