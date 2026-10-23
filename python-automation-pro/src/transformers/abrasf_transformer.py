@@ -13,6 +13,20 @@ class Abrasf201Transformer:
         return ''.join(ch for ch in (value or '') if ch.isdigit())
 
     @staticmethod
+    def _format_aliquota(aliquota: float) -> str:
+        """Alíquota em fração (0.05 = 5%) com ATÉ 4 casas decimais (o
+        `tsAliquota` do ABRASF admite 4) e no mínimo 2. Antes era sempre
+        `:.2f`, que arredondava toda alíquota não inteira em pontos
+        percentuais: 3,78% saía 0.04 (achado real 2026-10-21, Camaçari nº
+        4584/4571, ROSANA JULIAO CARDOSO -> STAUMMAQ). Alíquota inteira
+        continua idêntica ("0.05"); só muda quem tinha casas a perder
+        ("0.0378", "0.0201")."""
+        txt = f"{round(aliquota, 4):.4f}"
+        inteiro, dec = txt.split('.')
+        dec = dec.rstrip('0').ljust(2, '0')
+        return f"{inteiro}.{dec}"
+
+    @staticmethod
     def _outras_retencoes_total(nfse: Nfse) -> float:
         """`OutrasRetencoes` não tem tag ABRASF própria para o valor
         COMBINADO de "Contribuições Sociais Retidas" (PIS+COFINS+CSLL
@@ -99,7 +113,7 @@ class Abrasf201Transformer:
         ET.SubElement(valores_nfse, 'ValorCsll').text = f"{nfse.valores.valor_csll:.2f}"
         ET.SubElement(valores_nfse, 'OutrasRetencoes').text = f"{self._outras_retencoes_total(nfse):.2f}"
         ET.SubElement(valores_nfse, 'BaseCalculo').text = f"{nfse.valores.base_calculo:.2f}"
-        ET.SubElement(valores_nfse, 'Aliquota').text = f"{nfse.valores.aliquota:.2f}"
+        ET.SubElement(valores_nfse, 'Aliquota').text = self._format_aliquota(nfse.valores.aliquota)
         ET.SubElement(valores_nfse, 'ValorIss').text = f"{nfse.valores.valor_iss:.2f}"
         ET.SubElement(valores_nfse, 'ValorLiquidoNfse').text = f"{nfse.valores.valor_liquido_nfse:.2f}"
         
@@ -168,7 +182,7 @@ class Abrasf201Transformer:
         ET.SubElement(valores, 'IssRetido').text = "1" if nfse.valores.iss_retido else "2"
         ET.SubElement(valores, 'ValorIss').text = f"{nfse.valores.valor_iss:.2f}"
         ET.SubElement(valores, 'BaseCalculo').text = f"{nfse.valores.base_calculo:.2f}"
-        ET.SubElement(valores, 'Aliquota').text = f"{nfse.valores.aliquota:.2f}"
+        ET.SubElement(valores, 'Aliquota').text = self._format_aliquota(nfse.valores.aliquota)
         ET.SubElement(valores, 'DescontoIncondicionado').text = "0.00"
         ET.SubElement(valores, 'DescontoCondicionado').text = "0.00"
         

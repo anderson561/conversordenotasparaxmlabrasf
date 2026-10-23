@@ -104,6 +104,11 @@ class IBGEResolver:
         "SAO JOSE": "4216602", "SÃO JOSÉ": "4216602",  # São José/SC (Grande Florianópolis)
         "SANTOS": "3548500",
         "VINHEDO": "3556701",
+        # Jundiaí/SP - prestador da DANFSe v2.0 GissOnline (nota nº 42,
+        # YANKATU DESIGN, 2026-10-20). A nota imprime só o CEP no campo
+        # "CÓDIGO IBGE / CEP"; código conferido na API oficial do IBGE
+        # (servicodados.ibge.gov.br/api/v1/localidades/municipios/3525904).
+        "JUNDIAI": "3525904", "JUNDIAÍ": "3525904",
         "GOIANIA": "5208707", "GOIÂNIA": "5208707",
         "BARUERI": "3505708",
         # Rio Largo/AL - onde fica o Aeroporto Zumbi dos Palmares, sede da
