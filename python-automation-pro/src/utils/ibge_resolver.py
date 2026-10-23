@@ -131,6 +131,10 @@ class IBGEResolver:
         # (LAYOUT_NFCOM_SETE_CONNECT, nota nº 18770, achado real 2026-09-17).
         # Sem esta entrada caía no fallback silencioso de Salvador/BA.
         "DIAS DAVILA": "2910057", "DIAS DÁVILA": "2910057",
+        # Grafia "DIAS D AVILA" (apóstrofo vira espaço) do letterhead da ELEVAR
+        # (LAYOUT_NOTA_LOCACAO, nota nº 1245, achado real 2026-10-16); código
+        # conferido na API do IBGE (municipios/2910057 -> "Dias d'Ávila", BA).
+        "DIAS D AVILA": "2910057",
         # João Pessoa/PB - prestador do LAYOUT_JOAO_PESSOA (nota nº 1001671,
         # ESPACO A COMERCIO DE MOVEIS LTDA, achado real 2026-09-23). Já era o
         # fallback de capital de "PB" em DEFAULT_CODES_BY_UF, mas sem esta
