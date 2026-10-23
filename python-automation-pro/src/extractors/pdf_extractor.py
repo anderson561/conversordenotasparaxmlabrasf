@@ -6055,10 +6055,24 @@ class SPPdfExtractor:
             if m_nome:
                 razao = re.sub(r'[\s,]+$', '', m_nome.group(1).strip())
 
+            # CNPJ do tomador: rótulo "CNPJ:" seguido de 14 dígitos, com ou sem
+            # pontuação, aceito SÓ se passar no dígito verificador e não for o
+            # CNPJ do próprio ISBET. Achado real, nota Boleto nº 665168: o OCR
+            # de página inteira lê o rótulo como "CNP):" (o "J" vira ")") - o
+            # regex antigo exigia "CNPJ" literal e o tomador saía sentinela
+            # mesmo com os 14 dígitos limpos ("04555283000350"). O rótulo
+            # aceita agora o 4º caractere trocado/ausente (mesma família do
+            # "CNP:" do NFCOM_SETE_CONNECT). Nada de zfill: um número curto
+            # (ilegível ou CPF) vira sentinela + aviso, nunca um CNPJ forjado.
             cnpj = "00000000000000"
-            m_cnpj = re.search(r'CNPJ\s*:\s*(\d{11,14})', bloco, re.IGNORECASE)
-            if m_cnpj:
-                cnpj = m_cnpj.group(1).zfill(14)
+            for m_cnpj in re.finditer(
+                r'CNP\S?\s*[:;.]\s*(\d{2}\.?\d{3}\.?\d{3}\s*/?\s*\d{4}\s*-?\s*\d{2})(?!\d)',
+                bloco, re.IGNORECASE,
+            ):
+                dig = re.sub(r'\D', '', m_cnpj.group(1))
+                if dig != "43126366000114" and self._cnpj_valido(dig):
+                    cnpj = dig
+                    break
 
             im = None
             m_im = re.search(r'\bIM\s*:\s*(\d+)', bloco, re.IGNORECASE)
@@ -22651,6 +22665,12 @@ class SPPdfExtractor:
                 "impresso no letterhead deste documento - mantido zerado por "
                 "não haver valor real para extrair"
             )
+            if tomador is not None and (tomador.cnpj_cpf or "00000000000000") == "00000000000000":
+                avisos.append(
+                    "CNPJ do tomador (bloco USUÁRIO DOS SERVIÇOS) ilegível ou "
+                    "reprovado no dígito verificador - mantido zerado, conferir "
+                    "na nota"
+                )
         if self.layout == LAYOUT_SEM_PARAR:
             # Esta fatura não imprime base de cálculo, alíquota nem ISS em
             # lugar nenhum, e o valor entregue é COMPOSTO das rubricas que ela
