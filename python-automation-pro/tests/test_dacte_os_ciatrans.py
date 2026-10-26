@@ -8,8 +8,8 @@ MAQUINAS LTDA, transporte de funcionários, R$6.739,50 (arquivo "ciatrans
 Documento estruturalmente DISTINTO tanto da NFS-e ABRASF (tributado por
 ICMS, não ISS) quanto da NF-e de produto Modelo 55 (não tem tabela de itens/
 NCM/CFOP - o "produto" é o SERVIÇO de transporte) - retorna um `CteOS`, com
-seu próprio transformer (`CteTransformer`, XML `cteProc`/`CTe`/`infCte`,
-`mod=67`, namespace `.../cte`). Ver LAYOUT_DACTE_OS para o histórico completo
+seu próprio transformer (`CteTransformer`, XML no leiaute oficial 4.00 do
+Modelo 67: `cteOSProc`/`CTeOS`/`infCte`, namespace `.../cte`). Ver LAYOUT_DACTE_OS para o histórico completo
 da detecção e das degradações de OCR.
 
 Toda verificação de campo abaixo foi conferida PIXEL A PIXEL contra o PDF
@@ -314,8 +314,19 @@ def test_rota_inicio_termino_prestacao(nota):
     assert nota.municipio_fim_prestacao == "Salvador"
 
 
-def test_sem_avisos_com_o_recorte_disponivel(nota):
-    assert nota.avisos == []
+def test_avisos_com_o_recorte_disponivel_sao_so_os_dois_campos_nao_impressos(nota):
+    """Antes: `avisos == []`. O leiaute oficial 4.00 exige dois campos que
+    este DACTE OS NÃO imprime - o CST (a caixa "CLASSIFICAÇÃO TRIBUTÁRIA DO
+    SERVIÇO" sai em branco no gerador Master CT-e) e o CRT do emitente.
+    Ambos são preenchidos por derivação documentada (CST 20 pela redução de
+    BC de 100% impressa; CRT 3 por coerência com a grade de ICMS por CST) e,
+    por não serem lidos, AVISADOS - nada além disso."""
+    assert len(nota.avisos) == 2
+    assert nota.avisos[0].startswith("CST do ICMS não impresso")
+    assert "CST 20" in nota.avisos[0]
+    assert nota.avisos[1].startswith("CRT do emitente não impresso")
+    assert nota.imposto.cst_icms == "20"
+    assert nota.crt == "3"
 
 
 # ------------------------------------------------------------- emitente
@@ -384,9 +395,10 @@ def test_cep_do_tomador_sai_deslocado_para_o_fim_do_bloco(nota):
 
 
 def test_tomador_e_emitente_compartilham_o_mesmo_municipio(nota):
-    """Ambos em Simões Filho/BA - o código IBGE do tomador reaproveita o
-    mesmo código já impresso (e validado) para "Início da Prestação", em vez
-    de uma nova resolução via IBGEResolver."""
+    """Ambos em Simões Filho/BA. Antes o código do EMITENTE era copiado do
+    "Início da Prestação" (coincidência desta nota - a rota não é o endereço
+    do emitente); agora os dois saem da tabela `KNOWN_CITIES` pelo nome
+    impresso, sem o fallback silencioso da capital."""
     assert nota.tomador.endereco.codigo_municipio == nota.emitente.endereco.codigo_municipio == "2930709"
 
 
@@ -455,9 +467,11 @@ def test_modal_rodoviario(nota):
 
 def test_sem_o_recorte_valores_ficam_zerados_com_aviso(nota_sem_recut):
     """`_ocr_recut_dacte_os_grade` é ADITIVO: quando falha (ex.: sem página
-    real por trás, como um PDF dummy), devolve "" e o chamador NÃO cai de
-    volta no texto de página inteira para estes campos (que sai
-    posicionalmente inutilizável) - zera e avisa, nunca fabrica."""
+    real por trás, como um PDF dummy), devolve "" e o chamador só aproveita o
+    texto de página inteira por âncoras ESTRUTURAIS estritas (cabeçalho +
+    linha com exatamente o nº de valores esperado - ver `dacte_os_texto`).
+    Nesta nota o texto de página inteira sai posicionalmente inutilizável e
+    nenhuma âncora casa - zera e avisa, nunca fabrica."""
     assert nota_sem_recut.valor_total_prestacao == 0.0
     assert nota_sem_recut.valor_a_receber == 0.0
     assert nota_sem_recut.imposto.base_calculo_icms == 0.0
@@ -487,8 +501,8 @@ def test_recorte_dedicado_real_devolve_vazio_sem_pagina_por_tras(nota_recut_real
 # ------------------------------------------------------------ transformer
 
 def test_xml_e_um_cte_mod67_nao_uma_nfe_mod55(nota):
-    """O XML deve se identificar como CT-e (mod=67, raiz `CTe`/`infCte`,
-    namespace `.../cte`) - NUNCA como NF-e (mod=55, `NFe`/`infNFe`,
+    """O XML deve se identificar como CT-e OS (mod=67, raiz `cteOSProc`/
+    `CTeOS`/`infCte`, namespace `.../cte`) - NUNCA como NF-e (mod=55, `NFe`/`infNFe`,
     `.../nfe`). Usar as tags de NF-e para representar um CT-e seria uma
     inverdade estrutural equivalente a fabricar dado fiscal."""
     xml = CteTransformer().transform(nota)
@@ -509,9 +523,16 @@ def test_xml_traz_os_valores_reais(nota):
 
 
 def test_xml_traz_o_modal_rodoviario(nota):
+    """Leiaute oficial `cteModalRodoviarioOS_v4.00`: `infCTeNorm/infModal/
+    rodoOS` com `NroRegEstadual` (25 dígitos) e `veic/placa`/`veic/RENAVAM`
+    (maiúsculo)/`veic/UF`. Antes: `infModal/rodoOS` solto no `infCte`, com
+    `<renavam>` minúsculo, `<UFLic>` e o CPF do responsável em `<RNTRC>` -
+    tags que não existem nesse leiaute (o RNTRC é do modal de CARGA)."""
     xml = CteTransformer().transform(nota)
+    assert "<NroRegEstadual>0000000000000000000043115</NroRegEstadual>" in xml
     assert "<placa>MQN2581</placa>" in xml
-    assert "<renavam>869471996</renavam>" in xml
+    assert "<RENAVAM>869471996</RENAVAM>" in xml
+    assert "<renavam>" not in xml and "<RNTRC>" not in xml and "<UFLic>" not in xml
 
 
 # ------------------------------------------------- não colide com outros

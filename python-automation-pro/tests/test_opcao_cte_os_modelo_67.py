@@ -6,7 +6,7 @@ Com "cteos" a conversão gera SOMENTE os documentos CT-e OS (`CteOS`, Modelo
 67) do PDF e IGNORA as demais páginas (NFS-e, NF-e), registrando cada página
 ignorada; sem nenhum CT-e OS, erro claro (`NenhumCteOsError`), sem XML vazio.
 Os outros modos continuam idênticos - em especial o roteamento automático de
-um CT-e OS para `cteProc` mod 67 no modo "abrasf" (ver `_pick_transformer`).
+um CT-e OS para `cteOSProc` mod 67 no modo "abrasf" (ver `_pick_transformer`).
 
 O `CteOS` usado aqui é o da nota REAL nº 17268 (SIGMA -> STAUMMAQ, pág. 4 de
 "STAUMMAQ - NFSe TERCEIROS.pdf"), extraído do texto OCR real gravado em
@@ -100,7 +100,9 @@ def test_run_conversion_cteos_gera_so_o_mod_67(tmp_path, monkeypatch, lote_misto
     # Mesmo padrão de nome que o CT-e já recebe hoje no modo abrasf.
     assert _xmls(out) == ["STAUMMAQ_Pagina_4_NF_000017268.xml"]
     xml = _ler(out, "STAUMMAQ_Pagina_4_NF_000017268.xml")
-    assert "<cteProc" in xml and "<mod>67</mod>" in xml
+    # Leiaute oficial 4.00 do Modelo 67: `cteOSProc` (antes `cteProc`, raiz do
+    # Modelo 57 - o Domínio não reconhecia o documento).
+    assert "<cteOSProc" in xml and "<mod>67</mod>" in xml
     assert "CompNfse" not in xml
 
     ignoradas = [m for m in msgs if "não é DACTE OS" in m]
