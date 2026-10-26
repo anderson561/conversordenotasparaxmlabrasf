@@ -981,7 +981,11 @@ class SPPdfExtractor:
         # nacional, 4º emitente DIFERENTE, gate ESPECÍFICO do CNPJ (mesma
         # decisão do usuário ver LAYOUT_NFCOM_SETE_CONNECT). Achado real, nota
         # nº 18770 (NORDESTE TUBETES, R$109,99).
-        if re.search(r'13\.?060\.?537[/.]?0001-?99', t) and re.search(r'FATURA\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', t, re.IGNORECASE):
+        # Gate via `_eh_nfcom_sete_connect` (CNPJ impresso tolerante ao 6->8
+        # do OCR OU chave de acesso reparada/validada pelo DV) - achado real
+        # 2026-10-26, nota nº 21324 ESCANEADA: o OCR lê "13.080.537" e a
+        # nota caía no fallback LAYOUT_NACIONAL.
+        if self._eh_nfcom_sete_connect(t):
             return LAYOUT_NFCOM_SETE_CONNECT
         # NFCom da NET MUND BRASIL INTERNET E SEGURANCA LTDA - mesmo template
         # nacional, 5º emitente DIFERENTE (mesma decisão do usuário ver
@@ -1478,7 +1482,11 @@ class SPPdfExtractor:
         # nacional, 4º emitente DIFERENTE, gate ESPECÍFICO do CNPJ (mesma
         # decisão do usuário ver LAYOUT_NFCOM_SETE_CONNECT). Achado real, nota
         # nº 18770 (NORDESTE TUBETES, R$109,99).
-        if re.search(r'13\.?060\.?537[/.]?0001-?99', t) and re.search(r'FATURA\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA', t, re.IGNORECASE):
+        # Gate via `_eh_nfcom_sete_connect` (CNPJ impresso tolerante ao 6->8
+        # do OCR OU chave de acesso reparada/validada pelo DV) - achado real
+        # 2026-10-26, nota nº 21324 ESCANEADA: o OCR lê "13.080.537" e a
+        # nota caía no fallback LAYOUT_NACIONAL.
+        if self._eh_nfcom_sete_connect(t):
             return LAYOUT_NFCOM_SETE_CONNECT
         # NFCom da NET MUND BRASIL INTERNET E SEGURANCA LTDA - mesmo template
         # nacional, 5º emitente DIFERENTE (mesma decisão do usuário ver
@@ -4142,6 +4150,22 @@ class SPPdfExtractor:
                     return disc
             return 'Serviços de comunicação eletrônica conforme nota fiscal.'
 
+        if self.layout == LAYOUT_NFCOM_SETE_CONNECT:
+            # Descrição dos itens da tabela (ver `_itens_nfcom_sete_connect`)
+            # + período de faturamento e referência impressos - achado real,
+            # nota nº 21324: "SERVICO COMUNICACAO MULTIMIDIA - Período:
+            # 10/09/2026 à 10/10/2026 - Referência: 09/2026".
+            itens = self._itens_nfcom_sete_connect(t)
+            partes = [' | '.join(d for d, _ in itens) if itens
+                      else 'Serviços de comunicação eletrônica conforme nota fiscal.']
+            m_per = re.search(r'Per[íi]odo\s*:\s*(\d{2}/\d{2}/\d{4})\s*(?:à|a)\s*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
+            if m_per:
+                partes.append(f"Período: {m_per.group(1)} à {m_per.group(2)}")
+            m_ref = re.search(r'REFER[ÊE]NCIA\s*\(ANO\s*/\s*M[ÊE]S\)\s*:\s*(\d{2}/\d{4})', t, re.IGNORECASE)
+            if m_ref:
+                partes.append(f"Referência: {m_ref.group(1)}")
+            return ' - '.join(partes)
+
         if self.layout == LAYOUT_SAO_JOSE_SC:
             # A descrição real do item faturado ("LIC SOFT CLOUD-STANDARD 36X")
             # vem imediatamente ANTES da grade de valores (6 números seguidos
@@ -4990,6 +5014,14 @@ class SPPdfExtractor:
             # dos demais NFCom - "CHAVE DE ACESSO: 1326 0653 0605 3700 0199 ...".
             # Fallback honesto 'NFCOM' quando a chave não sobrevive ao OCR
             # (mesmo critério dos outros 3 layouts NFCom).
+            # Primeiro a chave confirmada pelo DV (com reparo estrutural do
+            # CNPJ fixo do emitente nas posições 6:20 - nota nº 21324
+            # escaneada, OCR "0913 0805 3700" para o impresso "0913 0605
+            # 3700", ver `_chave_nfcom_sete_connect`); só sem ela cai na
+            # leitura rotulada de antes.
+            confirmada = self._chave_nfcom_sete_connect(t)
+            if confirmada:
+                return confirmada
             m = re.search(r'CHAVE\s+DE\s+ACESSO\s*[:\s]*([\d\s]{44,60})', t, re.IGNORECASE)
             if m:
                 chave = re.sub(r'\D', '', m.group(1))
@@ -9031,20 +9063,28 @@ class SPPdfExtractor:
         LOTEC_FIBRA. Código IBGE (2910057) confirmado em 2 fontes
         independentes (cidades.ibge.gov.br/brasil/ba/dias-davila,
         ruacep.com.br/ba/dias-davila/ibge) e cadastrado em
-        `IBGEResolver.KNOWN_CITIES`."""
+        `IBGEResolver.KNOWN_CITIES`.
+
+        Endereço CORRIGIDO em 2026-10-26 contra a 1ª nota REAL deste emitente
+        vista no projeto (nº 21324, escaneada, letterhead nítido na imagem
+        renderizada): "RUA DA MANGUEIRA, SN - SALA 02 - CENTRO, Dias d'Avila
+        - BA - 42850000". O valor anterior ("RUA GETULIO VARGAS, 61 - SALA
+        07") vinha do MOCK usado para criar o layout (PDF de origem não
+        estava disponível) e nunca foi impresso por este emitente."""
         return Entidade(
             cnpj_cpf="13060537000199",
             razao_social="SETE CONNECT TECNOLOGIA DA INFORMACAO LTDA",
             endereco=Endereco(
-                logradouro="RUA GETULIO VARGAS",
-                numero="61",
-                complemento="SALA 07",
+                logradouro="RUA DA MANGUEIRA",
+                numero="SN",
+                complemento="SALA 02",
                 bairro="CENTRO",
                 codigo_municipio="2910057",
                 municipio="DIAS D'AVILA",
                 uf="BA",
                 cep="42850000",
             ),
+            telefone="7136258577",
         )
 
     def _extrair_tomador_nfcom_sete_connect(self, t: str) -> Entidade:
@@ -9087,6 +9127,17 @@ class SPPdfExtractor:
 
         mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
 
+        # Telefone do assinante: bloco "INFORMAÇÕES:" logo abaixo do
+        # endereço do tomador ("Cod. Assinante: 2369 Contrato: 2369" /
+        # "Telefone: 7136446346" - nota nº 21324). Procurado só DEPOIS de
+        # "CLIENTE:" (o "Telefone:" anterior é o do emitente, no letterhead).
+        telefone_tom = None
+        m_cli = re.search(r'CLIENTE\s*:', t, re.IGNORECASE)
+        if m_cli:
+            m_tel = re.search(r'Telefone\s*:\s*(\d{10,11})\b', t[m_cli.end():], re.IGNORECASE)
+            if m_tel:
+                telefone_tom = m_tel.group(1)
+
         return Entidade(
             cnpj_cpf=cnpj_tom,
             razao_social=nome_tom,
@@ -9100,6 +9151,7 @@ class SPPdfExtractor:
                 uf=uf,
                 cep=cep,
             ),
+            telefone=telefone_tom,
         )
 
     def _extrair_prestador_nfcom_net_mund(self) -> Entidade:
@@ -18018,8 +18070,10 @@ class SPPdfExtractor:
             # usuário: documento tributado por ICMS, não ISS - base_calculo/
             # aliquota/valor_iss ficam propositalmente em 0,00 - o aviso
             # explicativo é adicionado em `parse_multiple`.
-            m_total = re.search(r'TOTAL\s+A\s+PAGAR\s*:\s*R\$\s*([\d.,]+)', t, re.IGNORECASE)
-            v = self._parse_valor(m_total.group(1)) if m_total else 0.0
+            # Ordem: TOTAL A PAGAR -> VALOR NFF -> soma da coluna TOTAL dos
+            # itens (`_valores_conferencia_nfcom_sete_connect`); divergência
+            # entre os que foram lidos vira aviso em `parse`.
+            v = next((x for x in self._valores_conferencia_nfcom_sete_connect(t).values() if x), 0.0)
 
             return Valores(
                 valor_servicos=v,
@@ -19750,6 +19804,18 @@ class SPPdfExtractor:
                     if recut_total_nm.strip():
                         best_text = f"{recut_total_nm}\n{best_text}"
 
+                # NFCom da SETE CONNECT (`nfcom_sete_connect`) ESCANEADA -
+                # achado real 2026-10-26, nota nº 21324: a leitura de página
+                # inteira troca dígitos/letras da linha do endereço do
+                # tomador ("148 - 146 G" para o impresso "146 - 146 C"). O
+                # recorte só do bloco CLIENTE/ENDEREÇO devolve a linha
+                # certa - e só é usado quando 2 leituras independentes
+                # concordam (ver `_ocr_recut_tomador_nfcom_sete_connect`).
+                if self._eh_nfcom_sete_connect(best_text):
+                    recut_end_sete = self._ocr_recut_tomador_nfcom_sete_connect(page)
+                    if recut_end_sete.strip():
+                        best_text = f"{recut_end_sete}\n{best_text}"
+
                 # NFCom da RADIO E TELEVISAO BANDEIRANTES DA BAHIA
                 # (`nfcom_bandeirantes`) - achado real, nota nº 2086 (PORTO
                 # UNO AGENCIA DE IMOVEIS LTDA, R$3.000,00): a caixa "TOTAL A
@@ -20225,6 +20291,64 @@ class SPPdfExtractor:
             if not m:
                 return ""
             return f"TOTAL A PAGAR: R$ {m.group(1)}\n"
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _ocr_recut_tomador_nfcom_sete_connect(page) -> str:
+        """Recorta só o bloco CLIENTE/ENDEREÇO da NFCom ESCANEADA da SETE
+        CONNECT (`nfcom_sete_connect`) e devolve as 2 linhas do endereço do
+        tomador sob o rótulo "ENDEREÇO:" (prependado ao texto principal, o
+        extrator do tomador pega a 1ª ocorrência).
+
+        Achado real 2026-10-26, nota nº 21324 (NORDESTE TUBETES): a leitura
+        de página inteira sai "RUA BOA VIAGEM, 148 - 146 G - PARQUE
+        PETROPOLIS" para o impresso "146 - 146 C" (conferido na imagem
+        renderizada). Nenhuma leitura isolada do recorte (0%-45% da largura,
+        15%-21,5% da altura) é estável: conforme zoom/PSM - e até entre
+        execuções - o "6" sai "8" e o "C" sai "G". Por isso VOTAÇÃO
+        multi-leitura (zoom 3x/4x/5x/6x/8x x `--psm 4`/`--psm 6` = 10
+        leituras, mesmo racional da votação do FEIRA_NFSE_NACIONAL), CAMPO A
+        CAMPO da linha "LOGRADOURO, NÚMERO - COMPLEMENTO - BAIRRO" e da
+        linha "MUNICÍPIO / UF - CEP": cada campo só é aceito com maioria
+        ABSOLUTA das leituras válidas (mín. 5); qualquer campo sem maioria
+        -> "" (fica a leitura de página inteira, comportamento anterior).
+        Na nota nº 21324: número "146" 8/10, complemento "146 C" 8/10."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            r = page.rect
+            clip = pymupdf.Rect(
+                r.x0,                  r.y0 + r.height * 0.150,
+                r.x0 + r.width * 0.45, r.y0 + r.height * 0.215,
+            )
+            re_l1 = re.compile(r'^(.+?),\s*(\S+)\s+-\s+(.+?)\s+-\s+(.+)$')
+            leituras = []
+            for zoom in (3.0, 4.0, 5.0, 6.0, 8.0):
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=clip)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                for psm in (4, 6):
+                    texto = pytesseract.image_to_string(img, lang='por', config=f'--psm {psm}')
+                    m = re.search(r'ENDERE\S*\s*:?[ \t]*\n+\s*(.+?)[ \t]*\n+\s*(.+?)[ \t]*(?:\n|$)', texto, re.IGNORECASE)
+                    if not m:
+                        continue
+                    m1 = re_l1.match(m.group(1).strip())
+                    if m1:
+                        leituras.append(tuple(g.strip() for g in m1.groups()) + (m.group(2).strip(),))
+            if len(leituras) < 5:
+                return ""
+            campos = []
+            for k in range(5):
+                valor, votos = Counter(x[k] for x in leituras).most_common(1)[0]
+                if votos * 2 <= len(leituras):
+                    return ""
+                campos.append(valor)
+            logradouro, numero, complemento, bairro, linha2 = campos
+            return f"ENDEREÇO:\n{logradouro}, {numero} - {complemento} - {bairro}\n{linha2}\n"
         except Exception:
             return ""
 
@@ -23402,6 +23526,17 @@ class SPPdfExtractor:
                     "no cabeçalho da fatura (nenhuma linha de nome antes do "
                     "endereço) - conferir na nota"
                 )
+        if self.layout == LAYOUT_NFCOM_SETE_CONNECT:
+            lidos = {k: x for k, x in self._valores_conferencia_nfcom_sete_connect(self.raw_text).items() if x}
+            if len(set(round(x, 2) for x in lidos.values())) > 1:
+                avisos.append(
+                    "Valores da NFCom divergem entre si ("
+                    + "; ".join(f"{k} R$ {x:.2f}".replace('.', ',') for k, x in lidos.items())
+                    + ") - usado o primeiro; conferir na nota")
+            elif not lidos:
+                avisos.append(
+                    "Nenhum valor da NFCom legível (TOTAL A PAGAR / VALOR NFF / "
+                    "TOTAL dos itens) - Valor dos Serviços zerado; conferir na nota")
         if self.layout in (LAYOUT_NFCOM_SALVADOR, LAYOUT_NFCOM_RLGR, LAYOUT_NFCOM_LOTEC_FIBRA, LAYOUT_NFCOM_SETE_CONNECT, LAYOUT_NFCOM_NET_MUND, LAYOUT_NFCOM_BANDEIRANTES):
             avisos.append(
                 "Documento tributado por ICMS (NFCom - Nota Fiscal de Comunicação "
@@ -23839,6 +23974,93 @@ class SPPdfExtractor:
             soma += int(digito) * (2 + i % 8)
         resto = soma % 11
         return '0' if resto in (0, 1) else str(11 - resto)
+
+    _CNPJ_SETE_CONNECT = '13060537000199'
+
+    @classmethod
+    def _eh_nfcom_sete_connect(cls, t: str) -> bool:
+        """Gate do LAYOUT_NFCOM_SETE_CONNECT: marca do título NFCom + (CNPJ
+        impresso do emitente OU chave de acesso confirmada pelo DV com esse
+        CNPJ nas posições 6:20).
+
+        O CNPJ impresso tolera o "6" lido como "8" no 5º dígito e vírgula no
+        lugar do ponto - achado real 2026-10-26, nota nº 21324 ESCANEADA
+        (Scan2026-10-26_095859.pdf, pág. 3): a faixa cinza do letterhead sai
+        "CNPJ: 13.080.537/0001-99" na leitura de página inteira (e a chave sai
+        com o mesmo erro, "0913 0805 3700"), e a nota caía no fallback
+        LAYOUT_NACIONAL (prestador sentinela, valor zerado, endereço do
+        tomador com ~250 caracteres de lixo). Mesma tolerância 6/8 já usada
+        no gate do NFCOM_LOTEC_FIBRA; a sufixo "/0001-99" + a marca de título
+        continuam exigidos, então não captura outro emitente."""
+        if not re.search(r'FATURA\s+DE\s+SERVI[ÇC]OS?\s+DE\s+COMUNICA[ÇC][ÃA]O\s+ELETR[ÔO]NICA',
+                         t, re.IGNORECASE):
+            return False
+        if re.search(r'13[.,]?0[68]0[.,]?537[/.,]?0001-?99', t):
+            return True
+        achada = cls._localizar_chave_nfcom(t)
+        return bool(achada and achada[1] and achada[0][6:20] == cls._CNPJ_SETE_CONNECT)
+
+    @classmethod
+    def _chave_nfcom_sete_connect(cls, t: str) -> Optional[str]:
+        """Chave de acesso de 44 dígitos de uma NFCom da SETE CONNECT, só
+        quando confirmada pelo DV mod-11.
+
+        1) janela localizada por estrutura com DV correto (`_localizar_chave_
+           nfcom`) e com o CNPJ deste emitente nas posições 6:20;
+        2) reparo estrutural: o emitente do layout é FIXO, então as posições
+           6:20 da chave SÃO o CNPJ 13060537000199. Uma janela com modelo 62
+           (20:22) e mês válido cujo trecho 6:20 difere desse CNPJ em até 2
+           dígitos (erro de OCR, ex. "0805" em vez de "0605" - nota nº 21324
+           escaneada) tem esse trecho substituído, e a chave só é aceita se o
+           DV da chave inteira fechar - o DV confere também todos os outros
+           30 dígitos lidos, nada é fabricado.
+        Devolve None quando nenhuma das duas fecha (o chamador mantém o
+        comportamento anterior)."""
+        achada = cls._localizar_chave_nfcom(t)
+        if achada and achada[1] and achada[0][6:20] == cls._CNPJ_SETE_CONNECT:
+            return achada[0]
+        for m in re.finditer(r'\d[\d\s]{42,}', t or ''):
+            digitos = re.sub(r'\D', '', m.group(0))
+            for i in range(len(digitos) - 43):
+                janela = digitos[i:i + 44]
+                if janela[20:22] != '62' or not ('01' <= janela[4:6] <= '12'):
+                    continue
+                difs = sum(1 for a, b in zip(janela[6:20], cls._CNPJ_SETE_CONNECT) if a != b)
+                if difs > 2:
+                    continue
+                candidata = janela[:6] + cls._CNPJ_SETE_CONNECT + janela[20:]
+                if cls._dv_chave_nfe(candidata[:43]) == candidata[43]:
+                    return candidata
+        return None
+
+    # Linha de item da tabela da NFCom: "0100201 SERVICO COMUNICACAO
+    # MULTIMIDIA 5303 UN 1.0000 R$109,99 R$ 109,99 R$4,01 ..." (código do
+    # item, descrição, CFOP, unidade, quantidade, V. UNIT., TOTAL, ...).
+    _RE_ITEM_NFCOM_SETE_CONNECT = re.compile(
+        r'^\s*\d{5,8}\s+(.+?)\s+[1-7]\d{3}\s+[A-Z]{1,4}\s+[\d.,]+\s+'
+        r'R\$\s*([\d.,]+)\s+R\$\s*([\d.,]+)', re.MULTILINE)
+
+    @classmethod
+    def _itens_nfcom_sete_connect(cls, t: str) -> List[tuple]:
+        """[(descrição, total_do_item), ...] das linhas de item da NFCom."""
+        return [(m.group(1).strip(), cls._parse_valor(m.group(3)))
+                for m in cls._RE_ITEM_NFCOM_SETE_CONNECT.finditer(t or '')]
+
+    @classmethod
+    def _valores_conferencia_nfcom_sete_connect(cls, t: str) -> dict:
+        """Os 3 valores impressos que devem bater numa NFCom da SETE CONNECT,
+        em ordem de preferência: "TOTAL A PAGAR: R$", "VALOR NFF R$" e a soma
+        da coluna TOTAL dos itens. 0.0 = não lido. Achado real, nota nº 21324
+        escaneada: TOTAL A PAGAR e o item saem legíveis (R$ 109,99), o quadro
+        "VALOR NFF" some da leitura de página inteira."""
+        m_total = re.search(r'TOTAL\s+A\s+PAGAR\s*:\s*R\$\s*([\d.,]+)', t or '', re.IGNORECASE)
+        m_nff = re.search(r'VALOR\s+NFF\s*:?\s*R\$\s*([\d.,]+)', t or '', re.IGNORECASE)
+        itens = cls._itens_nfcom_sete_connect(t)
+        return {
+            'TOTAL A PAGAR': cls._parse_valor(m_total.group(1)) if m_total else 0.0,
+            'VALOR NFF': cls._parse_valor(m_nff.group(1)) if m_nff else 0.0,
+            'TOTAL dos itens': round(sum(v for _, v in itens), 2),
+        }
 
     @classmethod
     def _localizar_chave_nfcom(cls, t: str) -> Optional[tuple]:
