@@ -82,7 +82,19 @@ class IBGEResolver:
         "SAO PAULO": "3550308", "SÃO PAULO": "3550308",
         "RIO DE JANEIRO": "3304557",
         "VARGEM GRANDE PAULISTA": "3556453",
-        "POJUCA": "2925303",
+        # Pojuca/BA - corrigido 2026-10-20: o valor anterior (2925303) é o de
+        # PORTO SEGURO/BA. A nota nº 73 (DANFSe v2.0, tomador SINAL
+        # CONSTDRUTORA, Pojuca) imprime "Código IBGE / CEP 2925204 /
+        # 48120-000", e a API oficial do IBGE confirma 2925204 = Pojuca e
+        # 2925303 = Porto Seguro (servicodados.ibge.gov.br/api/v1/
+        # localidades/municipios/<código>). Afeta o mesmo tomador SINAL nos
+        # layouts ARMAC e Iaçu, que imprimem só o NOME do município.
+        "POJUCA": "2925204",
+        # Lajedinho/BA (incidência do ISSQN da nota nº 73, obra CONDER) e
+        # Serrinha/BA (prestador W M K CONSTRUCOES) - códigos impressos na
+        # própria nota e conferidos na API oficial do IBGE (2026-10-20).
+        "LAJEDINHO": "2919009",
+        "SERRINHA": "2930501",
         "IACU": "2912707", "IAÇU": "2912707",
         "MATA DE SAO JOAO": "2921005", "MATA DE SÃO JOÃO": "2921005",
         "ROSARIO DA LIMEIRA": "3156452", "ROSÁRIO DA LIMEIRA": "3156452",
@@ -92,6 +104,11 @@ class IBGEResolver:
         "SAO JOSE": "4216602", "SÃO JOSÉ": "4216602",  # São José/SC (Grande Florianópolis)
         "SANTOS": "3548500",
         "VINHEDO": "3556701",
+        # Jundiaí/SP - prestador da DANFSe v2.0 GissOnline (nota nº 42,
+        # YANKATU DESIGN, 2026-10-20). A nota imprime só o CEP no campo
+        # "CÓDIGO IBGE / CEP"; código conferido na API oficial do IBGE
+        # (servicodados.ibge.gov.br/api/v1/localidades/municipios/3525904).
+        "JUNDIAI": "3525904", "JUNDIAÍ": "3525904",
         "GOIANIA": "5208707", "GOIÂNIA": "5208707",
         "BARUERI": "3505708",
         # Rio Largo/AL - onde fica o Aeroporto Zumbi dos Palmares, sede da
@@ -119,6 +136,10 @@ class IBGEResolver:
         # (LAYOUT_NFCOM_SETE_CONNECT, nota nº 18770, achado real 2026-09-17).
         # Sem esta entrada caía no fallback silencioso de Salvador/BA.
         "DIAS DAVILA": "2910057", "DIAS DÁVILA": "2910057",
+        # Grafia "DIAS D AVILA" (apóstrofo vira espaço) do letterhead da ELEVAR
+        # (LAYOUT_NOTA_LOCACAO, nota nº 1245, achado real 2026-10-16); código
+        # conferido na API do IBGE (municipios/2910057 -> "Dias d'Ávila", BA).
+        "DIAS D AVILA": "2910057",
         # João Pessoa/PB - prestador do LAYOUT_JOAO_PESSOA (nota nº 1001671,
         # ESPACO A COMERCIO DE MOVEIS LTDA, achado real 2026-09-23). Já era o
         # fallback de capital de "PB" em DEFAULT_CODES_BY_UF, mas sem esta
