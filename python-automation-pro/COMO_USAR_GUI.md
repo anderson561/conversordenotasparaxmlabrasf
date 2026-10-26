@@ -54,6 +54,8 @@ Quando você converte **um único PDF** que contém **mais de uma nota válida**
 
 > Só as páginas com nota reconhecida aparecem na lista; páginas de lixo/comprovante são ignoradas automaticamente. O PDF inteiro é lido para reconhecer as notas — a seleção decide quais viram XML.
 
+**Vários PDFs de uma vez:** com dois ou mais PDFs anexados (ou uma pasta), o programa primeiro analisa cada arquivo (o log mostra "Pré-analisando (1/3): ..." — com PDF escaneado pode demorar). Se algum deles tiver mais de uma nota, aparece UMA janela **"Selecionar notas para conversão (vários PDFs)"** com as notas separadas por arquivo (o nome do arquivo em negrito e, abaixo, "Página X — Nota Y"). Arquivos com uma única nota já vêm marcados. Os mesmos botões ("Converter selecionadas", "Marcar/limpar todas", "Converter todas as válidas") mais **"Cancelar"**. Arquivo sem nenhuma nota marcada não é convertido (o log avisa). Os nomes dos XMLs são os mesmos da conversão em lote. Se nenhum PDF tiver mais de uma nota, a conversão segue direto, sem janela.
+
 ### Opção "CT-e OS (DACTE OS - Modelo 67)"
 
 Use quando o PDF (ou a pasta) mistura DACTE OS com outras notas e você quer **só os CT-e OS**:
