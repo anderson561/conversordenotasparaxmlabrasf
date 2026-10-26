@@ -461,6 +461,18 @@ Layouts de emissores fixos (a razão social e o endereço do prestador são conh
 - **Limitação conhecida**: a placa impressa "RPZ 0I95" é lida "RPZ 0195" pelo Tesseract em qualquer zoom/PSM; fica como lida + aviso de conferência.
 - **Testes**: `tests/test_nota_locacao_elevar_layout.py` (22), texto REAL do `_ocr_page` como fixture + palavras/linhas reais do `image_to_data`.
 
+### 16j. Nota Débito / Fatura de locação (impresso do emitente) — `nota_debito_locacao`
+> Layout novo (2026-10-26). Achado real: `Notas/092026/locacao.pdf` — ANA CELIA MOREIRA RIBEIRO (CNPJ 45.282.926/0001-55, Salvador/BA) → SINAL CONSTRUTORA LTDA (CNPJ 33.811.381/0001-48, Pojuca/BA), "NOTA DÉBITO Nº 36" / "FATURA 005-2026", 02/10/2026, locação de caçamba truck, R$ 17.827,08. Foto de celular de cabeça para baixo, sem texto. Antes: rotação 180° achada, mas "Layout não reconhecido" → nenhum XML → "parece ser baseado em imagem/scan ou vazio".
+
+- **Por que não reaproveitar a `nota_locacao` (16i)**: impresso diferente — "NOTA DÉBITO"/"FATURA", "NATUREZA DA OPERAÇÃO", "TOMADOR DO SERVIÇO" em caixas, "TOTAL DA FATURA", "NÃO SUJEITO A I.S.S."; nenhuma âncora da 16i nem das faturas de locação (Localiza/CPE/PJB/F&F/genérica).
+- **Detecção (estrutural, simétrica)**: "NOTA DÉBITO Nº <n>" + "FATURA <n>" + "NATUREZA DA OPERAÇÃO" + "TOMADOR DO SERVIÇO", sem marca NFS-e/Nota Fiscal/DANFS; logo após a 16i na cadeia.
+- **Rotação**: a busca de rotação existente do `_ocr_page` (só quando 0° pontua abaixo de `_OCR_ROTACAO_LIMIAR`) acha os 180° (placar 12 x 0); nada mudou nela.
+- **OCR**: a leitura de página inteira perde todas as caixas de valor. `nota_debito_locacao.recortar` (no `_ocr_page`, só para este layout) recorta cada caixa a partir dos rótulos via `image_to_data` (DATA EMISSÃO/VENCIMENTO, NOME/RAZÃO SOCIAL, CNPJ, ENDEREÇO→linha de caixas separada em colunas pelo vão horizontal, MUNICIPIO/UF, DESCRIÇÃO/PERIODO/TOTAL, "TOTAL DA FATURA") e lê em 6 variantes (cinza 1x/2x/3x, binarizada 90/110/130); o valor é VOTADO entre as leituras que passam no validador (data, CNPJ com DV, UF, moeda, placa) e sai em linhas `NOTADEB_*`. Custo: ~15 s a mais só nesta página.
+- **Campos**: Número = FATURA sem ano/zeros ("005-2026" → 5) **(decisão do usuário)**, o nº da NOTA DÉBITO vai em aviso; data = caixa DATA EMISSÃO; competência = mês da emissão **(decisão do usuário; o período da locação 09/2026 não vale)**; emitente do letterhead (linha antes de "CNPJ", endereço = linha seguinte, "<CIDADE>, <UF> CEP:", "TEL:"); tomador das caixas; discriminação = descrição + placas com o total de cada uma + período + "SEM FORNECIMENTO DE MÃO DE OBRA"; valor = "TOTAL DA FATURA" ou, ilegível, soma dos itens + aviso.
+- **Convenção**: igual à 16i (item 0601, "FATURA", ISS/base/alíquota zerados, IssRetido 2) + aviso de documento fora do campo do ISS. Optante não impresso → não presumido.
+- **Limitações conhecidas**: o "TOTAL DA FATURA" e o "SEM" da frase de mão de obra estão sob marca-texto (valor pela soma dos itens / "SEM" inferido sem leitura "COM", ambos com aviso); placas lidas por OCR com aviso.
+- **Testes**: `tests/test_nota_debito_locacao_layout.py` (25), texto REAL do `_ocr_page` (página girada) como fixture + leituras reais das variantes/palavras do `image_to_data`.
+
 ### 17. Localiza — `localiza_fatura`
 - Faturas de locação/revenda de serviços veiculares da Localiza Rent A Car.
 - Identificado por "LOCALIZA RENT A CAR S/A" ou "FATURA / DUPLICATA".
