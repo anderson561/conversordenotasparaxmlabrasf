@@ -140,6 +140,12 @@ class IBGEResolver:
         # (LAYOUT_NOTA_LOCACAO, nota nº 1245, achado real 2026-10-16); código
         # conferido na API do IBGE (municipios/2910057 -> "Dias d'Ávila", BA).
         "DIAS D AVILA": "2910057",
+        # Mundo Novo/BA - prestador da DANFSe v2.0 nº 75 (RODRIGO GONCALVES DA
+        # SILVA, "nfs 16.10.pdf" pág. 2, foto, achado real 2026-10-26): o
+        # "Código IBGE / CEP" impresso (29.22102) sai ilegível no OCR. Código
+        # conferido na API do IBGE (municipios/2922102 -> "Mundo Novo", BA);
+        # homônimos de GO/MS barrados pelo prefixo de UF na validação.
+        "MUNDO NOVO": "2922102",
         # João Pessoa/PB - prestador do LAYOUT_JOAO_PESSOA (nota nº 1001671,
         # ESPACO A COMERCIO DE MOVEIS LTDA, achado real 2026-09-23). Já era o
         # fallback de capital de "PB" em DEFAULT_CODES_BY_UF, mas sem esta
