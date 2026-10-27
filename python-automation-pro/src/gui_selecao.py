@@ -127,6 +127,20 @@ def altura_dialogo(analises: Iterable[AnaliseArquivo]) -> int:
     return min(ALTURA_MAX_DIALOGO, max(ALTURA_MIN_DIALOGO, 110 + 36 * linhas))
 
 
+def caminho_xml_arquivo_unico(pdf_path: str, out_dir: str) -> str:
+    """Caminho-base passado a `run_conversion` no fluxo de ARQUIVO ÚNICO da GUI.
+
+    `run_conversion` usa o nome deste caminho (sem extensão) como PREFIXO dos
+    XMLs (`<prefixo>[_Pagina_<p>]_NF_<n>.xml`). Antes a GUI passava o fixo
+    `<pasta de saída>/temp.xml` e todo XML de PDF único saía como
+    `temp_Pagina_1_NF_12.xml` (achado real 2026-10-27, "MAPA CONSULTORIA -
+    12.pdf"; defeito já existente em main desde b9e3dbe). Agora o prefixo é o
+    nome do PDF ORIGINAL — mesmo padrão de `nome_xml_lote` — na pasta de saída
+    escolhida na GUI (comportamento de pasta inalterado)."""
+    base = os.path.basename(pdf_path).rsplit('.', 1)[0]
+    return os.path.join(out_dir, f"{base}.xml")
+
+
 def nome_xml_lote(nome_pdf: str, pagina, numero) -> str:
     """Nome do XML gerado pelo lote — padrão importado pelo usuário no Domínio,
     NÃO mudar: `<pdf sem extensão>[_Pagina_<p>]_NF_<numero>.xml`."""
