@@ -3888,14 +3888,24 @@ class SPPdfExtractor:
             # "DISCRIMINA" + o sufixo "...IÇ[OÕ]S" tolerante a ruído entre eles.
             # O texto termina antes de uma linha "IR (" (nota de retenção que
             # aparece logo depois na mesma caixa) ou dos dados bancários.
+            # "DADOS BANCÁRIOS" como fim (achado real 2026-10-26, nota nº
+            # 00002278): mesma convenção já aplicada a "BANCO BRADESCO" —
+            # dados bancários do prestador não fazem parte da descrição do
+            # serviço. "SSA_" para nos marcadores sintéticos de recorte
+            # anexados ao FIM do texto da página (ver `_ocr_page`).
             m = re.search(
                 r'DISCRIMINA[\s\S]{0,25}?I[ÇC][OÕ]S\s*\n+(.*?)'
-                r'(?=\n\s*IR\s*\(|BANCO\s+BRADESCO|VALOR\s+TOTAL\s+DA\s+NOTA|$)',
+                r'(?=\n\s*IR\s*\(|BANCO\s+BRADESCO|DADOS\s+BANC[ÁA]RIOS|VALOR\s+TOTAL\s+DA\s+NOTA|\nSSA_|$)',
                 t, re.IGNORECASE | re.DOTALL)
             if m:
                 linhas = [ln.strip() for ln in m.group(1).split('\n') if ln.strip()]
                 if linhas:
                     return " ".join(linhas)
+            # Rótulo irreconhecível (texto do serviço impresso por cima dele):
+            # releitura dedicada da caixa, ver `_ocr_recut_discriminacao_salvador`.
+            m_rec = re.search(r'^SSA_DISCRIMINACAO_RECORTE:\s*(.+)$', t, re.MULTILINE)
+            if m_rec and m_rec.group(1).strip():
+                return m_rec.group(1).strip()
 
         if self.layout == LAYOUT_LAURO_FREITAS:
             # O texto do serviço vem colado, na mesma linha, à nota de
@@ -7471,6 +7481,21 @@ class SPPdfExtractor:
         else:
             razao = ''
 
+        # Achado real 2026-10-26 (nota nº 00002278/INSTITUIÇÃO ASSISTENCIAL
+        # BENEFICENTE CONCEIÇÃO MACEDO, Salvador/BA escaneado): a linha da
+        # razão social sai com a BORDA da caixa colada à esquerda e respingo
+        # de OCR à direita ("“| INSTITUICÃO ASSISTENÇIAL BENEFICENTE
+        # CONCEIÇÃO MACEDO a a )") — o "|" faz `is_valid_razao` rejeitar a
+        # linha inteira (regra que existe para linhas de PURO ruído de borda)
+        # e o prestador caía em "Prestador Não Identificado", arrastando junto
+        # a substituição de contraparte conhecida do CNPJ (gated pela razão).
+        # Só no fallback linha-a-linha do Salvador: limpa a borda antes de
+        # validar — uma linha de puro ruído continua vazia/reprovada.
+        def _candidato_linha(linha: str) -> str:
+            if self.layout == LAYOUT_SALVADOR:
+                return self._limpar_borda_ocr_razao(linha)
+            return linha
+
         # ---------------------------------------------------------------
         # Fallback linha-a-linha no bloco bruto (newlines preservadas)
         # ---------------------------------------------------------------
@@ -7488,6 +7513,7 @@ class SPPdfExtractor:
                     after = bloco[m_lbl.end():]
                     linhas = [ln.strip() for ln in after.split('\n') if ln.strip()]
                     for linha in linhas[:10]:
+                        linha = _candidato_linha(linha)
                         if is_valid_razao(linha):
                             razao = linha
                             break
@@ -7572,6 +7598,7 @@ class SPPdfExtractor:
             for linha in linhas[:15]: # Tenta as 15 primeiras linhas
                 if _CNPJ_NO_INICIO.match(linha):
                     continue
+                linha = _candidato_linha(linha)
                 if is_valid_razao(linha):
                     razao = linha
                     break
@@ -7596,6 +7623,20 @@ class SPPdfExtractor:
             # RESÍDUOS -> BONI TRANSPORTES) — vírgula/parênteses soltos que
             # a classe de caracteres acima não cobria.
             razao = re.sub(r'[\s,()]+$', '', razao).strip()
+            if self.layout == LAYOUT_SALVADOR:
+                # Respingo de OCR à direita de uma razão em CAIXA ALTA ("...
+                # COMERCIO LTDA. o", nota nº 00002278) e o ponto espúrio que
+                # o scan cola em "BONI. TRANSPORTES" (contraparte recorrente,
+                # sempre impressa "BONI TRANSPORTES" — ver os guards de CNPJ
+                # da BONI mais abaixo).
+                razao = self._limpar_borda_ocr_razao(razao)
+                razao = re.sub(r'[\s/!|:.,()-]+$', '', razao).strip()
+                razao = re.sub(r'^BONI\W+TRANSPORTES\b', 'BONI TRANSPORTES', razao, flags=re.IGNORECASE)
+                # "Ç" antes de E/I não existe na ortografia portuguesa — é o
+                # "C" lido com respingo de cedilha ("ASSISTENÇIAL", impresso
+                # "ASSISTENCIAL", mesma nota).
+                razao = re.sub(r'Ç(?=[EIÉÍÊ])', 'C', razao)
+                razao = re.sub(r'ç(?=[eiéíê])', 'c', razao)
             if self.layout == LAYOUT_NACIONAL:
                 # DANFSe: o OCR gruda no nome (a) o prefixo do CNPJ com VÍRGULA
                 # em vez de ponto ("49.244,210 THIAGO GUEDES...") — a limpeza
@@ -7989,12 +8030,32 @@ class SPPdfExtractor:
             # para tomadores em outra cidade. Aqui isolamos a linha de Endereço
             # e tratamos o(s) segmento(s) entre logradouro e "CEP:" como
             # [bairro,] município (o penúltimo segmento é bairro só quando há 3+).
-            m_end_sv = re.search(r'Endere[çc]o\s*:?\s*\n?\s*(.+?)(?=CEP\s*:|\n\s*E-mail|$)', bloco, re.IGNORECASE | re.DOTALL)
+            _re_end_sv = r'Endere[çc]o\s*:?\s*\n?\s*(.+?)(?=CEP\s*:|\n\s*E-mail|$)'
+            m_end_sv = re.search(_re_end_sv, bloco, re.IGNORECASE | re.DOTALL)
+            end_sv_bruto = self._endereco_salvador_a_partir_do_logradouro(m_end_sv.group(1)) if m_end_sv else None
+            if m_end_sv and end_sv_bruto is None and not is_intermediario:
+                # Achado real 2026-10-26 (nota nº 00002278): o bloco do
+                # TOMADOR usado aqui é o do recorte dedicado prependado
+                # (`_ocr_tomador_salvador`), cuja linha de endereço saiu
+                # "NR = o a\ngua MARIA QUITERIA ..." ("RUA"→"gua") — a MESMA
+                # entidade aparece de novo, limpa, na leitura de página
+                # inteira ("RUA MARIA QUITERIA 263, ..."). Procura nas outras
+                # ocorrências do rótulo da entidade uma linha de endereço que
+                # comece por um tipo de logradouro reconhecível.
+                for m_lab in re.finditer(pattern_labels, t, re.IGNORECASE):
+                    trecho = re.match(pattern_bloco, t[m_lab.start():], re.IGNORECASE | re.DOTALL)
+                    if not trecho:
+                        continue
+                    m_outro = re.search(_re_end_sv, trecho.group(0), re.IGNORECASE | re.DOTALL)
+                    if m_outro:
+                        end_sv_bruto = self._endereco_salvador_a_partir_do_logradouro(m_outro.group(1))
+                        if end_sv_bruto is not None:
+                            break
             if m_end_sv:
                 # `.` no strip: o OCR às vezes cola um ponto solto sobrando da
                 # palavra "Rua" cortada (achado real, nota 6508: "Endereço: .\nua
                 # Ewerton Visco 290").
-                end_raw = re.sub(r'\s+', ' ', m_end_sv.group(1)).strip(' -,.')
+                end_raw = re.sub(r'\s+', ' ', end_sv_bruto if end_sv_bruto is not None else m_end_sv.group(1)).strip(' -,.')
                 segs = [s.strip() for s in end_raw.split(' - ') if s.strip()]
                 if len(segs) >= 2:
                     # O 1º segmento é "<logradouro> <número>[, <complemento>]"
@@ -8018,6 +8079,12 @@ class SPPdfExtractor:
                     # tem vírgula, então o `if m_num_sv` abaixo nunca disparava
                     # e o `numero` nunca era sobrescrito).
                     m_num_sv = re.match(r'^(.*\D)\s+(\d+[A-Za-z]?|S/?N)$', antes, re.IGNORECASE)
+                    if not m_num_sv:
+                        # Número colado ao nome pelo OCR ("Rua Santa Clara85",
+                        # nota nº 00002278 — impresso "Rua Santa Clara 85").
+                        # Exige 3+ letras antes dos dígitos para não partir
+                        # rodovia/sigla ("BR324").
+                        m_num_sv = re.match(r'^(.*[A-Za-zÀ-ÿ]{3})(\d{1,5})$', antes)
                     if m_num_sv:
                         end_data['logradouro'] = m_num_sv.group(1).strip(' .-')
                         num_bruto = m_num_sv.group(2)
@@ -10450,6 +10517,55 @@ class SPPdfExtractor:
                 cep=cep,
             ),
         )
+
+    _RE_TIPO_LOGRADOURO = re.compile(
+        r'^(?:(?:RUA|AVENIDA|ALAMEDA|TRAVESSA|ESTRADA|RODOVIA|PRA[ÇC]A|LARGO|LADEIRA|'
+        r'LOTEAMENTO|VIA|VILA|BECO|CAMINHO|PARQUE|CONDOM[IÍ]NIO|QUADRA|S[IÍ]TIO|'
+        r'FAZENDA|ACESSO|VIADUTO|AVE)\b|(?:R|AV|AL|TV|EST|ROD|P[ÇC]A|LOT)\.|'
+        r'(?:BR|BA)[\s-]?\d)',
+        re.IGNORECASE)
+
+    @classmethod
+    def _endereco_salvador_a_partir_do_logradouro(cls, texto: str) -> Optional[str]:
+        """Texto do campo "Endereço" (Salvador) a partir da 1ª linha que
+        começa por um TIPO de logradouro ("Rua", "Av.", ...), descartando
+        linhas de ruído de OCR ANTES dela — achado real, nota nº 00002278:
+        o logotipo do prestador ao lado vaza como "eição Macio º o" na linha
+        de cima de ". Rua Santa Clara85. , ANDAR1E2Z SUBS - NAZARE -
+        Salvador -". `None` quando nenhuma linha começa assim (o chamador
+        mantém o texto original, comportamento de antes)."""
+        linhas = (texto or '').split('\n')
+        for i, ln in enumerate(linhas):
+            # Só a ESQUERDA: a vírgula final separa número de complemento
+            # ("AVE PRAIA DE PAJUSSARA 554,\n...QUADRA 28" — achado na
+            # regressão, nota nº 754/fi.pdf).
+            s = ln.lstrip(' .,;:-“”"\'|').rstrip()
+            if s and cls._RE_TIPO_LOGRADOURO.match(s):
+                # Só descarta linhas anteriores com cara de ruído (sem
+                # dígito e sem o separador " - " do endereço) — uma 1ª linha
+                # legítima (ex.: "ua Ewerton Visco 290 , COND") nunca é
+                # jogada fora por causa de uma linha seguinte começando com
+                # "VILA ..."/"VIA ...".
+                if any(re.search(r'\d| - ', anterior) for anterior in linhas[:i]):
+                    return None
+                return '\n'.join([s] + linhas[i + 1:])
+        return None
+
+    @staticmethod
+    def _limpar_borda_ocr_razao(linha: str) -> str:
+        """Remove o ruído de BORDA que o OCR cola numa linha de razão social
+        escaneada: à esquerda, a linha vertical da caixa/aspas/pontuação
+        ("“| INSTITUICÃO ..."); à direita, respingos de 1-2 letras minúsculas
+        ou pontuação solta ("... MACEDO a a )", "... LTDA. o") — esses só
+        quando o resto é CAIXA ALTA pura, para não comer o final de uma razão
+        social em caixa mista. Achado real: nota Salvador nº 00002278."""
+        linha = (linha or '').strip()
+        linha = re.sub(r'^[^\w]+', '', linha)
+        m = re.match(r'^(.*?)((?:\s+(?:[a-zà-ÿ]{1,2}|[^\w\s]+))+)\s*$', linha)
+        if m and m.group(1) and not re.search(r'[a-zà-ÿ]', m.group(1)) \
+                and re.search(r'[A-ZÀ-Ý]{3,}', m.group(1)):
+            linha = m.group(1)
+        return linha.strip()
 
     @staticmethod
     def _corrigir_arroba_ocr(email: str) -> str:
@@ -17054,6 +17170,36 @@ class SPPdfExtractor:
                         if m_base_recut:
                             base = self._parse_valor(m_base_recut.group(1))
 
+                # Achado real 2026-10-26 (nota nº 00002278): a grade foi lida
+                # ("6,00%" / "8,60"), mas Base × Alíquota não fecha com o ISS
+                # e 6% passa do teto legal (LC 116/2003 art. 8º, II) — o scan
+                # fecha a barriga do "5" e o OCR o lê "6". A releitura dedicada
+                # das 2 células (`_ocr_recut_aliquota_iss_salvador`, marcador
+                # `SSA_ALIQ_ISS_LEITURAS`) traz várias leituras; só se aceita
+                # um par (alíquota, ISS) EFETIVAMENTE LIDO que feche a conta —
+                # nunca um ISS calculado a partir da base. Sem par que feche,
+                # mantém a leitura da grade e avisa (ver `parse`).
+                if base and aliq and not self._aliq_iss_fecham(base, aliq, iss):
+                    m_leit = re.search(r'SSA_ALIQ_ISS_LEITURAS:\s*aliq=([\d,;]*)\s+iss=([\d,;]*)', t)
+                    if m_leit:
+                        aliqs_lidas = [self._parse_valor(v) for v in m_leit.group(1).split(';') if v]
+                        par = self._escolher_aliquota_iss_lidos(
+                            base, aliq, iss, aliqs_lidas,
+                            [self._parse_valor(v) for v in m_leit.group(2).split(';') if v])
+                        if par:
+                            aliq, iss = par
+                        elif aliq > self.ALIQUOTA_ISS_TETO + 1e-9:
+                            # Nenhum par fecha, mas a alíquota da grade é
+                            # impossível: fica a releitura ≤ 5% mais votada
+                            # (valor LIDO), e o aviso de divergência abaixo.
+                            from collections import Counter
+                            validas = Counter(round(a, 2) for a in aliqs_lidas
+                                              if 0 < a <= self.ALIQUOTA_ISS_TETO * 100 + 1e-9)
+                            if validas:
+                                aliq = validas.most_common(1)[0][0] / 100
+                if base and aliq and not self._aliq_iss_fecham(base, aliq, iss):
+                    self._salvador_bc_aliq_iss_divergente = (base, aliq, iss)
+
             # "VALOR TOTAL DA NOTA" é uma leitura de UMA linha só; "Base de
             # Cálculo" vem de uma grade PRÓPRIA. Quando Deduções = 0,
             # Base de Cálculo == Valor dos Serviços por definição (mesma
@@ -19209,6 +19355,38 @@ class SPPdfExtractor:
                         grade_text = self._ocr_recut_grade_valores_marca_agua_salvador(page)
                         if grade_text:
                             best_text = f"{grade_text}\n{best_text}"
+
+                    # Achado real 2026-10-26 (nota nº 00002278, INSTITUIÇÃO
+                    # ASSISTENCIAL -> BONI TRANSPORTES): três releituras
+                    # ancoradas em rótulo, cada uma gated pela EVIDÊNCIA do
+                    # defeito na leitura já disponível — notas que já saem
+                    # limpas não pagam o custo nem mudam de comportamento.
+                    if best_angle == 0:
+                        # (1) Código de Verificação: a caixa de cabeçalho não
+                        # trouxe um código no formato impresso "XXXX-XXXX".
+                        if not re.search(r'erifica[çc][aã]o\s*:?\s*(?:\S*ALVADOR\s*)?[A-Z0-9]{4}-[A-Z0-9]{4}\b',
+                                         header_text or '', re.IGNORECASE):
+                            codigo_linha = self._ocr_recut_codigo_verificacao_linha_salvador(page)
+                            if codigo_linha:
+                                best_text = f"Código de Verificação:\n{codigo_linha}\n\n{best_text}"
+                        # (2) Alíquota/ISS: nenhuma linha de 5 valores da grade
+                        # fecha Base × Alíquota = ISS com alíquota ≤ 5%.
+                        # (3) Discriminação: rótulo "DISCRIMINAÇÃO DOS
+                        # SERVIÇOS" irreconhecível (texto impresso por cima).
+                        precisa_aliq = not self._grade_salvador_consistente(best_text_ocr_original)
+                        precisa_disc = not re.search(r'DISCRIMINA[\s\S]{0,25}?I[ÇC][OÕ]S\s*\n',
+                                                     best_text_ocr_original, re.IGNORECASE)
+                        if precisa_aliq or precisa_disc:
+                            palavras_ssa = self._palavras_pagina_salvador(page)
+                            if palavras_ssa:
+                                if precisa_aliq:
+                                    aliq_iss_text = self._ocr_recut_aliquota_iss_salvador(page, palavras_ssa)
+                                    if aliq_iss_text:
+                                        best_text = f"{best_text}\n{aliq_iss_text}"
+                                if precisa_disc:
+                                    disc_text = self._ocr_recut_discriminacao_salvador(page, palavras_ssa)
+                                    if disc_text:
+                                        best_text = f"{best_text}\n{disc_text}"
 
                 # Simões Filho/BA: recorta e reprocessa em zoom alto o bloco do
                 # PRESTADOR (Endereço/CEP/Inscrição Municipal) — a leitura de
@@ -21504,6 +21682,293 @@ class SPPdfExtractor:
         except Exception:
             return None
 
+    # ------------------------------------------------------------------
+    # Recortes Salvador/BA ancorados em rótulo (achado real 2026-10-26,
+    # nota nº 00002278, INSTITUIÇÃO ASSISTENCIAL BENEFICENTE CONCEIÇÃO
+    # MACEDO -> BONI TRANSPORTES). Todos recebem as palavras do OCR de
+    # página inteira em zoom 3 (`image_to_data`) e devolvem só o que
+    # várias leituras independentes CONFIRMAM — nunca um palpite único.
+    # ------------------------------------------------------------------
+    _SSA_ZOOM_PALAVRAS = 3.0
+
+    @classmethod
+    def _palavras_pagina_salvador(cls, page) -> Optional[dict]:
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(cls._SSA_ZOOM_PALAVRAS, cls._SSA_ZOOM_PALAVRAS))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            return pytesseract.image_to_data(img, lang='por', output_type=pytesseract.Output.DICT)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _ocr_clip_leituras(page, clip, zooms_psms, whitelist: str = '',
+                           binarizar: bool = False) -> List[str]:
+        """Lê o mesmo recorte (`clip`, em pontos da página) em vários
+        zoom/PSM, em `por` e `eng` — amostras independentes para votação.
+        Com `binarizar`, acrescenta leituras da imagem limiarizada (130/160)
+        com e sem dilatação do fundo (MaxFilter 3), que AFINA o traço e
+        reabre a barriga de dígitos que o scan fechou (5→6)."""
+        import pymupdf
+        import pytesseract
+        from PIL import Image, ImageOps, ImageFilter
+        import io
+        leituras = []
+        cfg_wl = f' -c tessedit_char_whitelist={whitelist}' if whitelist else ''
+        for zoom, psm in zooms_psms:
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            variantes = [(img, ('por', 'eng'))]
+            if binarizar:
+                cinza = ImageOps.grayscale(img)
+                for limiar in (130, 160):
+                    b = cinza.point(lambda v, lim=limiar: 255 if v > lim else 0)
+                    variantes.append((b, ('eng',)))
+                    variantes.append((b.filter(ImageFilter.MaxFilter(3)), ('eng',)))
+            for imagem, langs in variantes:
+                for lang in langs:
+                    try:
+                        leituras.append(pytesseract.image_to_string(imagem, lang=lang, config=f'--psm {psm}{cfg_wl}'))
+                    except Exception:
+                        continue
+        return leituras
+
+    @classmethod
+    def _ocr_recut_codigo_verificacao_linha_salvador(cls, page) -> str:
+        """Código de Verificação lido na LINHA logo abaixo do rótulo
+        "Verificação" (PSM 7, linha única), em vários zooms, por maioria.
+        A caixa de cabeçalho inteira (`_ocr_header_box_salvador`) lia
+        "XTDBDGDS"/"XTDEDGDS" (P→B/E, hífen perdido) em todo zoom/PSM; a
+        linha isolada lê "XTDP-DGDS" de forma estável (o "5" final impresso
+        sai "S" em quase todas as amostras — limitação conhecida, ver
+        DOCUMENTACAO). Só devolve um código no formato impresso do layout
+        ("XXXX-XXXX") com pelo menos 3 votos."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            zoom_a = 4.0
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom_a, zoom_a))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            w, h = img.size
+            x0, y1 = int(w * 0.60), int(h * 0.16)
+            data = pytesseract.image_to_data(img.crop((x0, 0, w, y1)), lang='por', config='--psm 6',
+                                             output_type=pytesseract.Output.DICT)
+            alvo = next((i for i, tx in enumerate(data['text']) if 'erifica' in (tx or '')), None)
+            if alvo is None:
+                return ''
+            topo, alt = data['top'][alvo], data['height'][alvo]
+            clip = pymupdf.Rect(x0 / zoom_a, (topo + alt) / zoom_a,
+                                w / zoom_a, (topo + 3 * alt + 4) / zoom_a)
+            leituras = cls._ocr_clip_leituras(
+                page, clip, ((3.0, 7), (3.5, 7), (4.0, 7), (4.5, 7), (5.0, 7), (5.5, 7)))
+            votos = Counter()
+            for leitura in leituras:
+                m = re.search(r'\b([A-Z0-9]{4})-([A-Z0-9]{4})\b', leitura)
+                if m:
+                    votos[f'{m.group(1)}-{m.group(2)}'] += 1
+            if not votos:
+                return ''
+            codigo, n = votos.most_common(1)[0]
+            return codigo if n >= 3 else ''
+        except Exception:
+            return ''
+
+    # Teto legal do ISS: LC 116/2003, art. 8º, II (5%).
+    ALIQUOTA_ISS_TETO = 0.05
+
+    @classmethod
+    def _aliq_iss_fecham(cls, base: float, aliq: float, iss: float) -> bool:
+        """Base × Alíquota = ISS (tolerância de 1 centavo) e alíquota dentro
+        do teto legal."""
+        return 0 < aliq <= cls.ALIQUOTA_ISS_TETO + 1e-9 and abs(base * aliq - iss) <= 0.011
+
+    @classmethod
+    def _escolher_aliquota_iss_lidos(cls, base, aliq, iss, aliqs_pct, isss):
+        """Entre leituras REAIS (a da grade + as da releitura), o par
+        (alíquota, ISS) que fecha Base × Alíquota = ISS com alíquota ≤ 5%,
+        preferindo o mais votado. `None` quando nenhum par lido fecha."""
+        from collections import Counter
+        cont_a = Counter([round(aliq * 100, 2)] + [round(a, 2) for a in aliqs_pct])
+        cont_i = Counter([round(iss, 2)] + [round(i, 2) for i in isss])
+        melhor = None
+        for a, na in cont_a.items():
+            for i, ni in cont_i.items():
+                if cls._aliq_iss_fecham(base, a / 100, i):
+                    score = na + ni
+                    if melhor is None or score > melhor[0]:
+                        melhor = (score, a / 100, i)
+        return (melhor[1], melhor[2]) if melhor else None
+
+    @classmethod
+    def _grade_salvador_consistente(cls, texto: str) -> bool:
+        """Alguma linha "Deduções Base Alíquota% ISS Crédito" da grade fecha
+        Base × Alíquota = ISS dentro do teto? Sem linha nenhuma reconhecível
+        devolve True (nada a conferir — os recortes de grade já existentes
+        cuidam desse caso)."""
+        num = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+        linhas = list(re.finditer(rf'^[^\d\n]*{num}\s+{num}\s+{num}\s*%\s+{num}\s+{num}', texto or '', re.MULTILINE))
+        if not linhas:
+            return True
+        conv = lambda v: float(v.replace('.', '').replace(',', '.'))
+        for m in linhas:
+            base, aliq, iss = conv(m.group(2)), conv(m.group(3)) / 100, conv(m.group(4))
+            if cls._aliq_iss_fecham(base, aliq, iss) or (aliq == 0 and iss == 0):
+                return True
+        return False
+
+    @staticmethod
+    def _numeros_celula(leitura: str, percentual: bool = False) -> List[float]:
+        """Valores monetários/percentuais de uma leitura de célula. Com
+        `percentual`, aceita também a vírgula perdida ("500%" → 5,00)."""
+        valores = [float(v.replace('.', '').replace(',', '.'))
+                   for v in re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', leitura)]
+        if percentual and not valores:
+            m = re.search(r'\b(\d)(\d{2})\s*%', leitura)
+            if m:
+                valores.append(float(f'{m.group(1)}.{m.group(2)}'))
+        return valores
+
+    @classmethod
+    def _ocr_recut_aliquota_iss_salvador(cls, page, data: dict) -> str:
+        """Releitura das células "Alíquota (%)" e "Valor do ISS (R$)" da
+        grade de valores, localizadas pelos rótulos (palavras "Alíquota",
+        "Valor" seguinte e "Crédito" na mesma linha). Devolve um marcador
+        `SSA_ALIQ_ISS_LEITURAS: aliq=a1;a2;... iss=i1;i2;...` com TODAS as
+        leituras — a escolha (conferência Base × Alíquota = ISS, teto de 5%)
+        fica em `_extrair_valores`, onde a Base já é conhecida."""
+        try:
+            import pymupdf
+            z = cls._SSA_ZOOM_PALAVRAS
+            textos = [(t or '').strip() for t in data['text']]
+            i_aliq = next((i for i, t in enumerate(textos) if re.search(r'quota', t, re.IGNORECASE)
+                           and any(re.search(r'r[ée]dito', textos[j], re.IGNORECASE)
+                                   for j in range(len(textos))
+                                   if data['block_num'][j] == data['block_num'][i]
+                                   and data['line_num'][j] == data['line_num'][i])), None)
+            if i_aliq is None:
+                return ''
+            linha = [j for j in range(len(textos))
+                     if data['block_num'][j] == data['block_num'][i_aliq]
+                     and data['line_num'][j] == data['line_num'][i_aliq]]
+            x_aliq = data['left'][i_aliq]
+            x_valor = next((data['left'][j] for j in linha
+                            if textos[j].lower().startswith('valor') and data['left'][j] > x_aliq), None)
+            x_cred = next((data['left'][j] for j in linha
+                           if re.search(r'r[ée]dito', textos[j], re.IGNORECASE) and data['left'][j] > x_aliq), None)
+            if x_valor is None or x_cred is None:
+                return ''
+            # Faixa da linha de valores logo abaixo dos rótulos, sem a borda
+            # vertical da célula à direita nem a linha de baixo da grade (as
+            # duas viravam ruído e zeravam a leitura da alíquota).
+            topo, alt = data['top'][i_aliq], data['height'][i_aliq]
+            y0, y1 = (topo + alt * 1.1) / z, (topo + alt * 2.7) / z
+            aliq_clip = pymupdf.Rect(x_aliq / z, y0, (x_valor - 10) / z, y1)
+            iss_clip = pymupdf.Rect(x_valor / z, y0, (x_cred - 10) / z, y1)
+            combos = ((4.0, 7), (6.0, 7), (8.0, 7), (10.0, 7), (12.0, 7))
+            aliqs = [v for l in cls._ocr_clip_leituras(page, aliq_clip, combos, '0123456789,%', binarizar=True)
+                     for v in cls._numeros_celula(l, percentual=True)[:1]]
+            isss = [v for l in cls._ocr_clip_leituras(page, iss_clip, combos, '0123456789,', binarizar=True)
+                    for v in cls._numeros_celula(l)[:1]]
+            if not aliqs and not isss:
+                return ''
+            fmt = lambda vs: ';'.join(f'{v:.2f}'.replace('.', ',') for v in vs)
+            return f"SSA_ALIQ_ISS_LEITURAS: aliq={fmt(aliqs)} iss={fmt(isss)}"
+        except Exception:
+            return ''
+
+    @classmethod
+    def _ocr_recut_discriminacao_salvador(cls, page, data: dict) -> str:
+        """Releitura da caixa "DISCRIMINAÇÃO DOS SERVIÇOS" quando o texto do
+        serviço é impresso POR CIMA do rótulo (nota nº 00002278: a leitura de
+        página inteira funde rótulo e 1ª linha em "AS CRININAÇ ÃO DOS SERV O
+        scante: THAMIRES ...", perdendo "TAXA FORMAÇÃO PEDAGÓGICA DA
+        ADOLESCENTE"). Região: da linha do rótulo (palavra com "RIMINA" ou
+        "DOS" + "SERV...") até a linha "VALOR TOTAL". Várias leituras; a 1ª
+        linha do corpo é escolhida por maioria (2+ leituras idênticas) e o
+        corpo vai até "DADOS BANCÁRIOS" (convenção do layout: dados
+        bancários fora da discriminação). Devolve
+        `SSA_DISCRIMINACAO_RECORTE: <texto>` ou ''."""
+        try:
+            import pymupdf
+            from collections import Counter
+            z = cls._SSA_ZOOM_PALAVRAS
+            textos = [(t or '').strip() for t in data['text']]
+            n = len(textos)
+
+            def _mesma_linha(i, j):
+                return data['block_num'][i] == data['block_num'][j] and data['line_num'][i] == data['line_num'][j]
+
+            i_valor_total = next((i for i in range(n) if textos[i].upper() == 'VALOR'
+                                  and any(textos[j].upper().startswith('TOTAL') and _mesma_linha(i, j)
+                                          for j in range(i + 1, min(n, i + 4)))), None)
+            i_tomador = next((i for i in range(n) if textos[i].upper().startswith('TOMADOR')), None)
+            if i_valor_total is None:
+                return ''
+            y_fim = data['top'][i_valor_total]
+            y_tom = data['top'][i_tomador] if i_tomador is not None else 0
+            i_rot = next((i for i in range(n) if y_tom < data['top'][i] < y_fim and (
+                re.search(r'RIMINA|SCRIMIN', textos[i], re.IGNORECASE)
+                or (textos[i].upper() == 'DOS' and i + 1 < n
+                    and textos[i + 1].upper().startswith('SERV') and _mesma_linha(i, i + 1)))), None)
+            if i_rot is None:
+                return ''
+            y_ini = data['top'][i_rot] - data['height'][i_rot] * 0.5
+            largura_pt = page.rect.width
+            clip = pymupdf.Rect(largura_pt * 0.05, y_ini / z, largura_pt * 0.97, y_fim / z)
+            leituras = cls._ocr_clip_leituras(page, clip, ((4.0, 4), (5.0, 6), (4.0, 6), (5.0, 4), (6.0, 4)))
+
+            corpos = []
+            for leitura in leituras:
+                linhas = [ln.strip() for ln in leitura.split('\n') if ln.strip()]
+                i_hdr = next((k for k, ln in enumerate(linhas)
+                              if re.search(r'RIMINA|SCRIMIN|DOS\s+SERV', ln, re.IGNORECASE)), None)
+                if i_hdr is None:
+                    continue
+                corpo = []
+                for ln in linhas[i_hdr + 1:]:
+                    if re.search(r'DADOS\s+BANC|VALOR\s+TOTAL|^CNAE', ln, re.IGNORECASE):
+                        break
+                    corpo.append(ln)
+                if corpo:
+                    corpos.append(corpo)
+            if not corpos:
+                return ''
+
+            def _limpar_linha(ln: str) -> str:
+                ln = re.sub(r'(/\d)\s+(\d{3})\b', r'\1\2', ln)  # "SETEMBRO/2 026"
+                # Respingo à direita de uma linha em CAIXA ALTA ("026. tato",
+                # "MÊS DE .").
+                m = re.match(r'^(.*?[.,:;]?)((?:\s+[a-zà-ÿ]+)+|(?:\s+[^\w\s]+)+)\s*$', ln)
+                if m and m.group(1) and not re.search(r'[a-zà-ÿ]', m.group(1)) \
+                        and re.search(r'[A-ZÀ-Ý]{2,}', m.group(1)):
+                    ln = m.group(1)
+                return re.sub(r'\s+', ' ', ln).strip()
+
+            votos = Counter(_limpar_linha(c[0]) for c in corpos)
+            primeira, n_votos = votos.most_common(1)[0]
+            if n_votos < 2:
+                return ''
+            # Entre as leituras que concordam na 1ª linha, a de texto mais
+            # curto depois da limpeza (menos respingo de OCR no resto).
+            textos_ok = []
+            for c in corpos:
+                if _limpar_linha(c[0]) != primeira:
+                    continue
+                limpas = [ln for ln in (_limpar_linha(x) for x in c)
+                          if ln and re.search(r'[A-Za-zÀ-ÿ0-9]{2,}', ln)]
+                textos_ok.append(re.sub(r'\s+', ' ', ' '.join(limpas)).strip())
+            texto = min(textos_ok, key=len)
+            return f"SSA_DISCRIMINACAO_RECORTE: {texto}" if texto else ''
+        except Exception:
+            return ''
+
     @staticmethod
     def _ocr_header_box_iacu(page, angle: int = 0) -> str:
         """Recorta e reprocessa em zoom alto (5x) o canto superior direito da
@@ -23181,6 +23646,7 @@ class SPPdfExtractor:
         _ibge_resolver.limpar_fallbacks_capital()
         self.layout = self._detect_layout()
         self._feira_nac_avisos: List[str] = []
+        self._salvador_bc_aliq_iss_divergente = None
         self._reforma_avisos: List[str] = []
         self._localiza_avisos: List[str] = []
         self._saubara_cache = None
@@ -23272,6 +23738,20 @@ class SPPdfExtractor:
 
         valores   = self._extrair_valores()
         valores, avisos_flash = self._aplicar_flash_valor_recebido(prestador, valores)
+
+        # Guarda GERAL (todos os layouts) do teto legal do ISS — LC 116/2003,
+        # art. 8º, II: não existe alíquota de ISS acima de 5%, então uma
+        # leitura acima disso é sempre erro de leitura (achado real
+        # 2026-10-26, nota Salvador nº 00002278: "5,00%" impresso, lido
+        # "6,00%"). As releituras próprias de cada layout já rodaram dentro de
+        # `_extrair_valores`; se ainda assim sobrou alíquota > 5%, ela vira
+        # sentinela 0 + aviso. Nunca é recalculada a partir de ISS/Base (seria
+        # fabricar o dado), e não há piso: alíquotas abaixo de 2% são
+        # legítimas (Simples Nacional/MEI).
+        aliquota_acima_teto = None
+        if valores is not None and (valores.aliquota or 0.0) > self.ALIQUOTA_ISS_TETO + 1e-9:
+            aliquota_acima_teto = valores.aliquota
+            valores.aliquota = 0.0
 
         discriminacao = self._extrair_discriminacao()
         servico_codigo = self._extrair_codigo_servico()
@@ -23496,6 +23976,18 @@ class SPPdfExtractor:
                 "ilegível no scan) - mantidos zerados por não haver valor "
                 "real recuperável; confira manualmente o percentual de ISS "
                 "desta nota"
+            )
+        if aliquota_acima_teto is not None:
+            avisos.append(
+                f"Alíquota lida {aliquota_acima_teto * 100:.2f}% ".replace('.', ',') + "acima do teto legal de 5% "
+                "(LC 116/2003 art. 8º) — erro de leitura, conferir na nota"
+            )
+        _div_ssa = getattr(self, '_salvador_bc_aliq_iss_divergente', None)
+        if _div_ssa and aliquota_acima_teto is None:
+            _b, _a, _i = _div_ssa
+            avisos.append(
+                f"Base de Cálculo × Alíquota não confere com o Valor do ISS lido "
+                f"({_b:.2f} × {_a * 100:.2f}% ≠ {_i:.2f}) — valores mantidos como lidos, conferir na nota"
             )
         if getattr(self, '_salvador_aliquota_iss_zerada', False):
             avisos.append(
