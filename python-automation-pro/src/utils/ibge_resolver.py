@@ -184,6 +184,13 @@ class IBGEResolver:
         # em /estados/BA/municipios) e impresso na própria nota ("COD.
         # MUNICIPIO GERADOR 2929750BA").
         "SAUBARA": "2929750",
+        # Bragança Paulista/SP - prestador do LAYOUT_FATURA_LOCACAO_EQUIPAMENTOS
+        # (fatura de locação nº 15827, IVAN BARBOZA CORREA, achado real
+        # 2026-10-28). Sem esta entrada caía no fallback da capital da UF (São
+        # Paulo, 3550308). Código 3507605 conferido na API oficial do IBGE
+        # (servicodados.ibge.gov.br/api/v1/localidades/municipios/3507605 ->
+        # "Bragança Paulista", UF SP).
+        "BRAGANCA PAULISTA": "3507605", "BRAGANÇA PAULISTA": "3507605",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
