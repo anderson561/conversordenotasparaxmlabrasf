@@ -160,6 +160,12 @@ class IBGEResolver:
         # de Santana de Parnaíba (3547304) - confirmado na fonte oficial do
         # IBGE (cidades.ibge.gov.br/brasil/sp/santana-de-parnaiba).
         "SANTANA DE PARNAIBA": "3547304", "SANTANA DE PARNAÍBA": "3547304",
+        # Bragança Paulista/SP - emitente do DANFE nº 478012 (STONE BUILDING SA
+        # INDUSTRIA E COMERCIO, achado real 2026-10-28). Sem esta entrada caía
+        # no fallback silencioso da capital (São Paulo, 3550308). Código
+        # conferido na API oficial do IBGE (servicodados.ibge.gov.br/api/v1/
+        # localidades/municipios/3507605 -> "Bragança Paulista", UF SP).
+        "BRAGANCA PAULISTA": "3507605", "BRAGANÇA PAULISTA": "3507605",
         # Candeias/BA - município do tomador da nota nº 6013 (CLINICA MEDICINA
         # HUMANA LTDA -> MASSA ALIMENTAÇÃO E SERVIÇOS S/A, layout Camaçari
         # escaneado, achado real 2026-10-08). Sem esta entrada caía no

@@ -35,7 +35,9 @@ class NfeProdutoTransformer:
         ET.SubElement(ide, 'cNF').text = cnf
         ET.SubElement(ide, 'natOp').text = nfe.natureza_operacao[:60]
         ET.SubElement(ide, 'mod').text = "55"
-        ET.SubElement(ide, 'serie').text = nfe.serie.lstrip('0') or '1'
+        # Série 0 é válida (série única) - "0"/"000" não pode virar "1" (achado
+        # real, DANFE nº 478012, "Série 0" impressa e na chave).
+        ET.SubElement(ide, 'serie').text = nfe.serie.lstrip('0') or '0'
         ET.SubElement(ide, 'nNF').text = nfe.numero.lstrip('0') or '1'
         ET.SubElement(ide, 'dhEmi').text = nfe.data_emissao.strftime('%Y-%m-%dT%H:%M:%S-03:00')
         if nfe.data_saida_entrada:
