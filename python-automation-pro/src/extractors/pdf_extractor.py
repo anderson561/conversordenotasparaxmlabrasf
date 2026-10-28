@@ -28,6 +28,7 @@ from . import sp_identificador as _sp_ident
 from . import saubara_nfse as _saubara
 from . import dacte_os_texto as _dacte
 from . import nota_locacao as _nota_loc
+from . import fatura_locacao_periodo as _fat_per
 from . import localiza_fatura as _localiza
 from datetime import datetime
 
@@ -152,6 +153,8 @@ LAYOUT_SAUBARA = 'saubara_ba'  # Prefeitura Municipal de Saubara/BA (plataforma 
 LAYOUT_SAUBARA_2 = 'saubara_ba_2'  # Prefeitura Municipal de Saubara/BA (plataforma Link3), template 2: "NOTA FISCAL ELETRÔNICA DE SERVIÇOS - NFS-e" com blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS", código IBGE impresso ao lado de "CIDADE -", CNAE/NBS/item LC 116, regime especial e grade de tributos de 12 colunas. PDF DIGITAL. Achado real 2026-09-14: nota 202600000000080, VIVA COMUNICAÇAO E SERVIÇOS LTDA -> TEMIS, R$120,00 (Simples/Microempresa Municipal). Mesma detecção do LAYOUT_SAUBARA, variante decidida pelo rótulo de bloco exclusivo ("PRESTADOR DE SERVIÇOS" vs "DADOS DO EMITENTE")
 _LAYOUTS_SAUBARA = (LAYOUT_SAUBARA, LAYOUT_SAUBARA_2)
 LAYOUT_NOTA_LOCACAO = 'nota_locacao'  # Impresso "NOTA DE LOCAÇÃO" de locadora de bens móveis (modelo de gráfica, sem prefeitura/plataforma) - NÃO é NFS-e: a própria nota declara a não incidência de ISS (LC 116/2003) e a dispensa de documento fiscal (Lei 8.846/94). Achado real 2026-10-16 (lote STAUMMAQ, Scan2026-10-16_110738.pdf pág. 10): ELEVAR LOCACAO E TRANSPORTES LTDA (CNPJ 22.471.804/0001-01, Dias d'Ávila/BA) -> STAUMMAQ SERV TEC AUT MOTORES E MAQ LTDA (Simões Filho/BA), nota 1245, locação de caminhão munck, R$18.500,00 (antes: "Layout não reconhecido" -> nenhum XML). Detecção ESTRUTURAL (título "NOTA DE LOCAÇÃO Nº <n>" + bloco "DESTINATÁRIO" + rótulo "VALOR TOTAL DA NOTA DE LOCAÇÃO", e nada de NFS-e/Nota Fiscal), não pelo nome da ELEVAR: outra locadora com o mesmo impresso também cai aqui, com o emitente lido do letterhead. Escaneado: recortes dedicados (`nota_locacao.recortar`, chamados no `_ocr_page`) recuperam CNPJ/data do emitente, quantidade/total do item e a grade DESTINATÁRIO por coluna (linhas sintéticas NOTALOC_*). Convenção das faturas de locação (Localiza/ARMAC/genérica): item 0601, CodigoVerificacao "FATURA", ISS/base/alíquota zerados, + aviso de que o documento é nota de locação. Parsing em `nota_locacao.py`
+LAYOUT_FATURA_LOCACAO_PERIODO = 'fatura_locacao_periodo'  # "FATURA DE LOCAÇÃO Nº <id>" de sistema de gestão de locadora com grade de rótulos fixos (PERÍODO DE REFERÊNCIA / NATUREZA DA OPERAÇÃO / DATA DE EMISSÃO / TOMADOR - RAZÃO SOCIAL / C.N.P.J / CPF / ENDEREÇO / ENTREGA), tabela Quantidade|Unidade|Discriminação|Valor Unitário|Valor Total, Observações/Contrato/Parcelas/VALOR TOTAL e boleto embaixo - NÃO é NFS-e. PDF DIGITAL. Achado real 2026-10-28: EXTREMA LOCACAO DE EQUIPAMENTOS LTDA ("MEGA LOCAÇÃO", CNPJ 15.756.706/0001-55, Extrema/MG) -> H. Z. PATRIMONIAL LTDA. (Lauro de Freitas/BA), faturas ND-025919 (R$350,00) e ND-025924 (R$400,00). Antes caía em LAYOUT_FATURA_LOCACAO_GENERICA (só a frase "FATURA DE LOCAÇÃO"; extratores calibrados na LOC BAHIA): Numero "09" (Carteira do boleto), prestador/tomador não identificados, valor 0,00 e a linha digitável do boleto como discriminação. Detecção ESTRUTURAL (título + todos os rótulos fixos, nunca NFS-e), não pelo nome/CNPJ da locadora; checada junto da LAYOUT_NOTA_LOCACAO, antes dos fallbacks. Numero = dígitos do identificador sem prefixo/zeros à esquerda (ND-025924 -> 25924; o identificador completo vai na discriminação). Convenção das faturas de locação: item 0601, CodigoVerificacao "FATURA", ISS/base/alíquota zerados, competência = mês da DATA DE EMISSÃO, + aviso. Parsing em `fatura_locacao_periodo.py` (reaproveita o `NotaLocacao` e os hooks de LAYOUT_NOTA_LOCACAO via `_LAYOUTS_LOCACAO_TEXTO`)
+_LAYOUTS_LOCACAO_TEXTO = (LAYOUT_NOTA_LOCACAO, LAYOUT_FATURA_LOCACAO_PERIODO)
 
 # Marcas do template da PRÓPRIA Prefeitura de Lauro de Freitas/BA (cabeçalho
 # "MUNICIPIO DE LAURO DE FREITAS / Secretaria da Fazenda / Coordenação
@@ -596,6 +599,12 @@ class SPPdfExtractor:
         # `nota_locacao.eh_nota_locacao` e LAYOUT_NOTA_LOCACAO.
         if _nota_loc.eh_nota_locacao(t):
             return LAYOUT_NOTA_LOCACAO
+        # "FATURA DE LOCAÇÃO Nº <id>" com grade PERÍODO DE REFERÊNCIA/NATUREZA DA
+        # OPERAÇÃO/TOMADOR - RAZÃO SOCIAL (mesma família): sem este gate caía
+        # no LAYOUT_FATURA_LOCACAO_GENERICA só pela frase "FATURA DE LOCAÇÃO".
+        # Ver `fatura_locacao_periodo.eh_fatura_locacao_periodo`.
+        if _fat_per.eh_fatura_locacao_periodo(t):
+            return LAYOUT_FATURA_LOCACAO_PERIODO
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
         # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
         # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
@@ -1122,6 +1131,12 @@ class SPPdfExtractor:
         # `nota_locacao.eh_nota_locacao` e LAYOUT_NOTA_LOCACAO.
         if _nota_loc.eh_nota_locacao(t):
             return LAYOUT_NOTA_LOCACAO
+        # "FATURA DE LOCAÇÃO Nº <id>" com grade PERÍODO DE REFERÊNCIA/NATUREZA DA
+        # OPERAÇÃO/TOMADOR - RAZÃO SOCIAL (mesma família): sem este gate caía
+        # no LAYOUT_FATURA_LOCACAO_GENERICA só pela frase "FATURA DE LOCAÇÃO".
+        # Ver `fatura_locacao_periodo.eh_fatura_locacao_periodo`.
+        if _fat_per.eh_fatura_locacao_periodo(t):
+            return LAYOUT_FATURA_LOCACAO_PERIODO
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
         # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
         # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
@@ -1555,7 +1570,7 @@ class SPPdfExtractor:
         layout = self.layout or LAYOUT_GENERICO
         result: Optional[datetime] = None
 
-        if layout == LAYOUT_NOTA_LOCACAO:
+        if layout in _LAYOUTS_LOCACAO_TEXTO:
             # A nota de locação não imprime competência (o "PERÍODO" da
             # descrição é o da locação, não um campo de competência): mês da
             # emissão, convenção do projeto para nota sem competência.
@@ -1882,7 +1897,7 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             # "DATA DE EMISSÃO" da caixa do cabeçalho (ou a única data dela). O
             # PERÍODO da descrição e o carimbo "VENCIMENTO" nunca valem.
             data = self._nota_loc_campos().data_emissao
@@ -2674,21 +2689,25 @@ class SPPdfExtractor:
         return campos
 
     def _nota_loc_campos(self) -> '_nota_loc.NotaLocacao':
-        """Campos da NOTA DE LOCAÇÃO (LAYOUT_NOTA_LOCACAO), extraídos UMA vez
+        """Campos da NOTA DE LOCAÇÃO (LAYOUT_NOTA_LOCACAO) ou da FATURA DE LOCAÇÃO
+        com PERÍODO DE REFERÊNCIA (LAYOUT_FATURA_LOCACAO_PERIODO), extraídos UMA vez
         por texto (cache) por `nota_locacao.extrair` - mesmo padrão de
         `_saubara_campos`; o cache é descartado no início de cada `parse()`."""
         cache = getattr(self, '_nota_loc_cache', None)
         if cache is not None and cache[0] == self.raw_text:
             return cache[1]
-        via_ocr = bool(getattr(self, '_pagina_veio_de_ocr', self.from_ocr))
-        campos = _nota_loc.extrair(self.raw_text, _ibge_resolver, self._validate_cnpj_cpf, via_ocr=via_ocr)
+        if self.layout == LAYOUT_FATURA_LOCACAO_PERIODO:
+            campos = _fat_per.extrair(self.raw_text, _ibge_resolver, self._validate_cnpj_cpf)
+        else:
+            via_ocr = bool(getattr(self, '_pagina_veio_de_ocr', self.from_ocr))
+            campos = _nota_loc.extrair(self.raw_text, _ibge_resolver, self._validate_cnpj_cpf, via_ocr=via_ocr)
         self._nota_loc_cache = (self.raw_text, campos)
         return campos
 
     def _extrair_numero(self) -> str:
         t = self.raw_text
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             # "NOTA DE LOCAÇÃO Nº 1245"; sentinela se ausente/divergente.
             return self._nota_loc_campos().numero
 
@@ -3517,7 +3536,7 @@ class SPPdfExtractor:
         return None
 
     def _extrair_discriminacao(self) -> str:
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             return self._nota_loc_campos().discriminacao
         if self.layout in _LAYOUTS_SAUBARA:
             return self._saubara_campos().discriminacao
@@ -4214,7 +4233,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             # Locação de bem móvel: mesmo item "0601" da família de faturas de
             # locação (Localiza/ARMAC/genérica) - ver `_nota_loc.ITEM_LOCACAO`.
             return _nota_loc.ITEM_LOCACAO
@@ -4684,7 +4703,7 @@ class SPPdfExtractor:
         existir."""
         t = self.raw_text
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             return None  # o impresso não traz CNAE
 
         if self.layout in _LAYOUTS_SAUBARA:
@@ -4732,7 +4751,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             # Documento sem código de verificação: "FATURA", convenção das
             # faturas de locação (Localiza/ARMAC/CPE/genérica).
             return _nota_loc.CODIGO_VERIFICACAO
@@ -5453,7 +5472,7 @@ class SPPdfExtractor:
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             # Emitente (locador) = prestador; DESTINATÁRIO = tomador; sem intermediário.
             if is_intermediario:
                 return None
@@ -15323,7 +15342,7 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             return self._nota_loc_campos().valores
 
         if self.layout in _LAYOUTS_SAUBARA:
@@ -23286,7 +23305,7 @@ class SPPdfExtractor:
             _campos_sau = self._saubara_campos()
             optante_simples = _campos_sau.optante_simples
             regime_especial = _campos_sau.regime_especial
-        elif self.layout == LAYOUT_NOTA_LOCACAO:
+        elif self.layout in _LAYOUTS_LOCACAO_TEXTO:
             # "EMPRESA OPTANTE PELO SIMPLES NACIONAL" nas informações adicionais
             # -> optante + ME/EPP ("6"), mesmo código do ramo genérico abaixo.
             optante_simples = self._nota_loc_campos().optante_simples
@@ -23380,7 +23399,7 @@ class SPPdfExtractor:
             avisos.append("Valor dos serviços extraído como zero")
         if self.layout in _LAYOUTS_SAUBARA:
             avisos.extend(a for a in self._saubara_campos().avisos if a not in avisos)
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_LOCACAO_TEXTO:
             avisos.extend(a for a in self._nota_loc_campos().avisos if a not in avisos)
         avisos.extend(avisos_flash)
         avisos.extend(a for a in avisos_boleto if a not in avisos)
