@@ -74,6 +74,14 @@ class IBGEResolver:
         "FEIRA DE SANTANA": "2910800",
         "BARREIRAS": "2903201",
         "OSASCO": "3534401",
+        # Extrema/MG - locador da "FATURA DE LOCAÇÃO" com PERÍODO DE REFERÊNCIA
+        # (LAYOUT_FATURA_LOCACAO_PERIODO, EXTREMA LOCACAO DE EQUIPAMENTOS LTDA,
+        # 2026-10-28); sem a entrada caía no fallback de Belo Horizonte. Código
+        # conferido na API oficial do IBGE (servicodados.ibge.gov.br/api/v1/
+        # localidades/municipios/3125101 -> "Extrema", MG; único município
+        # com esse nome no país). LAYOUT_NEOTAGUS_LOCACAO já usava o mesmo
+        # código fixo.
+        "EXTREMA": "3125101",
         "CUIABA": "5103403", "CUIABÁ": "5103403",
         "CAMPINA GRANDE": "2504009",
         "CAMPINAS": "3509502",
