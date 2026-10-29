@@ -379,7 +379,10 @@ def main(page: ft.Page):
     def update_progress(progress, message):
         progress_bar.value = progress
         status_text.value  = message
-        add_log(message)
+        # [ERRO] em vermelho (ex.: NF-e sem itens, que o Domínio rejeita) e
+        # [AVISO] em laranja - mesmas cores dos logs emitidos pela própria GUI.
+        msg = message or ""
+        add_log(message, "red" if msg.startswith("[ERRO]") else "orange" if msg.startswith("[AVISO]") else "white")
         page.update()
 
     # ---------------------------------------------------------------

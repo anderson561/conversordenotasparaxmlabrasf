@@ -49,6 +49,21 @@ def mensagens_ignoradas(ignorados, prefixo: str = "") -> list:
     return msgs
 
 
+def aviso_nfe_sem_itens(nota, prefixo: str = ""):
+    """Mensagem de ERRO para uma NF-e de produto (Modelo 55) extraída SEM
+    nenhum item: o XML é gravado (os demais campos podem ser aproveitados na
+    conferência), mas o Domínio o REJEITA na importação ("Erro processando
+    arquivo XML. Tag 'det' não encontrada." - achado real 2026-10-29, nota
+    nº 946). Item fictício nunca é gerado. None para qualquer outro caso."""
+    if not isinstance(nota, NfeProduto) or nota.itens:
+        return None
+    pag = getattr(nota, "pagina_origem", None)
+    return (f"[ERRO] {prefixo}NF-e {nota.numero}" + (f" (pág {pag})" if pag else "")
+            + ": NENHUM ITEM lido do DANFE - o XML foi gravado SEM a tag <det> e SERÁ REJEITADO "
+              "pelo Domínio (\"Tag 'det' não encontrada\"). Lance esta nota manualmente ou "
+              "envie o PDF para ajuste do conversor.")
+
+
 def _reportar(msgs, progress_callback=None, progresso: float = 0.0):
     for m in msgs:
         print(m)
@@ -158,6 +173,9 @@ def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "ab
             print(msg)
             if progress_callback:
                 progress_callback(1.0, msg)
+        erro_det = aviso_nfe_sem_itens(nfse)
+        if erro_det:
+            _reportar([erro_det], progress_callback, 1.0)
 
     print(f"[+] Conversão concluída com sucesso! ({len(nfse_list)} notas extraídas)")
 
@@ -184,6 +202,7 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
     success_count = 0
     fail_count = 0
     skip_count = 0
+    sem_itens_count = 0
 
     for i, pdf_path in enumerate(files_to_process):
         filename = os.path.basename(pdf_path)
@@ -231,6 +250,10 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
                     print(msg)
                     if progress_callback:
                         progress_callback(i / total_files, msg)
+                erro_det = aviso_nfe_sem_itens(nfse_data, prefixo=f"{filename} - ")
+                if erro_det:
+                    _reportar([erro_det], progress_callback, i / total_files)
+                    sem_itens_count += 1
 
             success_count += len(nfse_list)
 
@@ -245,13 +268,16 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
             fail_count += 1
 
     if progress_callback:
-        progress_callback(1.0, f"Concluído! {success_count} Notas convertidas | {skip_count} PDFs Ignorados | {fail_count} PDFs Falhos")
+        progress_callback(1.0, f"Concluído! {success_count} Notas convertidas | {skip_count} PDFs Ignorados | {fail_count} PDFs Falhos"
+                          + (f" | {sem_itens_count} NF-e SEM ITENS (rejeitadas pelo Domínio)" if sem_itens_count else ""))
 
     print("\n" + "="*40)
     print(f"Relatório Final:")
     print(f"  - Notas Geradas (XMLs): {success_count}")
     print(f"  - PDFs Ignorados: {skip_count}")
     print(f"  - PDFs com Falha Total: {fail_count}")
+    if sem_itens_count:
+        print(f"  - NF-e SEM ITENS (XML gravado, mas REJEITADO pelo Domínio): {sem_itens_count}")
     print("="*40)
 
 

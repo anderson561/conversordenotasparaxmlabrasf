@@ -23616,7 +23616,9 @@ class SPPdfExtractor:
         serie = m.group(2) if m else '1'
 
         m = re.search(r'0\s*-\s*ENTRADA\s*\n1\s*-\s*SA[ÍI]DA\s*\n+\s*(\d)\s*\n', t, re.IGNORECASE)
-        tipo_operacao = m.group(1) if m else '1'
+        # Dígito marcado logo após a legenda ou, com "Nº/SÉRIE/folha" no meio,
+        # algumas linhas depois (notas nº 946 e nº 44986).
+        tipo_operacao = m.group(1) if m else (_danfe_txt.tipo_operacao_marcado(t) or '1')
 
         m = re.search(r'CHAVE\s+DE\s+ACESSO\s*\n+\s*([\d\s]{40,60})', t, re.IGNORECASE)
         chave_acesso = re.sub(r'\s', '', m.group(1)) if m else ''
@@ -23641,20 +23643,35 @@ class SPPdfExtractor:
             # arquivo também).
             numero = numero.lstrip('0') or '0'
 
-        # "<protocolo> <data> <hora>" ou "<protocolo> em <data> <hora>".
+        # "<protocolo> <data> <hora>" ou "<protocolo> em <data> <hora>"; hora
+        # com ou sem segundos ("18/08/2026 10:40" - nota nº 946).
         m = re.search(
-            r'PROTOCOLO\s+DE\s+AUTORIZA[ÇC][ÃA]O\s+DE\s+USO\s*\n+\s*(\d+)\s+(?:em\s+)?(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})',
+            r'PROTOCOLO\s+DE\s+AUTORIZA[ÇC][ÃA]O\s+DE\s+USO\s*\n+\s*(\d+)\s+(?:em\s+)?(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)\b',
             t, re.IGNORECASE)
         protocolo_autorizacao = m.group(1) if m else None
         protocolo_data_hora = _parse_dmy(m.group(2), m.group(3)) if m else None
 
-        m = re.search(r'NATUREZA\s+DA\s+OPERA[ÇC][ÃA]O\s*\n+\s*(.+)', t, re.IGNORECASE)
+        # "NATUREZA DA OPERAÇÃO" ou "NATUREZA DE OPERAÇÃO" (nota nº 44986).
+        m = re.search(r'NATUREZA\s+D[AE]\s+OPERA[ÇC][ÃA]O\s*\n+\s*(.+)', t, re.IGNORECASE)
         natureza_operacao = m.group(1).strip() if m else "VENDA DE MERCADORIA"
+        if not m:
+            avisos.append("Natureza da operação não identificada (usado \"VENDA DE MERCADORIA\") - conferir")
 
         # "DATA DA EMISSÃO\n15-01-2026" (GRAN COFFEE) ou "DATA DE EMISSÃO\n
         # 21/07/2026" (nota nº 478012).
         m = re.search(r'DATA\s+(?:D[AE]\s+)?EMISS[ÃA]O\s*\n+\s*(\d{2}[-/]\d{2}[-/]\d{4})', t, re.IGNORECASE)
         data_emissao = _parse_data_ddmmyyyy_traco(m.group(1).replace('/', '-')) if m else None
+        if data_emissao is None:
+            # Valor despejado longe do rótulo (nota nº 44986: "DATA DA
+            # EMISSÃO\n10.791.569/0001-76\nCEP\n29/06/2026"): data impressa no
+            # canhoto ("EMISSÃO: 29/06/2026") ou a 1ª data depois do rótulo -
+            # só aceita se cair no período (AAMM) da chave de acesso.
+            for cand in (_danfe_txt.data_emissao_canhoto(t),
+                         _danfe_txt.data_apos_rotulo(t, r'DATA\s+(?:D[AE]\s+)?EMISS[ÃA]O')):
+                dt_cand = _parse_data_ddmmyyyy_traco(cand.replace('/', '-')) if cand else None
+                if dt_cand and len(chave_acesso) == 44 and dt_cand.strftime('%y%m') == chave_acesso[2:6]:
+                    data_emissao = dt_cand
+                    break
         if data_emissao is None:
             data_emissao = datetime.now()
             avisos.append("Data de emissão não encontrada (usando a data atual como fallback)")
@@ -23666,6 +23683,15 @@ class SPPdfExtractor:
         m = re.search(r'DATA\s+DA\s+(?:ENTRADA\s*/\s*SA[ÍI]DA|SA[ÍI]DA\s*/\s*ENTRADA)\s*\n+\s*(\d{2}[-/]\d{2}[-/]\d{4})',
                       t, re.IGNORECASE)
         data_saida_entrada = _parse_data_ddmmyyyy_traco(m.group(1).replace('/', '-')) if m else None
+        if data_saida_entrada is None:
+            # "DATA DA SAIDA" (nota nº 946) / "DATA SAÍDA / ENTRADA" (nota nº
+            # 44986, valor despejado depois do CEP): 1ª data depois do rótulo,
+            # aceita só se não for anterior à emissão.
+            cand = _danfe_txt.data_apos_rotulo(
+                t, r'DATA\s+(?:D[AE]\s+)?(?:ENTRADA\s*/\s*SA[ÍI]DA|SA[ÍI]DA(?:\s*/\s*ENTRADA)?)')
+            dt_cand = _parse_data_ddmmyyyy_traco(cand.replace('/', '-')) if cand else None
+            if dt_cand and dt_cand.date() >= data_emissao.date():
+                data_saida_entrada = dt_cand
 
         # --- Emitente: letterhead livre (entre o canhoto e o box "DANFE") ---
         razao_social_emit = "Emitente Não Identificado"
@@ -23716,12 +23742,40 @@ class SPPdfExtractor:
                         f"Razão social do emitente lida no cabeçalho ({razao_social_emit}) não confere "
                         f"com o canhoto \"RECEBEMOS DE ...\" - conferir")
         if not municipio_emit:
+            # Letterhead com rótulo "IDENTIFICAÇÃO DO EMITENTE" e endereço em
+            # "<logr>, <nº> - <bairro> -" / "<MUN> - <UF> - <CEP> - <fone>"
+            # (nota nº 44986), ou no INÍCIO do texto sem o nome (desenhado, não
+            # é texto - nota nº 946; nome pelo canhoto "RECEBEMOS DE ... OS
+            # PRODUTOS"). Ver `danfe_produto_texto.emitente_letterhead_livre`.
+            lh = _danfe_txt.emitente_letterhead_livre(t)
+            if lh:
+                razao_social_emit = lh['razao_social']
+                logradouro_emit = lh['logradouro']
+                numero_emit = lh['numero'] or "S/N"
+                complemento_emit = lh['complemento']
+                bairro_emit = lh['bairro'] or ""
+                municipio_emit = lh['municipio']
+                uf_emit = lh['uf']
+                cep_emit = lh['cep'] or ""
+                telefone_emit = lh['telefone']
+                if lh['origem_nome'] == 'letterhead' and _danfe_txt.nome_confere_canhoto(t, razao_social_emit) is False:
+                    avisos.append(
+                        f"Razão social do emitente lida no cabeçalho ({razao_social_emit}) não confere "
+                        f"com o canhoto \"RECEBEMOS DE ...\" - conferir")
+                if _danfe_txt.cep_confere_uf(cep_emit, uf_emit) is False:
+                    avisos.append(f"CEP do emitente ({cep_emit}) fora da faixa da UF {uf_emit} - conferir")
+        if not municipio_emit:
             avisos.append("Endereço do emitente não identificado (letterhead fora do padrão esperado)")
 
         # IE do emitente: só dígitos ("148261549") ou pontuada
         # ("225.185.878.112", nota nº 478012) - no XML vai só com dígitos.
         m = re.search(r'INSCRI[ÇC][ÃA]O\s+ESTADUAL\s*\n+\s*(\d[\d./-]*)\s*\n+DESTINAT[ÁA]RIO', t, re.IGNORECASE)
         ie_emit = re.sub(r'\D', '', m.group(1)) if m else None
+        if ie_emit is None:
+            # Valor despejado longe do rótulo, logo antes de "DESTINATÁRIO /
+            # REMETENTE" (nota nº 44986) - só com contraprova (mesmo valor
+            # colado a outro rótulo "INSCRIÇÃO ESTADUAL" no documento).
+            ie_emit = _danfe_txt.ie_emitente_antes_destinatario(t)
         m = re.search(r'DESTINAT[ÁA]RIO/REMETENTE[\s\S]{0,200}?CNPJ\s*\n+\s*([\d./-]+)', t, re.IGNORECASE)
         cnpj_emit = m.group(1) if m else "00.000.000/0000-00"
         if len(chave_acesso) == 44:
@@ -23768,6 +23822,7 @@ class SPPdfExtractor:
         dest_primario_ok = bool(m)
 
         fatura_duplicata = None
+        dups: List[tuple] = []
         bairro_dest, cep_dest, uf_dest, cnpj_dest = "", "", "BA", "00000000000000"
         m = re.search(
             r'FATURA/DUPLICATA\s*\n+(.+?)\n+FONE/FAX\s*\n+(.*?)\n+CNPJ/CPF\s*\n+([\d./-]+)\s*\n+BAIRRO/DISTRITO\s*\n+(.+?)\n+CEP\s*\n+([\d.-]+)\s*\n+UF\s*\n+([A-Z]{2})',
@@ -23788,6 +23843,12 @@ class SPPdfExtractor:
             # seguido de outro rótulo ou de valor de caixa vizinha não vira
             # dado. Ver `danfe_produto_texto.destinatario_por_rotulos`.
             d = _danfe_txt.destinatario_por_rotulos(t)
+            if d['uf'] is None:
+                # "UF\nFONE / FAX\nBA 14982237695" - UF e fone numa linha só
+                # (nota nº 946).
+                uf_l, fone_l = _danfe_txt.uf_e_fone_mesma_linha(
+                    _danfe_txt.secao(t, _danfe_txt._SEC_DEST_INI, _danfe_txt._SEC_DEST_FIM_ENTIDADE))
+                d['uf'], d['telefone'] = uf_l, d['telefone'] or fone_l
             if not dest_primario_ok and d['razao_social'] and d['municipio']:
                 dest_primario_ok = True
                 razao_social_dest = d['razao_social']
@@ -23799,6 +23860,18 @@ class SPPdfExtractor:
                 # CNPJ do próprio emitente na grade do destinatário = caixa de
                 # outra entidade lida por engano - descartado.
                 d['cnpj_cpf'] = None
+            if not cnpj_primario_ok and not d['cnpj_cpf']:
+                # CNPJ/CPF, BAIRRO, CEP e UF despejados longe dos rótulos e
+                # intercalados com a grade do local de retirada (nota nº
+                # 44986). CNPJ: o único CNPJ válido, em linha própria, na zona
+                # do destinatário que não é o do emitente nem o do local de
+                # retirada/entrega; bairro/CEP/UF pelo tipo, CEP conferido
+                # com a faixa da UF. Ambíguo -> nada (aviso abaixo).
+                d['cnpj_cpf'] = _danfe_txt.cnpj_destinatario_por_exclusao(t, re.sub(r'\D', '', cnpj_emit))
+                if d['cnpj_cpf']:
+                    por_tipo = _danfe_txt.destinatario_por_tipo(t)
+                    for k in ('bairro', 'cep', 'uf', 'telefone'):
+                        d[k] = d[k] or por_tipo[k]
             if not cnpj_primario_ok and d['cnpj_cpf']:
                 cnpj_primario_ok = True
                 cnpj_dest = d['cnpj_cpf']
@@ -23829,7 +23902,12 @@ class SPPdfExtractor:
         if fatura_duplicata is None:
             # Caixa "FATURA" com colunas NÚMERO | VENCIMENTO | VALOR (nota nº
             # 478012) em vez do texto livre de "FATURA/DUPLICATA".
-            dups = _danfe_txt.fatura_por_rotulos(t)
+            # Ou em texto corrido "N.:001 Vl.:R$ 9.328,20 Venc.:06/03/2026; ..."
+            # (nota nº 946), ou na caixa "DUPLICATAS" com colunas "Nº
+            # DUPLICATA | VENC. | VALOR" (nota nº 44986). A soma é conferida
+            # com o vNF mais abaixo.
+            dups = (_danfe_txt.fatura_por_rotulos(t) or _danfe_txt.fatura_inline(t)
+                    or _danfe_txt.duplicatas_colunas(t))
             if dups:
                 fatura_duplicata = "; ".join(f"{n} Venc={v} Valor={val}" for n, v, val in dups)
 
@@ -23913,6 +23991,23 @@ class SPPdfExtractor:
                     avisos.append(f"Item {item.codigo}: BC ICMS x ALÍQ. não fecha com o V. ICMS impresso - conferir")
                 itens.append(item)
         if not itens:
+            # Uma célula por linha com NCM/CST/CFOP/UNID. em linhas próprias
+            # (ou "CFOP UNID." juntos), descrição quebrada em várias linhas e
+            # o CÓDIGO despejado entre os rótulos do cabeçalho (notas nº 946 e
+            # nº 44986). Item que não fecha QUANT x VR.UNIT e BC x ALÍQ. =
+            # V.ICMS derruba a leitura inteira (motivo no aviso) - nunca um
+            # item chutado. Ver `danfe_produto_texto.itens_colunas`.
+            its, motivos_itens = _danfe_txt.itens_colunas(t)
+            for it in its:
+                itens.append(ItemProduto(
+                    codigo=it['codigo'], descricao=it['descricao'], ncm=it['ncm'], cfop=it['cfop'],
+                    cst_icms=it['cst'], unidade=it['unidade'], quantidade=it['quantidade'],
+                    valor_unitario=it['valor_unitario'], valor_total=it['valor_total'],
+                    base_calculo_icms=it['bc_icms'], valor_icms=it['valor_icms'],
+                    aliquota_icms=it['aliquota_icms'], valor_ipi=it['valor_ipi'], aliquota_ipi=it['aliquota_ipi'],
+                ))
+            avisos.extend(f"Itens: {mo}" for mo in motivos_itens)
+        if not itens:
             avisos.append("Nenhum item de produto identificado na tabela")
 
         # --- Valores totais (grade "CÁLCULO DE IMPOSTO") ---
@@ -23927,7 +24022,21 @@ class SPPdfExtractor:
             r'VALOR\s+TOTAL\s+DA\s+NOTA\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)',
             t, re.IGNORECASE)
         seq_grade = None if (m_bloco1 and m_bloco2) else _danfe_txt.grade_calculo_por_ordem(t)
-        if seq_grade:
+        # Valores despejados numa ordem própria e misturados com a caixa do
+        # transportador (notas nº 946 e nº 44986): atribuição pelas
+        # identidades com os itens já conferidos, não pela posição. Ver
+        # `danfe_produto_texto.grade_por_identidade`.
+        grade_id = None if (m_bloco1 and m_bloco2) or seq_grade else _danfe_txt.grade_por_identidade(t, [
+            {'valor_total': i.valor_total, 'bc_icms': i.base_calculo_icms, 'valor_icms': i.valor_icms,
+             'valor_ipi': i.valor_ipi} for i in itens])
+        if grade_id:
+            base_calculo_icms, valor_icms_total = grade_id['base_calculo_icms'], grade_id['valor_icms']
+            base_calculo_icms_st, valor_icms_st = grade_id['base_calculo_icms_st'], grade_id['valor_icms_st']
+            valor_total_produtos, valor_frete = grade_id['valor_total_produtos'], grade_id['valor_frete']
+            valor_seguro, desconto = grade_id['valor_seguro'], grade_id['desconto']
+            outras_despesas, valor_ipi = grade_id['outras_despesas'], grade_id['valor_ipi']
+            valor_total_nota = grade_id['valor_total_nota']
+        elif seq_grade:
             # Mesma sequência de valores da GRAN COFFEE (BC, ICMS, BC ST, ST,
             # FRETE, SEGURO, DESCONTO, OUTRAS, IPI e, por último, TOTAL DA NOTA
             # e TOTAL DOS PRODUTOS), só que com os rótulos intercalados em
@@ -23968,6 +24077,13 @@ class SPPdfExtractor:
                 avisos.append(f"Soma do ICMS dos itens ({soma_icms:.2f}) diferente do VALOR DO ICMS ({valor_icms_total:.2f}) - conferir")
         if valor_total_nota == 0.0:
             avisos.append("Valor total da nota extraído como zero")
+        elif dups:
+            soma_dups = round(sum(_num(v) for _n, _v, v in dups), 2)
+            if abs(soma_dups - valor_total_nota) > 0.01:
+                avisos.append(f"Soma das duplicatas ({soma_dups:.2f}) diferente do VALOR TOTAL DA NOTA ({valor_total_nota:.2f}) - conferir")
+        v_canhoto = _danfe_txt.valor_total_canhoto(t)
+        if valor_total_nota and v_canhoto is not None and abs(v_canhoto - valor_total_nota) > 0.01:
+            avisos.append(f"Valor total do canhoto ({v_canhoto:.2f}) diferente do VALOR TOTAL DA NOTA ({valor_total_nota:.2f}) - conferir")
 
         valores = ValoresNfe(
             base_calculo_icms=base_calculo_icms, valor_icms=valor_icms_total,
@@ -23981,6 +24097,10 @@ class SPPdfExtractor:
         informacoes_complementares = m.group(1).strip() if m else None
         if informacoes_complementares is None:
             informacoes_complementares = _danfe_txt.dados_adicionais_sem_rotulo(t)
+        if informacoes_complementares is None:
+            # Bloco sem "RESERVADO AO FISCO" depois, com os rótulos da caixa
+            # do ISSQN no meio e o canhoto logo em seguida (nota nº 946).
+            informacoes_complementares = _danfe_txt.informacoes_complementares_ate_canhoto(t)
 
         return NfeProduto(
             chave_acesso=chave_acesso, numero=numero, serie=serie,

@@ -166,6 +166,14 @@ class IBGEResolver:
         # conferido na API oficial do IBGE (servicodados.ibge.gov.br/api/v1/
         # localidades/municipios/3507605 -> "Bragança Paulista", UF SP).
         "BRAGANCA PAULISTA": "3507605", "BRAGANÇA PAULISTA": "3507605",
+        # Birigui/SP (DANFE nº 946, MUNDIAL INDUSTRIA METALURGICA) e Extrema/MG
+        # (DANFE nº 44986, COMERCIAL CASA DA LAVOURA) - emitentes, achado real
+        # 2026-10-29. Sem estas entradas caíam no fallback da capital da UF.
+        # Códigos conferidos na API oficial do IBGE (servicodados.ibge.gov.br/
+        # api/v1/localidades/municipios/3506508 -> "Birigui", SP; .../3125101
+        # -> "Extrema", MG).
+        "BIRIGUI": "3506508",
+        "EXTREMA": "3125101",
         # Candeias/BA - município do tomador da nota nº 6013 (CLINICA MEDICINA
         # HUMANA LTDA -> MASSA ALIMENTAÇÃO E SERVIÇOS S/A, layout Camaçari
         # escaneado, achado real 2026-10-08). Sem esta entrada caía no
