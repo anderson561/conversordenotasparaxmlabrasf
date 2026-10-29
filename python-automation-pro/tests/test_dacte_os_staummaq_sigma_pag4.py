@@ -361,8 +361,8 @@ def test_valor_total_da_prestacao_e_o_confirmado_pelo_usuario(nota):
 # ------------------------------------------------------------ transformer
 
 def test_xml_e_um_cte_mod67_nao_um_compnfse_abrasf(nota):
-    """O XML final deve se identificar como CT-e (mod=67, raiz `CTe`/
-    `infCte`, namespace `.../cte`) - NUNCA como `CompNfse` ABRASF, que foi o
+    """O XML final deve se identificar como CT-e OS (mod=67, raiz
+    `cteOSProc`/`CTeOS`/`infCte`, namespace `.../cte`) - NUNCA como `CompNfse` ABRASF, que foi o
     sintoma original do bug (documento do tipo errado sendo parseado)."""
     xml = CteTransformer().transform(nota)
     assert "http://www.portalfiscal.inf.br/cte" in xml

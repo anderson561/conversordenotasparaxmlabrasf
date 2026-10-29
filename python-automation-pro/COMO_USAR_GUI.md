@@ -22,17 +22,18 @@ Após rodar o script de build, você encontrará o executável em:
 
 ## 2. Tipos de Arquivo Suportados
 
-No campo **"Tipo de Arquivo"**, selecione uma das três opções:
+No campo **"Tipo de Arquivo"**, selecione uma das quatro opções:
 
 | Opção | Descrição |
 |---|---|
 | **NFS-e (Padrão ABRASF 2.01)** | Converte PDFs de notas fiscais de serviço para XML ABRASF |
 | **NF-e (DANFE Estadual - Modelo 55)** | Converte PDFs de notas fiscais eletrônicas estaduais |
+| **CT-e OS (DACTE OS - Modelo 67)** | Converte **só** os DACTE OS (CT-e OS, Modelo 67) do PDF para XML CT-e OS (`cteOSProc`, leiaute oficial 4.00 do Modelo 67) e ignora as demais páginas (NFS-e, NF-e) |
 | **Contrato de Locação (ABRASF XML)** | Gera XML ABRASF a partir de dados digitados do contrato (sem PDF) |
 
 ---
 
-## 3. Conversão de NFS-e / NF-e (via PDF)
+## 3. Conversão de NFS-e / NF-e / CT-e OS (via PDF)
 
 Siga estes passos para converter PDFs:
 
@@ -52,6 +53,19 @@ Quando você converte **um único PDF** que contém **mais de uma nota válida**
 - **"Converter todas as válidas"** — converte todas as notas reconhecidas (equivale a não filtrar).
 
 > Só as páginas com nota reconhecida aparecem na lista; páginas de lixo/comprovante são ignoradas automaticamente. O PDF inteiro é lido para reconhecer as notas — a seleção decide quais viram XML.
+
+### Opção "CT-e OS (DACTE OS - Modelo 67)"
+
+Use quando o PDF (ou a pasta) mistura DACTE OS com outras notas e você quer **só os CT-e OS**:
+
+- Cada DACTE OS vira um XML CT-e OS no leiaute oficial 4.00 do Modelo 67 (`cteOSProc`), com o mesmo nome que já recebia na opção NFS-e (ex.: `..._Pagina_4_NF_000017268.xml`).
+- As páginas que não são DACTE OS (NFS-e, NF-e) **não** são convertidas; o log mostra uma linha por página ignorada ("Página 1 não é DACTE OS (Modelo 67) — ignorada nesta opção") e o total.
+- A janela de seleção de páginas lista só os DACTE OS (com um único DACTE OS no PDF ela nem aparece).
+- Se o PDF não tiver nenhum DACTE OS, nada é gerado e aparece a mensagem "Nenhum DACTE OS (Modelo 67) encontrado no PDF ...". Numa pasta/lote, esse PDF conta como "Ignorado" e os demais seguem.
+
+> **Importação no Domínio:** use `Utilitários > Importação > Importação Padrão > CT-e e CT-eOS > Arquivo XML` (rotina 2108). **Não** use a importação de NF-e (ela responde "Sem dados para importar. Nenhuma linha foi processada") nem a "CT-e e CT-eOS Portal" (rotina 4210, que busca o documento pela chave no portal e não lê o arquivo). O XML sai sem a assinatura digital do emitente (não temos o certificado dele) e, quando a nota não imprime algum campo obrigatório (CRT, CST, bairro), o log mostra um aviso "conferir" para aquela nota.
+
+> Na opção **NFS-e (Padrão ABRASF 2.01)** nada muda: as NFS-e viram ABRASF e um DACTE OS que esteja no mesmo PDF continua virando XML CT-e automaticamente.
 
 ### PDFs protegidos por senha
 

@@ -1,12 +1,14 @@
 from src.main import run_conversion, run_batch_conversion, run_contrato_conversion, parse_page_spec
 from src.models.contrato_locacao_model import ContratoLocacao, EntidadeContrato
 from src.utils.pdf_senha import PdfSenhaError
+from src.utils.erros import NenhumCteOsError
 import argparse
 import sys
 import json
 from datetime import datetime
 
-if __name__ == "__main__":
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Conversor PDF NFS-e / Contratos de Locação para ABRASF XML")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--input",    help="Caminho para um único PDF")
@@ -14,16 +16,22 @@ if __name__ == "__main__":
     group.add_argument("--contrato", help="Caminho para JSON com dados do contrato de locação")
 
     parser.add_argument("--output",  required=True, help="Caminho para o XML / Diretório de saída")
-    parser.add_argument("--format",  default="abrasf", choices=["abrasf", "nfe"],
-                        help="Formato de saída para PDFs: abrasf (padrão) ou nfe")
+    parser.add_argument("--format",  default="abrasf", choices=["abrasf", "nfe", "cteos"],
+                        help="Formato de saída para PDFs: abrasf (padrão), nfe ou cteos "
+                             "(CT-e OS / DACTE OS - Modelo 67: converte só os DACTE OS do PDF "
+                             "e ignora as demais páginas)")
     parser.add_argument("--pages",   help="Converter apenas páginas específicas de um PDF de várias páginas "
                                           "(só com --input). Aceita páginas soltas e intervalos, ex.: "
                                           "\"1,3,6\" ou \"1-3,6\".")
     parser.add_argument("--password", help="Senha de abertura para PDFs protegidos por senha (--input e --batch). "
                                             "ATENÇÃO: a senha digitada na linha de comando fica visível no "
                                             "histórico do terminal e na lista de processos do sistema.")
+    return parser
 
-    args = parser.parse_args()
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     if args.pages and not args.input:
         parser.error("--pages só pode ser usado com --input (um único PDF).")
@@ -55,5 +63,9 @@ if __name__ == "__main__":
         try:
             run_conversion(args.input, args.output, output_format=args.format,
                            selected_pages=selected_pages, password=args.password)
-        except PdfSenhaError as ex:
+        except (PdfSenhaError, NenhumCteOsError) as ex:
             sys.exit(f"[ERRO] {ex}")  # mensagem clara em stderr, código de saída 1, sem traceback
+
+
+if __name__ == "__main__":
+    main()
