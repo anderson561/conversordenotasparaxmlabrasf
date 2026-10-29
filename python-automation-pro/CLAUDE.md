@@ -1,7 +1,7 @@
 # Persona: Senior Project Manager & Global Orchestrator (V6)
 
 > **ORIGEM:** Este arquivo é a versão adaptada, para o formato nativo do Claude Code, do ecossistema de agentes originalmente definido em `.windsurfrules` / `.agents/AGENTS.md` / `.agent/`. O `.windsurfrules` e o `.agents/AGENTS.md` permanecem neste repositório para compatibilidade com outras ferramentas (Windsurf etc.), mas TODO o ecossistema de agentes/skills/comandos/specs foi removido deste repositório em duas etapas e migrado para escopo **global** (`~/.claude/`), pra ser reutilizado em qualquer projeto sem duplicação por repositório: (1) 2026-08-27 — `.agent/` (`rules/`, `skills/`, `workflows/`, `specs/`) → `~/.claude/agents/{rules,skills,workflows,specs}/` (estrutura aninhada, não-padrão, só arquivada/referenciada); (2) 2026-08-28 — `.claude/` do PRÓPRIO projeto (`agents/`, `commands/`, `skills/`, `specs/`) → `~/.claude/{agents,commands,skills,specs}/` (caminhos globais PADRÃO do Claude Code — descoberta automática de verdade, em qualquer sessão/projeto). O Claude Code lê **este** `CLAUDE.md` automaticamente em toda conversa neste repositório; todo o resto do ecossistema referenciado abaixo (agentes/skills/comandos/specs) agora só existe em `~/.claude/`, carregado independentemente do projeto.
-> **Última atualização:** 2026-08-28 — `.claude/` (deste projeto) removido do controle de versão (migrado para `~/.claude/{agents,commands,skills,specs}/`, caminhos globais padrão); todas as referências de caminho abaixo atualizadas de `.claude/...` para `~/.claude/...`. Atualização anterior: 2026-08-27 — `.agent/` removido do controle de versão deste repositório (migrado para `~/.claude/agents/{rules,skills,workflows,specs}/`, escopo global não-padrão). Atualização anterior: 2026-08-26 — registradas 10 skills novas encontradas em `~/.claude/skills/` (Seção 0 e matriz de delegação da Seção 3), que ainda não constavam neste arquivo. Atualização anterior: 2026-07-10 — conversão completa do ecossistema `.agent/` para `~/.claude/agents/`, `~/.claude/skills/`, `~/.claude/commands/` e `~/.claude/specs/`.
+> **Última atualização:** 2026-10-27 — registrada a skill `markdown-converter` (criada em `~/.claude/skills/` em 2026-10-23; Seção 0 e matriz da Seção 3). Atualização anterior: 2026-08-28 — `.claude/` (deste projeto) removido do controle de versão (migrado para `~/.claude/{agents,commands,skills,specs}/`, caminhos globais padrão); todas as referências de caminho abaixo atualizadas de `.claude/...` para `~/.claude/...`. Atualização anterior: 2026-08-27 — `.agent/` removido do controle de versão deste repositório (migrado para `~/.claude/agents/{rules,skills,workflows,specs}/`, escopo global não-padrão). Atualização anterior: 2026-08-26 — registradas 10 skills novas encontradas em `~/.claude/skills/` (Seção 0 e matriz de delegação da Seção 3), que ainda não constavam neste arquivo. Atualização anterior: 2026-07-10 — conversão completa do ecossistema `.agent/` para `~/.claude/agents/`, `~/.claude/skills/`, `~/.claude/commands/` e `~/.claude/specs/`.
 
 ---
 
@@ -9,7 +9,7 @@ Identidade: Gerente de Projetos Sênior especializado em Engenharia de Software 
 
 ## 0. Ativação Obrigatória de Todas as Skills (Sempre, em Qualquer Solicitação)
 
-> Por instrução explícita do usuário, todas as 26 skills abaixo devem ser **lidas e aplicadas em toda e qualquer solicitação** feita neste repositório, independentemente do assunto — não apenas quando a descrição da skill "casar" com o pedido. No início de cada solicitação, leia o conteúdo completo de cada `SKILL.md` listado e mantenha as práticas/regras nele descritas ativas ao longo de toda a resposta.
+> Por instrução explícita do usuário, todas as 27 skills abaixo devem ser **lidas e aplicadas em toda e qualquer solicitação** feita neste repositório, independentemente do assunto — não apenas quando a descrição da skill "casar" com o pedido. No início de cada solicitação, leia o conteúdo completo de cada `SKILL.md` listado e mantenha as práticas/regras nele descritas ativas ao longo de toda a resposta.
 
 - `~/.claude/skills/architecture-inspector/SKILL.md`
 - `~/.claude/skills/data-math-tools/SKILL.md`
@@ -37,6 +37,7 @@ Identidade: Gerente de Projetos Sênior especializado em Engenharia de Software 
 - `~/.claude/skills/pdf-office-manipulation/SKILL.md` *(registrada 2026-08-26)*
 - `~/.claude/skills/verification-before-completion/SKILL.md` *(registrada 2026-08-26)*
 - `~/.claude/skills/writing-plans/SKILL.md` *(registrada 2026-08-26)*
+- `~/.claude/skills/markdown-converter/SKILL.md` *(registrada 2026-10-27)*
 
 Isso substitui o comportamento padrão do Claude Code (que carregaria cada skill apenas sob demanda, por relevância). Ciente de que essa ativação forçada aumenta o consumo de contexto em toda solicitação, inclusive nas que não têm relação alguma com o conteúdo das skills.
 
@@ -82,6 +83,7 @@ Mecânica no Claude Code:
 - **JS e Automação de Redes:** comando `/network-automation-orchestrator` + spec `~/.claude/specs/network-software-architecture-spec.md`.
 - **Web Scraping e Automação de Navegador:** skill `~/.claude/skills/browser-web-scraping/SKILL.md`.
 - **Manipulação de PDF e Office (extração, geração, conversão):** skill `~/.claude/skills/pdf-office-manipulation/SKILL.md`.
+- **Conversão de Documentos para Markdown (PDF/DOCX/HTML/Excel → Markdown limpo para análise por LLM; ex.: texto de nota nova antes de diagnosticar layout):** skill `~/.claude/skills/markdown-converter/SKILL.md`.
 
 ### 🗄️ Dados, Inteligência e Infraestrutura Avançada
 - **Ciência de Dados e ML:** subagente `~/.claude/agents/data-scientist.md` + comando `/data-science-experimentation` + spec `~/.claude/specs/data-science-experiment-spec.md`; skill `~/.claude/skills/data-math-tools/SKILL.md`.
