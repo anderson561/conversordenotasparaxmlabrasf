@@ -321,7 +321,9 @@ def _log_da_gui(gui):
 
 def test_gui_cteos_arquivo_unico_converte_so_o_cte_sem_dialogo(gui, monkeypatch, tmp_path, lote_misto):
     out = _rodar_gui(gui, monkeypatch, tmp_path, lote_misto, "cteos")
-    assert _xmls(out) == ["temp_Pagina_4_NF_000017268.xml"]
+    # Prefixo = nome do PDF original (antes este teste fixava o defeito
+    # "temp_Pagina_4_..." do arquivo único da GUI; corrigido 2026-10-27).
+    assert _xmls(out) == ["STAUMMAQ_Pagina_4_NF_000017268.xml"]
     log = _log_da_gui(gui)
     assert sum("não é DACTE OS" in m for m in log) == 3
     # Só 1 CT-e OS sobra: não abre o diálogo de seleção de páginas (que

@@ -8,6 +8,7 @@ from .models.contrato_locacao_model import ContratoLocacao
 from .models.nfe_produto_models import NfeProduto
 from .models.cte_os_model import CteOS
 from .utils.pdf_senha import pdf_desprotegido
+from .gui_selecao import nome_xml_lote
 from .utils.erros import descrever_erro, NenhumCteOsError
 import os
 
@@ -161,11 +162,16 @@ def run_conversion(pdf_path: str, output_xml_path: str, output_format: str = "ab
 
     print(f"[+] Conversão concluída com sucesso! ({len(nfse_list)} notas extraídas)")
 
-def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_files: list = None, progress_callback=None, output_format: str = "abrasf", password: str = None, senhas: dict = None):
+def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_files: list = None, progress_callback=None, output_format: str = "abrasf", password: str = None, senhas: dict = None, paginas_por_arquivo: dict = None):
     """`password`: senha única aplicada a todo PDF protegido do lote (CLI
     `--password`); `senhas`: dict caminho->senha por arquivo (GUI), que tem
     precedência. PDF protegido sem senha / com senha errada falha SÓ aquele
-    arquivo (contabilizado em "PDFs Falhos"), sem derrubar os demais."""
+    arquivo (contabilizado em "PDFs Falhos"), sem derrubar os demais.
+
+    `paginas_por_arquivo`: dict caminho->lista de páginas (GUI, janela de
+    seleção com vários PDFs). Arquivo presente no dict converte só as notas
+    dessas páginas; ausente converte todas. Os nomes dos XMLs seguem o mesmo
+    padrão do lote (`nome_xml_lote`)."""
     if pdf_files:
         files_to_process = pdf_files
         print(f"[*] Iniciando conversão de {len(pdf_files)} arquivos selecionados.")
@@ -203,6 +209,17 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
                 skip_count += 1
                 continue
 
+            paginas = (paginas_por_arquivo or {}).get(pdf_path)
+            if paginas is not None:
+                nfse_list = [n for n in nfse_list if getattr(n, 'pagina_origem', None) in paginas]
+                if not nfse_list:
+                    msg = f"[AVISO] {filename} IGNORADO (Nenhuma nota nas páginas selecionadas)"
+                    print(f"[!] {msg}")
+                    if progress_callback:
+                        progress_callback(i / total_files, msg)
+                    skip_count += 1
+                    continue
+
             nfse_list, ignorados = separar_por_formato(nfse_list, output_format)
             _reportar(mensagens_ignoradas(ignorados, prefixo=f"{filename} - "), progress_callback, i / total_files)
             if not nfse_list:
@@ -213,13 +230,10 @@ def run_batch_conversion(input_dir: str = None, output_dir: str = None, pdf_file
                 skip_count += 1
                 continue
 
-            base_filename = filename.rsplit('.', 1)[0]
-            
             for nfse_data in nfse_list:
                 num_nota = getattr(nfse_data, 'numero', '00000000')
                 pag_origem = getattr(nfse_data, 'pagina_origem', None)
-                pag_str = f"_Pagina_{pag_origem}" if pag_origem else ""
-                xml_name = f"{base_filename}{pag_str}_NF_{num_nota}.xml"
+                xml_name = nome_xml_lote(filename, pag_origem, num_nota)
                 output_xml_path = os.path.join(output_dir, xml_name)
                 transformer = _pick_transformer(nfse_data, output_format)
                 xml_content = transformer.transform(nfse_data)
