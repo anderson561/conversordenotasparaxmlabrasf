@@ -30,6 +30,7 @@ class ItemProduto(BaseModel):
     quantidade: float
     valor_unitario: float
     valor_total: float
+    valor_desconto: float = 0.0  # desconto do item (prod/vDesc), coluna "VALOR DESCONTO" do DANFE
     base_calculo_icms: float = 0.0
     valor_icms: float = 0.0
     aliquota_icms: float = 0.0
