@@ -28,6 +28,7 @@ from . import sp_identificador as _sp_ident
 from . import saubara_nfse as _saubara
 from . import dacte_os_texto as _dacte
 from . import nota_locacao as _nota_loc
+from . import nota_debito_locacao as _nota_deb
 from . import localiza_fatura as _localiza
 from datetime import datetime
 
@@ -152,6 +153,8 @@ LAYOUT_SAUBARA = 'saubara_ba'  # Prefeitura Municipal de Saubara/BA (plataforma 
 LAYOUT_SAUBARA_2 = 'saubara_ba_2'  # Prefeitura Municipal de Saubara/BA (plataforma Link3), template 2: "NOTA FISCAL ELETRÔNICA DE SERVIÇOS - NFS-e" com blocos "PRESTADOR DE SERVIÇOS"/"TOMADOR DE SERVIÇOS", código IBGE impresso ao lado de "CIDADE -", CNAE/NBS/item LC 116, regime especial e grade de tributos de 12 colunas. PDF DIGITAL. Achado real 2026-09-14: nota 202600000000080, VIVA COMUNICAÇAO E SERVIÇOS LTDA -> TEMIS, R$120,00 (Simples/Microempresa Municipal). Mesma detecção do LAYOUT_SAUBARA, variante decidida pelo rótulo de bloco exclusivo ("PRESTADOR DE SERVIÇOS" vs "DADOS DO EMITENTE")
 _LAYOUTS_SAUBARA = (LAYOUT_SAUBARA, LAYOUT_SAUBARA_2)
 LAYOUT_NOTA_LOCACAO = 'nota_locacao'  # Impresso "NOTA DE LOCAÇÃO" de locadora de bens móveis (modelo de gráfica, sem prefeitura/plataforma) - NÃO é NFS-e: a própria nota declara a não incidência de ISS (LC 116/2003) e a dispensa de documento fiscal (Lei 8.846/94). Achado real 2026-10-16 (lote STAUMMAQ, Scan2026-10-16_110738.pdf pág. 10): ELEVAR LOCACAO E TRANSPORTES LTDA (CNPJ 22.471.804/0001-01, Dias d'Ávila/BA) -> STAUMMAQ SERV TEC AUT MOTORES E MAQ LTDA (Simões Filho/BA), nota 1245, locação de caminhão munck, R$18.500,00 (antes: "Layout não reconhecido" -> nenhum XML). Detecção ESTRUTURAL (título "NOTA DE LOCAÇÃO Nº <n>" + bloco "DESTINATÁRIO" + rótulo "VALOR TOTAL DA NOTA DE LOCAÇÃO", e nada de NFS-e/Nota Fiscal), não pelo nome da ELEVAR: outra locadora com o mesmo impresso também cai aqui, com o emitente lido do letterhead. Escaneado: recortes dedicados (`nota_locacao.recortar`, chamados no `_ocr_page`) recuperam CNPJ/data do emitente, quantidade/total do item e a grade DESTINATÁRIO por coluna (linhas sintéticas NOTALOC_*). Convenção das faturas de locação (Localiza/ARMAC/genérica): item 0601, CodigoVerificacao "FATURA", ISS/base/alíquota zerados, + aviso de que o documento é nota de locação. Parsing em `nota_locacao.py`
+LAYOUT_NOTA_DEBITO_LOCACAO = 'nota_debito_locacao'  # Impresso "NOTA DÉBITO Nº <n>" + "FATURA <n>-<ano>" de locação de bens móveis (modelo próprio do emitente, sem prefeitura/plataforma) - NÃO é NFS-e: a própria nota declara "NÃO SUJEITO A I.S.S." (LC 116/2003). Achado real 2026-10-23 (Notas/092026/locacao.pdf, FOTO de celular de cabeça para baixo): ANA CELIA MOREIRA RIBEIRO (CNPJ 45.282.926/0001-55, Salvador/BA) -> SINAL CONSTRUTORA LTDA (CNPJ 33.811.381/0001-48, Pojuca/BA), FATURA 005-2026 / NOTA DÉBITO 36, locação de caçamba truck (placas BXB3B34 e KHY9526), R$ 17.827,08 (antes: rotação 180° já corrigida pelo `_ocr_page`, mas "Layout não reconhecido" -> nenhum XML -> "parece ser baseado em imagem/scan"). Estrutura distinta da LAYOUT_NOTA_LOCACAO (título NOTA DÉBITO/FATURA, "NATUREZA DA OPERAÇÃO", bloco "TOMADOR DO SERVIÇO" em caixas, "TOTAL DA FATURA"). Detecção ESTRUTURAL (NOTA DÉBITO Nº + FATURA <n> + NATUREZA DA OPERAÇÃO + TOMADOR DO SERVIÇO, e nada de NFS-e), não pelo nome do emitente. A leitura de página inteira perde todas as caixas de valor; recortes por caixa ancorados nos rótulos, com variantes de imagem + votação por validador (`nota_debito_locacao.recortar`, chamado no `_ocr_page`), devolvem linhas sintéticas NOTADEB_*. Decisões do usuário: Número = FATURA sem ano/zeros (005-2026 -> 5), não o nº da nota débito; competência = mês da emissão. Mesma convenção da LAYOUT_NOTA_LOCACAO (item 0601, CodigoVerificacao "FATURA", ISS zerado + aviso). Parsing em `nota_debito_locacao.py`
+_LAYOUTS_NOTA_LOCACAO = (LAYOUT_NOTA_LOCACAO, LAYOUT_NOTA_DEBITO_LOCACAO)  # mesmos pontos de consumo (`_nota_loc_campos`)
 
 # Marcas do template da PRÓPRIA Prefeitura de Lauro de Freitas/BA (cabeçalho
 # "MUNICIPIO DE LAURO DE FREITAS / Secretaria da Fazenda / Coordenação
@@ -596,6 +599,11 @@ class SPPdfExtractor:
         # `nota_locacao.eh_nota_locacao` e LAYOUT_NOTA_LOCACAO.
         if _nota_loc.eh_nota_locacao(t):
             return LAYOUT_NOTA_LOCACAO
+        # Impresso "NOTA DÉBITO / FATURA" de locação (não é NFS-e), mesmo
+        # racional: gate estrutural de 4 âncoras, nunca NFS-e - ver
+        # `nota_debito_locacao.eh_nota_debito_locacao`.
+        if _nota_deb.eh_nota_debito_locacao(t):
+            return LAYOUT_NOTA_DEBITO_LOCACAO
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
         # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
         # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
@@ -1126,6 +1134,11 @@ class SPPdfExtractor:
         # `nota_locacao.eh_nota_locacao` e LAYOUT_NOTA_LOCACAO.
         if _nota_loc.eh_nota_locacao(t):
             return LAYOUT_NOTA_LOCACAO
+        # Impresso "NOTA DÉBITO / FATURA" de locação (não é NFS-e), mesmo
+        # racional: gate estrutural de 4 âncoras, nunca NFS-e - ver
+        # `nota_debito_locacao.eh_nota_debito_locacao`.
+        if _nota_deb.eh_nota_debito_locacao(t):
+            return LAYOUT_NOTA_DEBITO_LOCACAO
         # Camaçari via SISLOC/Benefix ANTES da marca municipal de Camaçari
         # (mesmo racional da DANFSe acima): a nota traz "PREFEITURA MUNICIPAL
         # DE CAMAÇARI" e casaria o layout CPqD antes — mas essa plataforma
@@ -1563,7 +1576,7 @@ class SPPdfExtractor:
         layout = self.layout or LAYOUT_GENERICO
         result: Optional[datetime] = None
 
-        if layout == LAYOUT_NOTA_LOCACAO:
+        if layout in _LAYOUTS_NOTA_LOCACAO:
             # A nota de locação não imprime competência (o "PERÍODO" da
             # descrição é o da locação, não um campo de competência): mês da
             # emissão, convenção do projeto para nota sem competência.
@@ -1890,7 +1903,7 @@ class SPPdfExtractor:
     def _extrair_data_emissao(self) -> datetime:
         t = self.raw_text
         self._data_emissao_fallback = False
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             # "DATA DE EMISSÃO" da caixa do cabeçalho (ou a única data dela). O
             # PERÍODO da descrição e o carimbo "VENCIMENTO" nunca valem.
             data = self._nota_loc_campos().data_emissao
@@ -2689,14 +2702,15 @@ class SPPdfExtractor:
         if cache is not None and cache[0] == self.raw_text:
             return cache[1]
         via_ocr = bool(getattr(self, '_pagina_veio_de_ocr', self.from_ocr))
-        campos = _nota_loc.extrair(self.raw_text, _ibge_resolver, self._validate_cnpj_cpf, via_ocr=via_ocr)
+        extrator = _nota_deb.extrair if self.layout == LAYOUT_NOTA_DEBITO_LOCACAO else _nota_loc.extrair
+        campos = extrator(self.raw_text, _ibge_resolver, self._validate_cnpj_cpf, via_ocr=via_ocr)
         self._nota_loc_cache = (self.raw_text, campos)
         return campos
 
     def _extrair_numero(self) -> str:
         t = self.raw_text
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             # "NOTA DE LOCAÇÃO Nº 1245"; sentinela se ausente/divergente.
             return self._nota_loc_campos().numero
 
@@ -3525,7 +3539,7 @@ class SPPdfExtractor:
         return None
 
     def _extrair_discriminacao(self) -> str:
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             return self._nota_loc_campos().discriminacao
         if self.layout in _LAYOUTS_SAUBARA:
             return self._saubara_campos().discriminacao
@@ -4238,7 +4252,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             # Locação de bem móvel: mesmo item "0601" da família de faturas de
             # locação (Localiza/ARMAC/genérica) - ver `_nota_loc.ITEM_LOCACAO`.
             return _nota_loc.ITEM_LOCACAO
@@ -4708,7 +4722,7 @@ class SPPdfExtractor:
         existir."""
         t = self.raw_text
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             return None  # o impresso não traz CNAE
 
         if self.layout in _LAYOUTS_SAUBARA:
@@ -4756,7 +4770,7 @@ class SPPdfExtractor:
 
     def _extrair_codigo_verificacao(self) -> str:
         t = self.raw_text
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             # Documento sem código de verificação: "FATURA", convenção das
             # faturas de locação (Localiza/ARMAC/CPE/genérica).
             return _nota_loc.CODIGO_VERIFICACAO
@@ -5485,7 +5499,7 @@ class SPPdfExtractor:
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             # Emitente (locador) = prestador; DESTINATÁRIO = tomador; sem intermediário.
             if is_intermediario:
                 return None
@@ -13669,6 +13683,85 @@ class SPPdfExtractor:
         s = unicodedata.normalize('NFKD', s or '')
         return ''.join(c for c in s if not unicodedata.combining(c)).upper().strip()
 
+    def _valor_total_sem_parar(self, t: str):
+        """Valor dos serviços da fatura Sem Parar = TOTAL da fatura.
+
+        Retorna ``(valor, fonte, divergencia)``: ``fonte`` é ``'total'``,
+        ``'subtotal'``, ``'placas'`` ou ``''`` (nada confiável -> 0,00);
+        ``divergencia`` é o valor composto pelas rubricas quando ele NÃO bate
+        com o TOTAL impresso (senão ``None``).
+
+        1. TOTAL impresso, quando legível: linha do "Resumo da sua Fatura"
+           (entre o cabeçalho "Outras Arrec." e o primeiro "Detalhamento")
+           que começa com "TOTAL", só tem ruído SEM dígitos até o valor e
+           TERMINA num valor bem formado "<n>,<nn> D". "TOTAL 8B07,00D"
+           (nota 705900227) não passa: ruído colado ao número.
+        2. Subtotal + Outras Arrec. (faturas 709678135/705320619, PR #131).
+        3. Soma da ÚLTIMA célula (coluna TOTAL) das linhas de placa (placa +
+           tag de 10 dígitos) + Outras Arrec. (nota 705900227). Basta UMA
+           linha de placa com a última célula ilegível para o ramo inteiro
+           ser descartado: uma soma parcial pareceria completa.
+        4. Nada disso -> 0,00 (com aviso em `parse()`); nunca células soltas.
+        """
+        valor_re = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+
+        # ---- Outras Arrec.: rótulo próprio do detalhamento ("TOTAL OUTRAS
+        # ARRECADAÇÕES ; BR CM : 75,00D." - último valor da linha); senão a
+        # célula "<n>D" da linha de valores sob o cabeçalho "Outras Arrec.".
+        arrec = None
+        m_ot = re.search(r'TOTAL\s+OUTRAS\s+ARRECADA[ÇC][ÕO]ES([^\n]*)', t, re.IGNORECASE)
+        if m_ot:
+            vals = re.findall(r'(?<![\w.,])' + valor_re, m_ot.group(1))
+            if vals:
+                arrec = self._parse_valor(vals[-1])
+        m_cab_arrec = re.search(r'Outras\s*Arrec[^\n]*\n\s*([^\n]+)', t, re.IGNORECASE)
+        if arrec is None and m_cab_arrec:
+            # A linha sai sem pontuação decimal confiável ("2730D" para
+            # 27,30 D); o "D" de débito cola no número.
+            nums = re.findall(r'(\d[\d.]*),?(\d{2})\s*D\b', m_cab_arrec.group(1))
+            if nums:
+                arrec = self._parse_valor('%s,%s' % nums[0])
+
+        # ---- valor composto pelas rubricas
+        composto, fonte_comp = None, ''
+        m_sub = re.search(r'Subtotal\s*[|:]?\s*R?\$?\s*(\d[\d.]*,\d{2})', t, re.IGNORECASE)
+        if m_sub:
+            composto = round(self._parse_valor(m_sub.group(1)) + (arrec or 0.0), 2)
+            fonte_comp = 'subtotal'
+        else:
+            celulas = []
+            for m_lin in re.finditer(r'^\s*[A-Za-z]{3}[A-Za-z0-9]{4}\s+\d{10}\b([^\n]*)$',
+                                     t, re.MULTILINE):
+                m_ult = re.search(r'(\d[\d.,]*)\s*D\W*$', m_lin.group(1))
+                raw = m_ult.group(1) if m_ult else ''
+                if re.fullmatch(r'\d{3,}', raw):          # "4540D" = 45,40
+                    celulas.append(int(raw) / 100)
+                elif re.fullmatch(r'\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2}', raw):
+                    celulas.append(self._parse_valor(raw))
+                else:
+                    celulas.append(None)
+            if celulas and None not in celulas:
+                composto = round(sum(celulas) + (arrec or 0.0), 2)
+                fonte_comp = 'placas'
+
+        # ---- TOTAL impresso
+        total_impresso = None
+        if m_cab_arrec:
+            m_det = re.search(r'Detalhamento', t[m_cab_arrec.start():], re.IGNORECASE)
+            fim = (m_cab_arrec.start() + m_det.start()) if m_det else len(t)
+            regiao = t[m_cab_arrec.start():fim]
+            m_tot = re.search(r'^\s*TOTAL\b[^\d\n]*?(?<![\w.,])' + valor_re + r'\s*D[^\w\n]*$',
+                              regiao, re.IGNORECASE | re.MULTILINE)
+            if m_tot and not re.match(r'\s*TOTAL\s+OUTRAS', m_tot.group(0), re.IGNORECASE):
+                total_impresso = self._parse_valor(m_tot.group(1))
+
+        if total_impresso:
+            divergente = composto is not None and abs(composto - total_impresso) > 0.009
+            return total_impresso, 'total', (composto if divergente else None)
+        if composto:
+            return composto, fonte_comp, None
+        return 0.0, '', None
+
     def _ocr_cabecalho_sem_parar(self) -> str:
         """Recorte dedicado do cabeçalho do EMITENTE na fatura Sem Parar.
 
@@ -13936,7 +14029,13 @@ class SPPdfExtractor:
             m_end = re.search(r'Endere[çc]o\s*:\s*([^\n]+)', bloco, re.IGNORECASE)
             if m_end:
                 bruto = m_end.group(1).strip()
-                m_num = re.search(r'^(.*?),\s*([0-9]+[A-Za-z]?|S/?N)\s*$', bruto, re.IGNORECASE)
+                # Achado real 2026-10-26 (nota nº 710253204): o cadastro do
+                # cliente imprime "Boa Viagem, 146 0" - número seguido de um
+                # token curto. Sem aceitá-lo, o número inteiro ia para o
+                # logradouro e o Número saía "S/N". Mantém-se o que está
+                # impresso ("146 0"), sem adivinhar o que o "0" significa.
+                m_num = re.search(r'^(.*?),\s*([0-9]+[A-Za-z]?(?:\s+[0-9A-Za-z]{1,3})?|S/?N)\s*$',
+                                  bruto, re.IGNORECASE)
                 if m_num:
                     logradouro, numero = m_num.group(1).strip(), m_num.group(2).strip()
                 else:
@@ -15375,7 +15474,7 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             return self._nota_loc_campos().valores
 
         if self.layout in _LAYOUTS_SAUBARA:
@@ -15504,54 +15603,17 @@ class SPPdfExtractor:
             # e o código caía no ramo SEM Subtotal (abaixo), que somou células
             # soltas da tabela por placa (incluindo a coluna Plano Contratado)
             # e entregou R$ 673,54 para um TOTAL impresso de R$ 3.465,48.
-            m_sub = re.search(r'Subtotal\s*[|:]?\s*R?\$?\s*(\d[\d.]*,\d{2})', t, re.IGNORECASE)
-            m_arrec = re.search(r'Outras\s*Arrec[^\n]*\n\s*([^\n]+)', t, re.IGNORECASE)
-            total = 0.0
-            if m_sub:
-                subtotal = self._parse_valor(m_sub.group(1))
-                arrec = 0.0
-                if m_arrec:
-                    # A linha de valores sai sem pontuação decimal confiável
-                    # ("2730D" para 27,30 D); o "D" de débito cola no número.
-                    nums = re.findall(r'(\d[\d.]*),?(\d{2})\s*D\b', m_arrec.group(1))
-                    if nums:
-                        arrec = self._parse_valor('%s,%s' % nums[0])
-                total = round(subtotal + arrec, 2)
-            else:
-                # Achado real 2026-09-17, nota nº 705900227 (2ª nota do PDF
-                # "NORDESTE TUBETES - SCAN.pdf"): esta VARIANTE da fatura Sem
-                # Parar não imprime NENHUM rótulo "Subtotal" - o "Resumo da
-                # sua Fatura" fecha direto num "TOTAL" cuja linha o OCR lê com
-                # confiança baixíssima demais para usar ("TOTAL 8B07,00D" em
-                # vez de "807,00 D"). Sem "Subtotal", o ramo acima retornaria
-                # 0,00 incondicionalmente - mas o valor total ainda é
-                # reconstruível a partir de 2 rubricas que a nota IMPRIME de
-                # forma legível: a coluna "TOTAL" de cada linha da tabela por
-                # placa (última célula, sempre "<valor>D" colado ao fim, ex.:
-                # "9670D") + "TOTAL OUTRAS ARRECADAÇÕES" (rótulo próprio,
-                # valor limpo, sem o ruído de OCR que degrada a tabela).
-                # Mesma convenção "2 últimos dígitos são centavos" já usada em
-                # `_parse_valor_camacari` para células de tabela sem pontuação
-                # decimal confiável. Conferido na nota real: 45,40 + 96,70 +
-                # 308,00 + 281,90 (4 linhas por placa) + 75,00 (outras
-                # arrecadações) = 807,00, batendo com o TOTAL impresso (ainda
-                # que ilegível ao OCR).
-                def _parse_valor_total_placa(raw: str) -> float:
-                    digits = raw.strip()
-                    if re.fullmatch(r'\d{3,}', digits):
-                        return int(digits) / 100
-                    return self._parse_valor(digits)
-
-                soma_placas = sum(
-                    _parse_valor_total_placa(m.group(1))
-                    for m in re.finditer(r'(\d{3,6})D(?=\s|$)', t)
-                )
-                m_outras_total = re.search(
-                    r'TOTAL\s+OUTRAS\s+ARRECADA[ÇC][ÕO]ES\s*[:\s]*\n?\s*R?\$?\s*([\d.,]+)',
-                    t, re.IGNORECASE)
-                outras_total = self._parse_valor(m_outras_total.group(1)) if m_outras_total else 0.0
-                if soma_placas or outras_total:
-                    total = round(soma_placas + outras_total, 2)
+            # Achado real 2026-10-26 (nota nº 710253204, fatura 26202710742):
+            # a variante SEM "Subtotal" caía no antigo ramo que somava
+            # QUALQUER "<3 a 6 dígitos>D" da página - e o único que casou foi
+            # um pedágio solto do "Detalhamento das Passagens" ("770D" = 7,70)
+            # para um TOTAL impresso (e legível!) de R$ 1.030,30. Decisão do
+            # usuário: o valor é o TOTAL da fatura (pedágios, estacionamentos
+            # e outras arrecadações incluídos). As fontes, em ordem, são lidas
+            # por ESTRUTURA (rótulo/linha), nunca por células soltas - ver
+            # `_valor_total_sem_parar`.
+            total, self._sem_parar_fonte_valor, self._sem_parar_divergencia = (
+                self._valor_total_sem_parar(t))
             # Base/alíquota/ISS ficam ZERADOS: a nota não os imprime, e
             # derivá-los do total seria inventar a tributação. Mesma convenção
             # já usada em toda a família de faturas sem ISS (ex.: locação).
@@ -19491,6 +19553,18 @@ class SPPdfExtractor:
                     if recorte_loc.strip():
                         best_text = f"{recorte_loc}\n{best_text}"
 
+                # Impresso "NOTA DÉBITO / FATURA" de locação (achado real
+                # 2026-10-23, locacao.pdf: foto de celular de cabeça para baixo -
+                # a rotação de 180° já é achada acima, mas a leitura de página
+                # inteira perde TODAS as caixas de valor). Recortes por caixa com
+                # votação, linhas sintéticas `NOTADEB_*` PREPENDIDAS (ver
+                # nota_debito_locacao.py). Só roda para este layout.
+                if _nota_deb.eh_nota_debito_locacao(best_text):
+                    img_deb = img if best_angle == 0 else img.rotate(-best_angle, expand=True)
+                    recorte_deb = _nota_deb.recortar(img_deb, best_text, self._validate_cnpj_cpf)
+                    if recorte_deb.strip():
+                        best_text = f"{recorte_deb}\n{best_text}"
+
                 # Barreiras/BA escaneado: a segmentação automática do Tesseract
                 # DESCARTA UMA FAIXA HORIZONTAL INTEIRA desta nota — a faixa que
                 # carrega o texto da discriminação, a OBSERVAÇÃO, a GRADE
@@ -23309,6 +23383,8 @@ class SPPdfExtractor:
         self._localiza_avisos: List[str] = []
         self._saubara_cache = None
         self._nota_loc_cache = None
+        self._sem_parar_fonte_valor = ''
+        self._sem_parar_divergencia = None
 
         if self.layout == LAYOUT_DANFE_PRODUTO:
             # Documento de PRODUTO (NF-e Modelo 55), estruturalmente distinto
@@ -23410,7 +23486,7 @@ class SPPdfExtractor:
             _campos_sau = self._saubara_campos()
             optante_simples = _campos_sau.optante_simples
             regime_especial = _campos_sau.regime_especial
-        elif self.layout == LAYOUT_NOTA_LOCACAO:
+        elif self.layout in _LAYOUTS_NOTA_LOCACAO:
             # "EMPRESA OPTANTE PELO SIMPLES NACIONAL" nas informações adicionais
             # -> optante + ME/EPP ("6"), mesmo código do ramo genérico abaixo.
             optante_simples = self._nota_loc_campos().optante_simples
@@ -23504,7 +23580,7 @@ class SPPdfExtractor:
             avisos.append("Valor dos serviços extraído como zero")
         if self.layout in _LAYOUTS_SAUBARA:
             avisos.extend(a for a in self._saubara_campos().avisos if a not in avisos)
-        if self.layout == LAYOUT_NOTA_LOCACAO:
+        if self.layout in _LAYOUTS_NOTA_LOCACAO:
             avisos.extend(a for a in self._nota_loc_campos().avisos if a not in avisos)
         avisos.extend(avisos_flash)
         avisos.extend(a for a in avisos_boleto if a not in avisos)
@@ -23570,16 +23646,39 @@ class SPPdfExtractor:
                 "Alíquota nem Valor do ISS - esses campos ficam ZERADOS "
                 "propositalmente, não foram calculados"
             )
-            if valores.valor_servicos:
+            def _br(v: float) -> str:
                 # Formata só o NÚMERO no padrão brasileiro; aplicar a troca de
                 # separadores na frase inteira estraga a pontuação do texto.
-                valor_br = (f"{valores.valor_servicos:,.2f}"
-                            .replace(',', '#').replace('.', ',').replace('#', '.'))
+                return (f"{v:,.2f}"
+                        .replace(',', '#').replace('.', ',').replace('#', '.'))
+            fonte = getattr(self, '_sem_parar_fonte_valor', '')
+            divergencia = getattr(self, '_sem_parar_divergencia', None)
+            if valores.valor_servicos and fonte == 'total':
                 avisos.append(
-                    f"Valor dos serviços (R$ {valor_br}) COMPOSTO pela soma das "
-                    "rubricas impressas na própria fatura (Subtotal + Outras "
-                    "Arrec.): a linha do TOTAL fica sobre faixa cinza e não "
-                    "sobrevive ao OCR - confira contra o TOTAL impresso"
+                    f"Valor dos serviços (R$ {_br(valores.valor_servicos)}) = "
+                    "TOTAL impresso da fatura (inclui pedágios, estacionamentos "
+                    "e outras arrecadações)"
+                )
+                if divergencia is not None:
+                    avisos.append(
+                        f"DIVERGÊNCIA: a soma das rubricas da fatura dá R$ "
+                        f"{_br(divergencia)}, diferente do TOTAL impresso lido "
+                        f"(R$ {_br(valores.valor_servicos)}) - confira na nota"
+                    )
+            elif valores.valor_servicos:
+                rubricas = ("Subtotal + Outras Arrec." if fonte == 'subtotal'
+                            else "coluna TOTAL de cada placa + Outras Arrec.")
+                avisos.append(
+                    f"Valor dos serviços (R$ {_br(valores.valor_servicos)}) COMPOSTO "
+                    f"pela soma das rubricas impressas na própria fatura ({rubricas}): "
+                    "a linha do TOTAL não foi lida com segurança pelo OCR - "
+                    "confira contra o TOTAL impresso"
+                )
+            else:
+                avisos.append(
+                    "Valor dos serviços ZERADO: nem o TOTAL da fatura, nem o "
+                    "Subtotal, nem a coluna TOTAL das placas foram lidos com "
+                    "segurança - preencha conforme o TOTAL impresso na nota"
                 )
             m_pag = re.search(r'P[áa]gina\s*(\d+)\s*/\s*(\d+)', self.raw_text, re.IGNORECASE)
             if m_pag and m_pag.group(1) != m_pag.group(2):
