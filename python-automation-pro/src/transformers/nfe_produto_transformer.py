@@ -14,6 +14,26 @@ class NfeProdutoTransformer:
     documento-fonte.
     """
 
+    # CST do ICMS (regime normal) -> grupo do leiaute NF-e 4.00 implementado.
+    # CST sem grupo aqui (10, 20, 30, 51, 70, 90, CSOSN do Simples...) gera
+    # aviso explícito em vez de um grupo errado.
+    _GRUPO_ICMS = {'00': 'ICMS00', '40': 'ICMS40', '41': 'ICMS40', '50': 'ICMS40', '60': 'ICMS60'}
+
+    @staticmethod
+    def _id_dest(nfe: NfeProduto) -> str:
+        """idDest pelo 1º dígito do CFOP impresso (1/5 interna, 2/6
+        interestadual, 3/7 exterior) quando todos os itens concordam - a
+        SEFAZ rejeita CFOP 5xxx com idDest 2. Nota nº 35284: emitente MG,
+        destinatário BA, mercadoria entregue em MG, CFOP 5102/5405. Sem itens
+        ou CFOPs divergentes: UF do emitente x destinatário (comportamento
+        antigo)."""
+        digitos = {(i.cfop or ' ')[0] for i in nfe.itens}
+        mapa = {'1': '1', '5': '1', '2': '2', '6': '2', '3': '3', '7': '3'}
+        ids = {mapa.get(d) for d in digitos}
+        if len(ids) == 1 and None not in ids:
+            return ids.pop()
+        return "1" if nfe.emitente.endereco.uf == nfe.destinatario.endereco.uf else "2"
+
     @staticmethod
     def _digits(value) -> str:
         return ''.join(ch for ch in (value or '') if ch.isdigit())
@@ -43,7 +63,7 @@ class NfeProdutoTransformer:
         if nfe.data_saida_entrada:
             ET.SubElement(ide, 'dhSaiEnt').text = nfe.data_saida_entrada.strftime('%Y-%m-%dT%H:%M:%S-03:00')
         ET.SubElement(ide, 'tpNF').text = nfe.tipo_operacao
-        ET.SubElement(ide, 'idDest').text = "1" if nfe.emitente.endereco.uf == nfe.destinatario.endereco.uf else "2"
+        ET.SubElement(ide, 'idDest').text = self._id_dest(nfe)
         ET.SubElement(ide, 'cMunFG').text = nfe.emitente.endereco.codigo_municipio or "2927408"
         ET.SubElement(ide, 'tpImp').text = "1"
         ET.SubElement(ide, 'tpEmis').text = "1"
@@ -84,6 +104,9 @@ class NfeProdutoTransformer:
         ender_dest = ET.SubElement(dest, 'enderDest')
         ET.SubElement(ender_dest, 'xLgr').text = nfe.destinatario.endereco.logradouro[:60] or "RUA NAO INFORMADA"
         ET.SubElement(ender_dest, 'nro').text = nfe.destinatario.endereco.numero or "S/N"
+        if nfe.destinatario.endereco.complemento:
+            # Complemento em xCpl, nunca colado ao logradouro.
+            ET.SubElement(ender_dest, 'xCpl').text = nfe.destinatario.endereco.complemento[:60]
         ET.SubElement(ender_dest, 'xBairro').text = nfe.destinatario.endereco.bairro[:60] or "BAIRRO"
         ET.SubElement(ender_dest, 'cMun').text = nfe.destinatario.endereco.codigo_municipio or "2927408"
         ET.SubElement(ender_dest, 'xMun').text = nfe.destinatario.endereco.municipio or "MUNICIPIO"
@@ -108,11 +131,14 @@ class NfeProdutoTransformer:
             ET.SubElement(prod, 'uTrib').text = item.unidade[:6] or "UN"
             ET.SubElement(prod, 'qTrib').text = f"{item.quantidade:.4f}"
             ET.SubElement(prod, 'vUnTrib').text = f"{item.valor_unitario:.4f}"
+            if item.valor_desconto > 0:
+                # Leiaute 4.00: prod/vDesc vem depois de vUnTrib/vFrete/vSeg
+                # e antes de vOutro/indTot.
+                ET.SubElement(prod, 'vDesc').text = f"{item.valor_desconto:.2f}"
             ET.SubElement(prod, 'indTot').text = "1"
 
             imposto = ET.SubElement(det, 'imposto')
             icms = ET.SubElement(imposto, 'ICMS')
-            icms_grupo = ET.SubElement(icms, 'ICMS00' if item.aliquota_icms > 0 else 'ICMS40')
             # O DANFE imprime ORIGEM + CST concatenados numa coluna só
             # ("000" = origem 0/CST 00; "041" = origem 0/CST 41), enquanto o
             # XML os separa em `orig` (1 dígito) e `CST` (2). Sem a divisão,
@@ -120,15 +146,37 @@ class NfeProdutoTransformer:
             cst_impresso = (item.cst_icms or "").strip()
             if len(cst_impresso) == 3:
                 origem, cst = cst_impresso[0], cst_impresso[1:]
+            elif cst_impresso:
+                origem, cst = "0", cst_impresso
             else:
-                origem, cst = "0", (cst_impresso or "00")
-            ET.SubElement(icms_grupo, 'orig').text = origem
-            ET.SubElement(icms_grupo, 'CST').text = cst
-            if item.aliquota_icms > 0:
-                ET.SubElement(icms_grupo, 'modBC').text = "3"
-                ET.SubElement(icms_grupo, 'vBC').text = f"{item.base_calculo_icms:.2f}"
-                ET.SubElement(icms_grupo, 'pICMS').text = f"{item.aliquota_icms:.2f}"
-                ET.SubElement(icms_grupo, 'vICMS').text = f"{item.valor_icms:.2f}"
+                # CST não impresso/lido: comportamento antigo (tributado se
+                # há alíquota, senão isento), sinalizado.
+                origem, cst = "0", ("00" if item.aliquota_icms > 0 else "40")
+                nfe.avisos.append(f"Item {item.codigo}: CST do ICMS não lido - usado {cst}, conferir")
+            # Grupo do ICMS pelo CST IMPRESSO (não pela alíquota): CST 60
+            # dentro de ICMS40 é inválido no leiaute 4.00.
+            grupo = self._GRUPO_ICMS.get(cst)
+            if grupo is None:
+                nfe.avisos.append(
+                    f"Item {item.codigo}: CST {cst} do ICMS sem grupo implementado no conversor - "
+                    f"grupo ICMS do item NÃO gerado (XML incompleto), conferir/lançar manualmente")
+                imposto.remove(icms)
+            else:
+                icms_grupo = ET.SubElement(icms, grupo)
+                ET.SubElement(icms_grupo, 'orig').text = origem
+                ET.SubElement(icms_grupo, 'CST').text = cst
+                if grupo == 'ICMS00':
+                    ET.SubElement(icms_grupo, 'modBC').text = "3"
+                    ET.SubElement(icms_grupo, 'vBC').text = f"{item.base_calculo_icms:.2f}"
+                    ET.SubElement(icms_grupo, 'pICMS').text = f"{item.aliquota_icms:.2f}"
+                    ET.SubElement(icms_grupo, 'vICMS').text = f"{item.valor_icms:.2f}"
+                elif item.valor_icms or item.base_calculo_icms:
+                    # ICMS40/ICMS60 não levam BC/ICMS próprios; os opcionais
+                    # do ICMS60 (vBCSTRet, pST, vICMSSubstituto, vICMSSTRet)
+                    # só sairiam se impressos no DANFE.
+                    nfe.avisos.append(
+                        f"Item {item.codigo}: CST {cst} com BC/ICMS impressos "
+                        f"({item.base_calculo_icms:.2f}/{item.valor_icms:.2f}) - conferir")
 
             if item.valor_ipi > 0:
                 ipi = ET.SubElement(imposto, 'IPI')
@@ -167,6 +215,21 @@ class NfeProdutoTransformer:
         ]
         for tag, val in fields:
             ET.SubElement(icms_tot, tag).text = f"{val:.2f}"
+        # Coerência (sinalizada, nunca "corrigida"): Σ prod/vDesc = ICMSTot/
+        # vDesc quando há desconto por item, e vNF = vProd - vDesc + vST +
+        # vFrete + vSeg + vOutro + vIPI (regra de validação da SEFAZ).
+        desc_itens = round(sum(i.valor_desconto for i in nfe.itens), 2)
+        if desc_itens and abs(desc_itens - v.desconto) > 0.01:
+            nfe.avisos.append(
+                f"Soma do desconto dos itens ({desc_itens:.2f}) diferente do vDesc total ({v.desconto:.2f}) - conferir")
+        if v.valor_total_nota:
+            v_prod = v.valor_total_produtos or vprod_total
+            v_nf_calc = round(v_prod - v.desconto + v.valor_icms_st + v.valor_frete + v.valor_seguro
+                              + v.outras_despesas + v.valor_ipi, 2)
+            if abs(v_nf_calc - v.valor_total_nota) > 0.01:
+                nfe.avisos.append(
+                    f"vNF ({v.valor_total_nota:.2f}) diferente de vProd - vDesc + vST + vFrete + vSeg + "
+                    f"vOutro + vIPI ({v_nf_calc:.2f}) - conferir")
 
         transp = ET.SubElement(inf_nfe, 'transp')
         transportador = nfe.transportador

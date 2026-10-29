@@ -1030,6 +1030,16 @@ Suíte 1286 → **1303 verdes + 9 pulados**; 17 testes novos em `tests/test_danf
 
 Suíte 1303 → **1320 verdes + 9 pulados**; 17 testes novos em `tests/test_danfe_produto_nota946_nota44986.py` (texto real do pdfminer das notas 946 e 44986 + casos de integridade).
 
+**⚠️ Ampliação (2026-10-29) — DANFE digital com a tabela de itens despejada coluna a coluna (nota nº 35284, DAC MATERIAIS DE CONSTRUCAO, Extrema/MG → H.Z. PATRIMONIAL LTDA., R$ 11.645,00, 10 itens):** saía com o emitente "NF-e" (a linha do canhoto "NF-e / Nº 000.035.284 / Série 001" virava a razão social), endereço do emitente vazio, cMunFG de Salvador, aviso de UF do destinatário e sem `<det>` (rejeitado pelo Domínio).
+
+- **Emitente** (`emitente_letterhead_corrido`): endereço numa frase quebrada em linhas ("<logr>, <nº> -" / "<bairro> - <MUN> - <UF> - CEP:" / "<cep>" / "Fone: ..."); razão social pelo canhoto "Recebemos de <X> os produtos e/ou serviços"; aceito só com UF válida, município sem dígitos e CEP na faixa da UF. Quando o endereço da GRAN COFFEE não casa, a 1ª linha do bloco não é mais usada como nome; sem letterhead reconhecido, o nome vem do canhoto. IE do emitente: caixa "INSCRIÇÃO ESTADUAL" do cabeçalho, antes de "DESTINATÁRIO / REMETENTE".
+- **Destinatário**: UF impressa antes do rótulo ("BA" / "UF"), aceita só com o CEP do bloco na faixa da UF (`uf_antes_do_rotulo`); rótulo "TELEFONE / FAX".
+- **Itens** (`itens_por_coluna`): N códigos entre "CÓDIGO" e "DESCRIÇÃO", N descrições de uma linha antes dos NCM (descrição quebrada → recusa), N NCM, N CST, N "CFOP UNID." e as colunas numéricas em faixas de N linhas — várias colunas numa linha por item ("0,00 18,00 0,00") ou uma por linha, ou DUAS intercaladas linha a linha (BC ICMS / V.ICMS). Cada agrupamento possível é testado; aceito só se exatamente um fechar em todos os itens QUANT × V.UNIT = V.TOTAL (centavo), BC = V.TOTAL − DESC. quando tributado, BC × ALÍQ. = V.ICMS (centavo: 6.019,98 × 18% = 1.083,5964 impresso 1.083,59) e BC zerada → ICMS zerado; depois as somas dos itens precisam bater com vProd, vDesc, vBC e vICMS da grade. Qualquer falha: nenhum item + motivo no aviso.
+- **XML** (`NfeProdutoTransformer`): grupo do ICMS pelo CST impresso (00 → ICMS00; 40/41/50 → ICMS40; 60 → ICMS60 só com orig + CST, opcionais de ST retida omitidos por não estarem impressos; outros CST → aviso e nenhum grupo); `prod/vDesc` por item; avisos de coerência Σ vDesc dos itens × ICMSTot/vDesc e vNF = vProd − vDesc + vST + vFrete + vSeg + vOutro + vIPI; `idDest` pelo 1º dígito do CFOP quando todos os itens concordam; `xCpl` do destinatário. O projeto não tem o XSD da NF-e — a ordem dos elementos é conferida nos testes.
+- **Regressão em lote** (54 PDFs de `Notas\` recursivo, base × branch): só a nº 35284 muda. Pelos textos reais dos testes: GRAN COFFEE idêntica; 478012, 477985 e 946 ganham só o `xCpl` do destinatário; 44986 passa a `idDest` 1 (CFOP 5102).
+
+Suíte 1320 → **1349 verdes + 9 pulados**; 29 testes novos em `tests/test_danfe_produto_nota35284.py` (texto real do pdfminer da nota 35284 + casos que não fecham).
+
 ---
 
 ## CT-e OS — Conhecimento de Transporte Eletrônico para Outros Serviços (Modelo 67) → XML CT-e

@@ -25090,6 +25090,12 @@ class SPPdfExtractor:
                 uf_emit = m2.group(6).upper()
                 telefone_emit = m2.group(7).strip()
                 cep_emit = m2.group(8)
+            else:
+                # Sem a estrutura de endereço da GRAN COFFEE, a 1ª linha do
+                # bloco não é confiável como razão social (nota nº 35284: o
+                # canhoto "NF-e / Nº 000.035.284 / Série 001" não casa o grupo
+                # opcional e "NF-e" virava o nome do emitente).
+                razao_social_emit = "Emitente Não Identificado"
         if not municipio_emit:
             # Letterhead em linhas soltas ("<logradouro>, <nº>" / "<bairro>" /
             # "<MUNICÍPIO>-<UF>" / "CEP: ..." / "Tel: ...") e com o canhoto
@@ -25112,6 +25118,22 @@ class SPPdfExtractor:
                     avisos.append(
                         f"Razão social do emitente lida no cabeçalho ({razao_social_emit}) não confere "
                         f"com o canhoto \"RECEBEMOS DE ...\" - conferir")
+        if not municipio_emit:
+            # Endereço como uma frase quebrada em linhas depois do canhoto:
+            # "<logr>, <nº> -" / "<bairro> - <MUN> - <UF> - CEP:" / "<cep>"
+            # (nota nº 35284); razão social pelo canhoto "RECEBEMOS DE ... os
+            # produtos". Ver `danfe_produto_texto.emitente_letterhead_corrido`.
+            lh = _danfe_txt.emitente_letterhead_corrido(t)
+            if lh:
+                razao_social_emit = lh['razao_social']
+                logradouro_emit = lh['logradouro']
+                numero_emit = lh['numero'] or "S/N"
+                complemento_emit = lh['complemento']
+                bairro_emit = lh['bairro'] or ""
+                municipio_emit = lh['municipio']
+                uf_emit = lh['uf']
+                cep_emit = lh['cep'] or ""
+                telefone_emit = lh['telefone']
         if not municipio_emit:
             # Letterhead com rótulo "IDENTIFICAÇÃO DO EMITENTE" e endereço em
             # "<logr>, <nº> - <bairro> -" / "<MUN> - <UF> - <CEP> - <fone>"
@@ -25137,6 +25159,10 @@ class SPPdfExtractor:
                     avisos.append(f"CEP do emitente ({cep_emit}) fora da faixa da UF {uf_emit} - conferir")
         if not municipio_emit:
             avisos.append("Endereço do emitente não identificado (letterhead fora do padrão esperado)")
+        if razao_social_emit == "Emitente Não Identificado":
+            # Sem letterhead reconhecido: a razão social ainda pode vir do
+            # canhoto "RECEBEMOS DE <EMITENTE> OS PRODUTOS".
+            razao_social_emit = _danfe_txt.nome_emitente_canhoto(t) or razao_social_emit
 
         # IE do emitente: só dígitos ("148261549") ou pontuada
         # ("225.185.878.112", nota nº 478012) - no XML vai só com dígitos.
@@ -25147,6 +25173,14 @@ class SPPdfExtractor:
             # REMETENTE" (nota nº 44986) - só com contraprova (mesmo valor
             # colado a outro rótulo "INSCRIÇÃO ESTADUAL" no documento).
             ie_emit = _danfe_txt.ie_emitente_antes_destinatario(t)
+        if ie_emit is None:
+            # Caixa "INSCRIÇÃO ESTADUAL\n<ie>" do cabeçalho seguida de "INSCRIÇÃO
+            # ESTADUAL DO SUBSTITUTO TRIBUTÁRIO" (nota nº 35284): 1ª IE colada
+            # ao rótulo ANTES do bloco do destinatário.
+            cab = re.split(r'DESTINAT[ÁA]RIO\s*/?\s*REMETENTE', t, maxsplit=1, flags=re.IGNORECASE)[0]
+            ie_cab = _danfe_txt.valor_do_rotulo(cab, r'INSCRI[ÇC][ÃA]O\s+ESTADUAL', _danfe_txt.val_ie)
+            if ie_cab and ie_cab.upper() != 'ISENTO' and not _danfe_txt._cnpj_dv_ok(re.sub(r'\D', '', ie_cab)):
+                ie_emit = re.sub(r'\D', '', ie_cab)
         m = re.search(r'DESTINAT[ÁA]RIO/REMETENTE[\s\S]{0,200}?CNPJ\s*\n+\s*([\d./-]+)', t, re.IGNORECASE)
         cnpj_emit = m.group(1) if m else "00.000.000/0000-00"
         if len(chave_acesso) == 44:
@@ -25220,6 +25254,11 @@ class SPPdfExtractor:
                 uf_l, fone_l = _danfe_txt.uf_e_fone_mesma_linha(
                     _danfe_txt.secao(t, _danfe_txt._SEC_DEST_INI, _danfe_txt._SEC_DEST_FIM_ENTIDADE))
                 d['uf'], d['telefone'] = uf_l, d['telefone'] or fone_l
+            if d['uf'] is None:
+                # "BA\n\nUF" - valor impresso ANTES do rótulo (nota nº 35284),
+                # aceito só com o CEP do bloco na faixa da UF.
+                d['uf'] = _danfe_txt.uf_antes_do_rotulo(
+                    _danfe_txt.secao(t, _danfe_txt._SEC_DEST_INI, _danfe_txt._SEC_DEST_FIM_ENTIDADE), d['cep'])
             if not dest_primario_ok and d['razao_social'] and d['municipio']:
                 dest_primario_ok = True
                 razao_social_dest = d['razao_social']
@@ -25329,6 +25368,7 @@ class SPPdfExtractor:
 
         # --- Itens (tabela "DADOS DOS PRODUTOS/SERVIÇOS") ---
         itens: List[ItemProduto] = []
+        itens_lidos_por_coluna = False
         item_pattern = re.compile(
             r'\n(\d{4,})\s*\n+(.+?)\s*\n+(\d{8})\s*\n+(\d{2,3})\s*\n+(\d{4})\s*\n+([A-Z]{1,4})\s*\n+'
             r'([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)\s*\n+([\d.,]+)',
@@ -25376,7 +25416,28 @@ class SPPdfExtractor:
                     valor_unitario=it['valor_unitario'], valor_total=it['valor_total'],
                     base_calculo_icms=it['bc_icms'], valor_icms=it['valor_icms'],
                     aliquota_icms=it['aliquota_icms'], valor_ipi=it['valor_ipi'], aliquota_ipi=it['aliquota_ipi'],
+                    valor_desconto=it['valor_desconto'],
                 ))
+            if not itens:
+                # Tabela despejada COLUNA A COLUNA (todos os códigos, depois
+                # todas as descrições, NCM, CST, "CFOP UNID." e as colunas
+                # numéricas - nota nº 35284). Só aceita se TODAS as linhas
+                # fecharem; os totais da grade são conferidos mais abaixo.
+                # Ver `danfe_produto_texto.itens_por_coluna`.
+                its_col, motivos_col = _danfe_txt.itens_por_coluna(t)
+                for it in its_col:
+                    itens.append(ItemProduto(
+                        codigo=it['codigo'], descricao=it['descricao'], ncm=it['ncm'], cfop=it['cfop'],
+                        cst_icms=it['cst'], unidade=it['unidade'], quantidade=it['quantidade'],
+                        valor_unitario=it['valor_unitario'], valor_total=it['valor_total'],
+                        valor_desconto=it['valor_desconto'], base_calculo_icms=it['bc_icms'],
+                        valor_icms=it['valor_icms'], aliquota_icms=it['aliquota_icms'],
+                        valor_ipi=it['valor_ipi'], aliquota_ipi=it['aliquota_ipi'],
+                    ))
+                itens_lidos_por_coluna = bool(its_col)
+                if its_col:
+                    motivos_itens = []
+                motivos_itens = motivos_itens + motivos_col
             avisos.extend(f"Itens: {mo}" for mo in motivos_itens)
         if not itens:
             avisos.append("Nenhum item de produto identificado na tabela")
@@ -25446,6 +25507,26 @@ class SPPdfExtractor:
                 avisos.append(f"Soma dos itens ({soma_prod:.2f}) diferente do VALOR TOTAL DOS PRODUTOS ({valor_total_produtos:.2f}) - conferir")
             if abs(soma_icms - valor_icms_total) > 0.01:
                 avisos.append(f"Soma do ICMS dos itens ({soma_icms:.2f}) diferente do VALOR DO ICMS ({valor_icms_total:.2f}) - conferir")
+        if itens_lidos_por_coluna:
+            # Itens remontados coluna a coluna só ficam se as somas fecharem
+            # com a grade impressa: Σ V.TOTAL = vProd, Σ DESC. = vDesc, Σ BC =
+            # vBC, Σ V.ICMS = vICMS. Qualquer divergência descarta TODOS os
+            # itens (montagem não confiável) - nunca um item inventado.
+            divergencias = [
+                f"{rot} {round(sum(getattr(i, campo) for i in itens), 2):.2f} x {impresso:.2f}"
+                for rot, campo, impresso in (
+                    ('V.TOTAL', 'valor_total', valor_total_produtos), ('DESCONTO', 'valor_desconto', desconto),
+                    ('BC ICMS', 'base_calculo_icms', base_calculo_icms), ('V.ICMS', 'valor_icms', valor_icms_total))
+                if abs(round(sum(getattr(i, campo) for i in itens), 2) - impresso) > 0.01]
+            if divergencias:
+                avisos.append("Itens lidos coluna a coluna descartados - soma dos itens não fecha com a grade "
+                              "CÁLCULO DO IMPOSTO (" + "; ".join(divergencias) + ")")
+                avisos.append("Nenhum item de produto identificado na tabela")
+                itens = []
+            elif not any((valor_icms_st, valor_frete, valor_seguro, outras_despesas, valor_ipi)):
+                # vProd, vDesc, vBC e vICMS conferidos pelos itens e os demais
+                # campos zerados: a leitura pela ordem não precisa de conferência.
+                avisos[:] = [a for a in avisos if not a.startswith("Grade CÁLCULO DO IMPOSTO lida pela ordem")]
         if valor_total_nota == 0.0:
             avisos.append("Valor total da nota extraído como zero")
         elif dups:

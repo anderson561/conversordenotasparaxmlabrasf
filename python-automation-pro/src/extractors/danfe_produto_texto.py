@@ -38,7 +38,7 @@ UFS = frozenset(
 _ROTULO_LINHA = re.compile(
     r'^\s*(?:'
     r'NOME\s*/?\s*RAZ[ÃA]O\s+SOCIAL|RAZ[ÃA]O\s+SOCIAL|CNPJ(?:\s*/\s*CPF)?|CPF|'
-    r'ENDERE[ÇC]O|BAIRRO\s*/\s*DISTRITO|CEP|MUNIC[ÍI]PIO|FONE\s*/\s*FAX|UF|'
+    r'ENDERE[ÇC]O|BAIRRO\s*/\s*DISTRITO|CEP|MUNIC[ÍI]PIO|(?:TELE)?FONE\s*/\s*FAX|UF|'
     r'INSCRI[ÇC][ÃA]O\s+ESTADUAL.*|INSC\.\s.*|DATA\s+D[AEO]\s+.*|DATA\s+EMISS[ÃA]O|'
     r'HORA\s+D[AEO]\s+.*|FATURA.*|N[ÚU]MERO|VENCIMENTO|VENC\.?|VALOR(?:\s.*)?|'
     r'PROTOCOLO\s.*|NATUREZA\s.*|QUANTIDADE|ESP[ÉE]CIE|MARCA|NUMERA[ÇC][ÃA]O|'
@@ -250,7 +250,7 @@ def destinatario_por_rotulos(t: str) -> Dict[str, Optional[str]]:
         'cep': valor_do_rotulo(sec, r'CEP', val_cep),
         'municipio': valor_do_rotulo(sec, r'MUNIC[ÍI]PIO', val_municipio),
         'uf': valor_do_rotulo(sec, r'UF', val_uf),
-        'telefone': valor_do_rotulo(sec, r'FONE\s*/\s*FAX', val_fone),
+        'telefone': valor_do_rotulo(sec, r'(?:TELE)?FONE\s*/\s*FAX', val_fone),
         'inscricao_estadual': valor_do_rotulo(sec, r'INSCRI[ÇC][ÃA]O\s+ESTADUAL', val_ie),
     }
     if r['cep']:
@@ -266,8 +266,9 @@ def fatura_por_rotulos(t: str) -> List[Tuple[str, str, str]]:
     sec = secao(t, r'(?m)^\s*FATURA\s*$', _SEC_DEST_FIM)
     if not re.search(r'(?im)^\s*VENCIMENTO\s*$', sec):
         return []
+    # Valor com ou sem "R$ " ("R$ 11.645,00" - nota nº 35284).
     return [(m.group(1), m.group(2), m.group(3)) for m in re.finditer(
-        r'(?m)^[ \t]*(\d[\w/\-]*)[ \t]*\n\s*(\d{2}/\d{2}/\d{4})[ \t]*\n\s*(' + _MONEY + r')[ \t]*$', sec)]
+        r'(?m)^[ \t]*(\d[\w/\-]*)[ \t]*\n\s*(\d{2}/\d{2}/\d{4})[ \t]*\n\s*(?:R\$\s*)?(' + _MONEY + r')[ \t]*$', sec)]
 
 
 def grade_calculo_por_ordem(t: str) -> Optional[List[float]]:
@@ -588,7 +589,7 @@ def destinatario_por_tipo(t: str) -> Dict[str, Optional[str]]:
         'bairro': valor_tipado_apos_rotulo(sec, r'BAIRRO\s*/\s*DISTRITO', lambda v: val_texto(v) and not re.search(r'\d', v)),
         'cep': valor_tipado_apos_rotulo(sec, r'CEP', val_cep),
         'uf': valor_tipado_apos_rotulo(sec, r'UF', val_uf),
-        'telefone': valor_tipado_apos_rotulo(sec, r'FONE\s*/\s*FAX', val_fone),
+        'telefone': valor_tipado_apos_rotulo(sec, r'(?:TELE)?FONE\s*/\s*FAX', val_fone),
     }
     if r['cep']:
         r['cep'] = _digitos(r['cep'])
@@ -765,11 +766,9 @@ def itens_colunas(t: str) -> Tuple[List[Dict[str, object]], List[str]]:
         aliq_ipi = a2 if aliq_icms == a1 else a1
         if vipi and abs(round(vtot * aliq_ipi / 100, 2) - vipi) > 0.01:
             motivos.append(f"item {len(itens) + 1}: V.IPI não fecha com V.TOTAL x ALÍQ.IPI - conferir")
-        if vdesc:
-            motivos.append(f"item {len(itens) + 1}: desconto no item ({nums[3]}) não levado ao XML - conferir")
         itens.append({
             'descricao': descricao, 'ncm': ncm, 'cst': cst, 'cfop': cfop, 'unidade': unid.rstrip('.'),
-            'quantidade': qtd, 'valor_unitario': vun, 'valor_total': vtot, 'bc_icms': bc,
+            'quantidade': qtd, 'valor_unitario': vun, 'valor_total': vtot, 'valor_desconto': vdesc, 'bc_icms': bc,
             'valor_icms': vicms, 'aliquota_icms': aliq_icms, 'valor_ipi': vipi, 'aliquota_ipi': aliq_ipi,
         })
         inicio_desc = fim
@@ -855,3 +854,231 @@ def grade_por_identidade(t: str, itens: List[Dict[str, object]]) -> Optional[Dic
         'valor_seguro': 0.0, 'desconto': 0.0, 'outras_despesas': 0.0,
         'valor_ipi': ancoras.get('ipi', 0.0), 'valor_total_nota': v_nf,
     }
+
+
+# ===========================================================================
+# Ampliacao 2026-10-29 - nota nº 35284 (DANFE digital com o letterhead em
+# texto corrido quebrado em linhas e a tabela de itens despejada pelo pdfminer
+# COLUNA A COLUNA: todos os codigos, depois todas as descricoes, todos os NCM,
+# ...). Mesma filosofia: estrutura do DANFE + identidades aritmeticas; o que
+# nao fecha vira None/lista vazia + motivo, nunca um valor chutado.
+# ===========================================================================
+
+def _linhas_pos_canhoto(t: str) -> Optional[List[str]]:
+    """Linhas entre a ULTIMA "Serie <s>" do canhoto e o box "DANFE"."""
+    m = re.search(r'ASSINATURA\s+DO\s+RECEBEDOR\s*\n(.+?)\n\s*DANFE\s*\n', t or '', re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    ultima = None
+    for ms in re.finditer(r'(?im)^\s*S[ÉE]RIE\s*:?\s*\d{1,3}\s*$', m.group(1)):
+        ultima = ms
+    if ultima is None:
+        return None
+    return [l.strip() for l in m.group(1)[ultima.end():].split('\n') if l.strip()]
+
+
+_FONE_LINHA = re.compile(r'(?:Tel|Fone|Telefone)\.?\s*:?\s*([\d()\s.\-+]{8,})', re.IGNORECASE)
+_ENDERECO_CORRIDO = re.compile(
+    r'^(?P<logr>.+?),\s+(?P<num>\d+[A-Z]?|S\s*/?\s*N)\s+-\s+(?P<bairro>.+?)\s+-\s+(?P<mun>[^-]+?)\s+-\s+'
+    r'(?P<uf>[A-Z]{2})\s+-\s+CEP\s*:?\s*(?P<cep>\d{2}\.?\d{3}-?\d{3})$', re.IGNORECASE)
+
+
+def emitente_letterhead_corrido(t: str) -> Optional[Dict[str, Optional[str]]]:
+    """Letterhead do emitente depois do canhoto em que o endereco e UMA frase
+    quebrada em linhas: "<logr>, <nº> -" / "<bairro> - <MUN> - <UF> - CEP:" /
+    "<cep>" / "Fone: ..." (nota nº 35284). A razao social vem do canhoto
+    "RECEBEMOS DE <EMITENTE> OS PRODUTOS" (preferido); a 1a linha do bloco so
+    e tratada como nome se for IGUAL a ele. Aceito so se a frase inteira fechar
+    a estrutura, com UF valida, municipio sem digitos e CEP na faixa da UF."""
+    nome = nome_emitente_canhoto(t)
+    linhas = _linhas_pos_canhoto(t)
+    if not nome or not linhas:
+        return None
+    corpo = linhas[1:] if _norm(linhas[0]) == _norm(nome) else linhas
+    fone = None
+    resto = []
+    for l in corpo:
+        mf = _FONE_LINHA.fullmatch(l)
+        if mf:
+            fone = fone or mf.group(1).strip()
+        else:
+            resto.append(l)
+    m = _ENDERECO_CORRIDO.match(re.sub(r'\s+', ' ', ' '.join(resto)).strip())
+    if not m:
+        return None
+    uf, mun, cep = m.group('uf').upper(), m.group('mun').strip(), _digitos(m.group('cep'))
+    if uf not in UFS or not val_municipio(mun) or not val_texto(m.group('logr')) or cep_confere_uf(cep, uf) is not True:
+        return None
+    partes = [p.strip() for p in re.split(r'\s+-\s+', m.group('bairro')) if p.strip()]
+    return {
+        'razao_social': nome, 'logradouro': m.group('logr').strip(), 'numero': m.group('num').strip(),
+        'complemento': ' - '.join(partes[:-1]) or None, 'bairro': partes[-1] if partes else None,
+        'municipio': mun, 'uf': uf, 'cep': cep, 'telefone': fone,
+    }
+
+
+def uf_antes_do_rotulo(sec: str, cep: Optional[str]) -> Optional[str]:
+    """UF impressa ANTES do proprio rotulo ("BA\\n\\nUF" - nota nº 35284, o
+    rotulo "UF" seguido de outro rotulo). Aceita so com o CEP lido do mesmo
+    bloco caindo na faixa da UF (contraprova estrutural)."""
+    m = re.search(r'(?m)^[ \t]*([A-Z]{2})[ \t]*\n\s*UF[ \t]*$', sec or '')
+    if not m or m.group(1) not in UFS or cep_confere_uf(cep, m.group(1)) is not True:
+        return None
+    return m.group(1)
+
+
+def _blocos_numericos(linhas: List[List[str]], n: int) -> Optional[List[List[List[List[str]]]]]:
+    """Agrupa as linhas numericas da tabela em faixas de N linhas. Cada faixa
+    com k>=2 valores por linha = k colunas lidas linha a linha. Uma sequencia
+    de linhas com UM valor e ambigua: N linhas = 1 coluna, ou 2N linhas = 2
+    colunas intercaladas linha a linha (o pdfminer junta caixas vizinhas -
+    nota nº 35284, BC ICMS / V. ICMS). Devolve, por trecho, as alternativas
+    de colunas; None se algum trecho nao for multiplo de N."""
+    trechos: List[List[List[str]]] = []
+    for toks in linhas:
+        if trechos and len(trechos[-1][0]) == len(toks):
+            trechos[-1].append(toks)
+        else:
+            trechos.append([toks])
+    alternativas = []
+    for tr in trechos:
+        if len(tr) % n:
+            return None
+        k = len(tr[0])
+        if k >= 2:
+            cols = []
+            for ini in range(0, len(tr), n):
+                faixa = tr[ini:ini + n]
+                cols.extend([[l[j] for l in faixa] for j in range(k)])
+            alternativas.append([cols])
+            continue
+        vals = [l[0] for l in tr]
+        m = len(vals) // n
+
+        def compor(pos: int) -> List[List[List[str]]]:
+            if pos == m:
+                return [[]]
+            saida = []
+            for c in (1, 2):
+                if pos + c > m:
+                    continue
+                bloco = vals[pos * n:(pos + c) * n]
+                cols = [bloco] if c == 1 else [bloco[0::2], bloco[1::2]]
+                saida.extend(cols + resto for resto in compor(pos + c))
+            return saida
+
+        alternativas.append(compor(0))
+    return alternativas
+
+
+def _fecha(a: float, b: float) -> bool:
+    """Igualdade monetaria com tolerancia de 1 centavo (arredondamento do
+    emissor: 6.019,98 x 18% = 1.083,5964 impresso 1.083,59)."""
+    return abs(round(a, 2) - round(b, 2)) <= 0.0101
+
+
+def itens_por_coluna(t: str) -> Tuple[List[Dict[str, object]], List[str]]:
+    """Itens da tabela "DADOS DOS PRODUTOS / SERVICOS" quando o pdfminer a
+    despeja COLUNA A COLUNA (nota nº 35284): N codigos entre "CODIGO" e
+    "DESCRICAO", o cabecalho, N descricoes, N NCM, N CST, N "CFOP UNID." e
+    depois as colunas numericas QUANT, V.UNIT, [V.DESC], V.TOTAL, BC ICMS,
+    V.ICMS, V.IPI, ALIQ.ICMS, ALIQ.IPI - algumas juntas numa linha por item
+    ("0,00 18,00 0,00") ou intercaladas (BC/V.ICMS).
+
+    Remonta as N linhas e so aceita se TODAS fecharem: QUANT x V.UNIT =
+    V.TOTAL (centavo), BC = V.TOTAL - V.DESC quando tributado, BC x ALIQ =
+    V.ICMS, BC zerada -> V.ICMS zerado. Cada agrupamento possivel das colunas
+    e testado; aceito so se exatamente UM resultado fechar. Os totais da grade
+    (soma V.TOTAL/V.DESC/BC/V.ICMS) sao conferidos pelo chamador. Qualquer
+    falha -> lista vazia + motivo."""
+    sec = secao(t, r'DADOS\s+DOS?\s+PRODUTOS?\s*/\s*SERVI[ÇC]OS?', r'C[ÁA]LCULO\s+DO\s+ISSQN|DADOS\s+ADICI')
+    linhas = [l.strip() for l in sec.split('\n') if l.strip()]
+    i_cod = next((i for i, l in enumerate(linhas) if re.match(r'C[ÓO]DIGO', l, re.IGNORECASE)), None)
+    i_des = next((i for i, l in enumerate(linhas) if re.match(r'DESCRI[ÇC][ÃA]O', l, re.IGNORECASE)), None)
+    if i_cod is None or i_des is None or i_des < i_cod:
+        return [], []
+    codigos = [l for l in linhas[i_cod + 1:i_des] if not _CAB_ITEM.match(l)]
+    n = len(codigos)
+    if n < 1 or not all(re.fullmatch(r'[\w.\-/]+', c) for c in codigos):
+        return [], []
+    i_ncm = next((i for i, l in enumerate(linhas) if i > i_des and re.fullmatch(r'\d{8}', l)), None)
+    if i_ncm is None or i_ncm - n <= i_des:
+        return [], []
+    # Formato coluna a coluna: N NCM em linhas proprias, seguidos.
+    if not all(re.fullmatch(r'\d{8}', l) for l in linhas[i_ncm:i_ncm + n]):
+        return [], []
+    descricoes = linhas[i_ncm - n:i_ncm]
+    cab = linhas[i_des:i_ncm - n]
+    if not _CAB_ITEM.match(cab[-1]) or any(_CAB_ITEM.match(d) for d in descricoes) \
+            or not all(val_texto(d) for d in descricoes):
+        return [], [f"{n} código(s) de produto sem {n} descrição(ões) de uma linha antes dos NCM - "
+                    "descrição quebrada ou cabeçalho não reconhecido"]
+    tem_desc = any(re.fullmatch(r'DESCONTO', l, re.IGNORECASE) for l in cab)
+    # Colunas de texto: NCM, CST, CFOP, UNID. em faixas de N linhas.
+    pos, cats = i_ncm, []
+    while len(cats) < 4:
+        faixa = [l.split() for l in linhas[pos:pos + n]]
+        if len(faixa) < n or len({len(f) for f in faixa}) != 1:
+            return [], ["colunas NCM/CST/CFOP/UNID. não formam faixas de uma linha por item"]
+        cats.extend([[f[j] for f in faixa] for j in range(len(faixa[0]))])
+        pos += n
+    if len(cats) != 4:
+        return [], ["colunas NCM/CST/CFOP/UNID. não fecham com o cabeçalho"]
+    ncms, csts, cfops, unids = cats
+    if not (all(re.fullmatch(r'\d{8}', v) for v in ncms) and all(re.fullmatch(r'\d{2,4}', v) for v in csts)
+            and all(re.fullmatch(r'\d{4}', v) for v in cfops)
+            and all(re.fullmatch(r'[A-Za-z][A-Za-z0-9]{0,5}\.?', v) for v in unids)):
+        return [], ["NCM/CST/CFOP/UNID. fora do tipo esperado"]
+    nums = []
+    for l in linhas[pos:]:
+        toks = l.split()
+        if not all(_NUM_CEL.match(x) for x in toks):
+            break
+        nums.append(toks)
+    n_num = 9 if tem_desc else 8
+    alternativas = _blocos_numericos(nums, n)
+    if alternativas is None:
+        return [], ["valores numéricos da tabela não formam faixas de uma linha por item"]
+    combinacoes: List[List[List[str]]] = [[]]
+    for alt in alternativas:
+        combinacoes = [c + a for c in combinacoes for a in alt]
+    resultados = []
+    for cols in combinacoes:
+        if len(cols) != n_num:
+            continue
+        itens = []
+        for i in range(n):
+            v = [num_br(c[i]) for c in cols]
+            if tem_desc:
+                qtd, vun, vdesc, vtot, bc, vicms, vipi, a1, a2 = v
+            else:
+                (qtd, vun, vtot, bc, vicms, vipi, a1, a2), vdesc = v, 0.0
+            if not _fecha(qtd * vun, vtot) or vdesc > vtot:
+                break
+            if bc and not _fecha(bc, vtot - vdesc):
+                break
+            if not bc and vicms:
+                break
+            fecha = [a for a in (a1, a2) if _fecha(bc * a / 100, vicms)]
+            if not fecha or (len(fecha) == 2 and a1 != a2):
+                break
+            aliq_icms = fecha[0]
+            aliq_ipi = a2 if aliq_icms == a1 else a1
+            if vipi and not _fecha(vtot * aliq_ipi / 100, vipi):
+                break
+            itens.append({
+                'codigo': codigos[i], 'descricao': re.sub(r'\s+', ' ', descricoes[i]), 'ncm': ncms[i],
+                'cst': csts[i], 'cfop': cfops[i], 'unidade': unids[i].rstrip('.'), 'quantidade': qtd,
+                'valor_unitario': vun, 'valor_total': vtot, 'valor_desconto': vdesc, 'bc_icms': bc,
+                'valor_icms': vicms, 'aliquota_icms': aliq_icms, 'valor_ipi': vipi, 'aliquota_ipi': aliq_ipi,
+            })
+        else:
+            if itens not in resultados:
+                resultados.append(itens)
+    if not resultados:
+        return [], [f"{n} item(ns) lidos coluna a coluna, mas nenhuma montagem das colunas numéricas fecha "
+                    "QUANT x V.UNIT = V.TOTAL, BC = V.TOTAL - DESC. e BC x ALÍQ. = V.ICMS em todos os itens"]
+    if len(resultados) > 1:
+        return [], [f"{n} item(ns) lidos coluna a coluna com mais de uma montagem possível das colunas - "
+                    "associação não confiável"]
+    return resultados[0], []
