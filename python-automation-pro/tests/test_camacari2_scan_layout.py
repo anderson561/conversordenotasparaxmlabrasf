@@ -121,10 +121,17 @@ def test_extract_camacari2_scan_layout(monkeypatch):
         # NFS-e tributada: ISS real de 6,5% = 35,75 sobre a base de 550,00 — NÃO
         # os valores trocados de linha que o OCR imprime ("Aliquota 35,75",
         # "ISS 6,5%"). O ISS é derivado de base × alíquota (imune à troca).
+        #
+        # Atualizado 2026-10-26 (regra fiscal do usuário): não existe alíquota
+        # de ISS acima de 5% (LC 116/2003 art. 8º, II) — a guarda geral de
+        # `parse` trata 6,5% como erro de leitura: alíquota vira sentinela 0 +
+        # aviso para conferência; o ISS lido (35,75) é mantido, nunca
+        # recalculado.
         val = nfse.valores
         assert val.valor_servicos == pytest.approx(550.00)
         assert val.base_calculo == pytest.approx(550.00)
-        assert val.aliquota == pytest.approx(0.065)
+        assert val.aliquota == pytest.approx(0.0)
+        assert any('acima do teto legal de 5%' in a for a in nfse.avisos)
         assert val.valor_iss == pytest.approx(35.75)
         assert val.valor_liquido_nfse == pytest.approx(550.00)
 
@@ -133,9 +140,14 @@ def test_extract_camacari2_scan_layout(monkeypatch):
         # "OPTANTE"->"PTANTE"); o rótulo "DESCRIÇÃO" corrompido é filtrado.
         assert nfse.discriminacao == "ERVIÇO DE DESINSETIZAÇÃO PARA TRAÇAS PTANTE PELO SIMPLES NACIONAL"
 
-        # Único aviso legítimo: o código de autenticidade é impresso em fonte
-        # fraca e sai ilegível no OCR (não fabricamos um valor errado).
-        assert nfse.avisos == ["Código de verificação/autenticidade não encontrado"]
+        # Avisos legítimos: o código de autenticidade é impresso em fonte
+        # fraca e sai ilegível no OCR (não fabricamos um valor errado); e a
+        # alíquota acima do teto legal (ver acima).
+        assert nfse.avisos == [
+            "Código de verificação/autenticidade não encontrado",
+            "Alíquota lida 6,50% acima do teto legal de 5% (LC 116/2003 art. 8º) "
+            "— erro de leitura, conferir na nota",
+        ]
     finally:
         if os.path.exists(dummy_path):
             os.remove(dummy_path)
