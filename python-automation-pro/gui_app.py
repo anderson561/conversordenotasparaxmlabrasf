@@ -3,6 +3,10 @@ import os
 import threading
 from datetime import datetime, date
 from src.main import run_batch_conversion, run_contrato_conversion, separar_por_formato
+from src.gui_selecao import (
+    LARGURA_DIALOGO, AnaliseArquivo, altura_dialogo, analise_de_notas, deve_mostrar_dialogo,
+    caminho_xml_arquivo_unico, montar_grupos, montar_paginas_por_arquivo, nao_selecionaveis,
+)
 from src.models.contrato_locacao_model import ContratoLocacao, EntidadeContrato
 from src.version import APP_VERSION
 from src.utils import auto_updater
@@ -521,7 +525,10 @@ def main(page: ft.Page):
         pulados = []     # PDFs protegidos que o usuário optou por não converter
         avisos_iniciais = []
 
-        def do_run(selected_pages=None):
+        def do_run(selected_pages=None, lote=None):
+            """`lote`: `(pdf_files, paginas_por_arquivo)` escolhido na janela de
+            seleção com vários PDFs (ver `src/gui_selecao.py`); `None` = lote
+            completo, como antes."""
             process_btn.disabled = True
             progress_bar.visible = True
             log_area.controls.clear()
@@ -573,7 +580,9 @@ def main(page: ft.Page):
                         if arquivo_unico:
                             from src.main import run_conversion
                             # Chama run_conversion direto se for um único arquivo, pois suporta selected_pages
-                            output_xml = os.path.join(out_dir, "temp.xml") # run_conversion espera o caminho do xml, embora vá gerar os corretos
+                            # Prefixo dos XMLs = nome do PDF ORIGINAL (antes: "temp.xml"
+                            # fixo -> "temp_Pagina_1_NF_<n>.xml"; achado real 2026-10-27).
+                            output_xml = caminho_xml_arquivo_unico(files_to_check[0], out_dir)
                             run_conversion(
                                 pdf_path=files_to_check[0],
                                 output_xml_path=output_xml,
@@ -584,7 +593,9 @@ def main(page: ft.Page):
                             )
                             update_progress(1.0, f"[+] Concluído! XMLs gerados em {out_dir}")
                         else:
-                            if pulados:
+                            if lote is not None:
+                                entrada = dict(pdf_files=list(lote[0]), paginas_por_arquivo=lote[1])
+                            elif pulados:
                                 entrada = dict(pdf_files=list(files_to_check))
                             else:
                                 entrada = dict(
@@ -613,7 +624,146 @@ def main(page: ft.Page):
 
             threading.Thread(target=run, daemon=True).start()
 
+        def analisar_varios():
+            """Vários PDFs: pré-analisa cada um numa thread (OCR pode ser lento),
+            com progresso no log, e — se algum tiver mais de uma nota válida —
+            mostra UMA janela com as notas agrupadas por arquivo. A lógica pura
+            (agrupamento, mapa arquivo->páginas, decisão de mostrar) fica em
+            `src/gui_selecao.py`, coberta por testes; este código Flet não é."""
+            from src.extractors.pdf_extractor import SPPdfExtractor
+
+            process_btn.disabled = True
+            progress_bar.visible = True
+            progress_bar.value = 0
+            log_area.controls.clear()
+            add_log(f"[*] Pré-analisando {len(files_to_check)} PDFs para seleção de notas...", "blue")
+            page.update()
+
+            def analisar():
+                analises = []
+                total = len(files_to_check)
+                try:
+                    for i, caminho in enumerate(files_to_check):
+                        nome = os.path.basename(caminho)
+                        progress_bar.value = i / total
+                        status_text.value = f"Pré-analisando ({i + 1}/{total}): {nome}"
+                        add_log(status_text.value)
+                        try:
+                            with pdf_desprotegido(caminho, senhas.get(caminho)) as pdf_legivel:
+                                nfse_list = SPPdfExtractor(pdf_legivel).parse_multiple()
+                            nfse_list, _ = separar_por_formato(nfse_list, format_dropdown.value)
+                            analise = analise_de_notas(caminho, nfse_list)
+                            add_log(f"    {nome}: {len(analise.notas)} nota(s) válida(s)")
+                        except Exception as ex:
+                            msg = (f"[AVISO] {nome}: não foi possível pré-analisar as páginas "
+                                   f"para oferecer seleção ({descrever_erro(ex)}); será convertido inteiro.")
+                            add_log(msg, "orange")
+                            avisos_iniciais.append(msg)
+                            analise = AnaliseArquivo(caminho=caminho, erro=descrever_erro(ex))
+                        analises.append(analise)
+                    progress_bar.value = 1.0
+                    page.update()
+                except Exception as ex:
+                    add_log(f"[ERRO] {descrever_erro(ex)}", "red")
+                    process_btn.disabled = False
+                    page.update()
+                    return
+
+                if not deve_mostrar_dialogo(analises):
+                    do_run()
+                    return
+                mostrar_selecao_varios(analises)
+
+            threading.Thread(target=analisar, daemon=True).start()
+
+        def mostrar_selecao_varios(analises):
+            checkboxes = []
+            controles = [ft.Text("Mais de uma nota válida encontrada. Marque as notas que deseja converter:")]
+            for grupo in montar_grupos(analises):
+                controles.append(ft.Text(grupo["titulo"], weight=ft.FontWeight.BOLD))
+                for item in grupo["itens"]:
+                    cb = ft.Checkbox(label=item["rotulo"], value=item["marcado"])
+                    cb.data = item["data"]  # (caminho, pagina)
+                    checkboxes.append(cb)
+                    controles.append(cb)
+            fora = nao_selecionaveis(analises)
+            if fora:
+                controles.append(ft.Text(
+                    "Convertidos inteiros (sem seleção): " + ", ".join(a.nome for a in fora),
+                    italic=True, size=12,
+                ))
+
+            def fechar():
+                dialog.open = False
+                page.update()
+
+            def converter_selecionadas(e):
+                marcados = [cb.data for cb in checkboxes if cb.value]
+                if not marcados:
+                    page.snack_bar = ft.SnackBar(ft.Text("Selecione ao menos uma nota."))
+                    page.snack_bar.open = True
+                    page.update()
+                    return
+                pdf_files, mapa, ignorados = montar_paginas_por_arquivo(files_to_check, analises, marcados)
+                for f in ignorados:
+                    avisos_iniciais.append(f"[AVISO] {os.path.basename(f)} IGNORADO (nenhuma nota marcada na seleção).")
+                fechar()
+                do_run(lote=(pdf_files, mapa))
+
+            def alternar_todas(e):
+                marcar = not all(cb.value for cb in checkboxes)
+                for cb in checkboxes:
+                    cb.value = marcar
+                page.update()
+
+            def converter_todas(e):
+                fechar()
+                do_run()
+
+            def cancelar(e):
+                fechar()
+                process_btn.disabled = False
+                progress_bar.visible = False
+                status_text.value = "Seleção cancelada."
+                add_log("[*] Seleção cancelada: nenhum arquivo foi convertido.", "orange")
+
+            acoes = ft.Row(
+                [
+                    ft.ElevatedButton(
+                        "Converter selecionadas", icon=ft.icons.CHECK,
+                        on_click=converter_selecionadas, bgcolor=ft.colors.GREEN_700,
+                    ),
+                    ft.TextButton("Marcar/limpar todas", on_click=alternar_todas),
+                    ft.TextButton("Converter todas as válidas", on_click=converter_todas),
+                    ft.TextButton("Cancelar", on_click=cancelar),
+                ],
+                wrap=True,
+            )
+            # Altura SEMPRE explícita, com teto e scroll (ver o comentário de
+            # 2026-09-16 no fluxo de arquivo único: `height=None` colapsa o
+            # AlertDialog no Flet desktop).
+            col_content = ft.Column(
+                controles + [ft.Divider(), acoes],
+                tight=True,
+                scroll=ft.ScrollMode.AUTO,
+            )
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Selecionar notas para conversão (vários PDFs)"),
+                content=ft.Container(
+                    content=col_content,
+                    height=altura_dialogo(analises),
+                    width=LARGURA_DIALOGO,
+                ),
+            )
+            page.overlay.append(dialog)
+            dialog.open = True
+            page.update()
+
         def analisar_e_rodar():
+            if not is_contrato and len(files_to_check) > 1:
+                analisar_varios()
+                return
             # Verifica se é um único arquivo PDF com múltiplas páginas
             if not is_contrato and arquivo_unico:
                 from src.extractors.pdf_extractor import SPPdfExtractor
