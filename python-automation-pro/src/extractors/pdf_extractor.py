@@ -96,6 +96,19 @@ LAYOUT_GERACAO_ENERGIA = 'geracao_energia' # Geração & Energia (Fatura de Loca
 LAYOUT_LOCONTAINERS = 'locontainers' # Locontainers (Vidal Locação de Containers)
 LAYOUT_TELECOM_COMUNICACAO = 'telecom_comunicacao' # NF-e Fatura de Serviço de Comunicação Eletrônica
 LAYOUT_OSASCO_REPASSE = 'osasco_nfr_repasse' # Osasco/SP - Nota Fiscal Eletrônica de Repasse (NF-R), ex: iFood Benefícios
+# Osasco/SP - NFS-e PADRÃO da Prefeitura ("PREFEITURA DO MUNICÍPIO DE OSASCO /
+# Nota Fiscal de Serviços Eletrônica (NFS-e)"), NÃO a NF-R de repasse acima:
+# blocos "PRESTADOR DO SERVIÇO"/"TOMADOR DO SERVIÇO" (a NF-R usa EMITENTE/
+# RECEPTOR), grade de ISS (Valor Total do Serviço / Base de Cálculo (ISS) /
+# Alíq. ISS / Valor ISS a Recolher), retenções federais, "Autenticador" e
+# "Chave NFS-e" de 50 dígitos. Achado real 2026-10-26 (Scan2026-10-26_095816,
+# pág. 3, nota nº 0031865893, IFOOD.COM AGENCIA DE RESTAURANTES ONLINE S.A. ->
+# RG RESTAURANTE LTDA): a página caía em LAYOUT_GENERICO e era DESCARTADA
+# ("Layout não reconhecido"), sem XML nenhum. Os rótulos de entidade
+# ("Razão Social:", "CNPJ/CPF:", "Endereço:", "Município:", "UF:") são os
+# mesmos da NF-R, por isso a extração de entidade é compartilhada
+# (`_extrair_entidade_osasco_repasse`, âncoras de bloco por layout).
+LAYOUT_OSASCO_NFSE = 'osasco_nfse'
 LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretaria Municipal de Finanças)
 # João Pessoa/PB - NFS-e oficial da Secretaria da Receita Municipal ("Nota
 # Fiscal de Serviços Eletrônica NFSe - Prestador"). PDF ESCANEADO (OCR).
@@ -932,6 +945,14 @@ class SPPdfExtractor:
             return LAYOUT_TELECOM_COMUNICACAO
         if re.search(r'Nota\s+Fiscal\s+Eletr[oô]nica\s+de\s+(?:Servi[cç]os\s+)?Repasse|nfe\.osasco\.(?:sp\.)?gov\.br', t, re.IGNORECASE):
             return LAYOUT_OSASCO_REPASSE
+        # NFS-e padrão de Osasco (ver LAYOUT_OSASCO_NFSE) - checada DEPOIS da
+        # NF-R: o rodapé desta nota cita "Emissão de Notas de Repasse - Série
+        # R2", mas não o título "Nota Fiscal Eletrônica de Repasse" da NF-R.
+        # Exige o cabeçalho da Prefeitura E um rótulo estrutural do template
+        # (a cidade sozinha aparece em qualquer nota de prestador osasquense).
+        if re.search(r'PREFEITURA\s+DO\s+MUNIC[IÍ]PIO\s+DE\s+OSASCO', t, re.IGNORECASE) and re.search(
+                r'PRESTADOR\s+DO\s+SERVI[CÇ]O|Chave\s+NFS-?e|Autenticador\s*:', t, re.IGNORECASE):
+            return LAYOUT_OSASCO_NFSE
         if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
             return LAYOUT_CAMPINAS
         # João Pessoa/PB (NFSe oficial da Secretaria da Receita Municipal) -
@@ -1438,6 +1459,14 @@ class SPPdfExtractor:
             return LAYOUT_TELECOM_COMUNICACAO
         if re.search(r'Nota\s+Fiscal\s+Eletr[oô]nica\s+de\s+(?:Servi[cç]os\s+)?Repasse|nfe\.osasco\.(?:sp\.)?gov\.br', t, re.IGNORECASE):
             return LAYOUT_OSASCO_REPASSE
+        # NFS-e padrão de Osasco (ver LAYOUT_OSASCO_NFSE) - checada DEPOIS da
+        # NF-R: o rodapé desta nota cita "Emissão de Notas de Repasse - Série
+        # R2", mas não o título "Nota Fiscal Eletrônica de Repasse" da NF-R.
+        # Exige o cabeçalho da Prefeitura E um rótulo estrutural do template
+        # (a cidade sozinha aparece em qualquer nota de prestador osasquense).
+        if re.search(r'PREFEITURA\s+DO\s+MUNIC[IÍ]PIO\s+DE\s+OSASCO', t, re.IGNORECASE) and re.search(
+                r'PRESTADOR\s+DO\s+SERVI[CÇ]O|Chave\s+NFS-?e|Autenticador\s*:', t, re.IGNORECASE):
+            return LAYOUT_OSASCO_NFSE
         if re.search(r'NFSe\s+Campinas|Prefeitura\s+Municipal\s+Campinas|Nota\s+Fiscal\s+de\s+Servi[cç]os\s+eletr[oôó0]nica\s+de\s+Campinas', t, re.IGNORECASE):
             return LAYOUT_CAMPINAS
         # João Pessoa/PB (NFSe oficial da Secretaria da Receita Municipal) -
@@ -1838,9 +1867,14 @@ class SPPdfExtractor:
                     mes_str, ano_str = m.group(1).split('/')
                     result = datetime(int(ano_str), int(mes_str), 1)
                 except: pass
-        elif layout == LAYOUT_OSASCO_REPASSE:
+        elif layout in (LAYOUT_OSASCO_REPASSE, LAYOUT_OSASCO_NFSE):
             # "Ref. Fiscal 06/2026" (cabeçalho) — rótulo não reconhecido pelo
             # fallback genérico, que só busca "Competência"/"Referência"/"Fato Gerador".
+            # Decisão do usuário (2026-10-26, NFS-e nº 0031865893 iFood): a
+            # Ref. Fiscal impressa PREVALECE sobre o mês da emissão em todo o
+            # layout Osasco (NFS-e "Ref. Fiscal: 08/2026" emitida 06/09/2026
+            # -> Competência 2026-08-01). No OCR da NFS-e o valor vem na linha
+            # de baixo do rótulo (grade) — o `\s*` já cruza a quebra.
             m = re.search(r'Ref\.?\s*Fiscal\s*:?\s*(\d{1,2})/(\d{4})', t, re.IGNORECASE)
             if m:
                 try:
@@ -2242,6 +2276,19 @@ class SPPdfExtractor:
             m = re.search(r'Emiss[ãa]o\s*:?\s*[\n\s]*(\d{2}/\d{2}/\d{4})', t, re.IGNORECASE)
             if m:
                 res = _parse_dmy(m.group(1))
+                if res: return res
+
+        if self.layout == LAYOUT_OSASCO_NFSE:
+            # Rodapé da grade: "Emissão: 06/09/2026 11:04:49" (data+hora). O
+            # texto livre "Nota fiscal emitida em 06/09/2026 às 07:04" traz
+            # OUTRA hora (07:04) — não é o campo rotulado, por isso NÃO usa o
+            # atalho "emitida em ... às" do NF-R. Sem a hora, cai no
+            # cabeçalho ("Nota Nº ... <número> <data>").
+            m = re.search(r'Emiss[ãa]o\s*:?\s*\|?\s*(?:Emiss[ãa]o\s*:?\s*)?(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})', t, re.IGNORECASE)
+            if not m:
+                m = re.search(r'Nota\s+N[º°o][\s\S]{0,200}?\b\d{6,12}\s+(\d{2}/\d{2}/\d{4})()', t, re.IGNORECASE)
+            if m:
+                res = _parse_dmy(m.group(1), m.group(2) or None)
                 if res: return res
 
         if self.layout == LAYOUT_OSASCO_REPASSE:
@@ -3192,6 +3239,18 @@ class SPPdfExtractor:
             m = re.search(r'FATURA\s+DE\s+LOCA[CÇ][AÃ]O\s*[\n\s]*N[ºo]\s*[:\s]*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
 
+        if self.layout == LAYOUT_OSASCO_NFSE:
+            # Grade do cabeçalho com rótulos numa linha e valores na seguinte
+            # ("Nota Nº; Emissão: érie: RPSNº:\n\n0031865893 06/09/2026" no
+            # OCR real): o número é a corrida de dígitos colada à data de
+            # emissão. Mantido como impresso (zeros à esquerda), mesma
+            # convenção do NF-R ("Nota Nº: 02479318"). Sem o cabeçalho,
+            # cai no nNFSe (13 dígitos) da "Chave NFS-e" de 50 dígitos.
+            m = re.search(r'Nota\s+N[º°o][\s\S]{0,200}?\b(\d{6,12})\s+\d{2}/\d{2}/\d{4}', t, re.IGNORECASE)
+            if m: return m.group(1)
+            chave = self._chave_osasco_nfse()
+            if chave: return str(int(chave[23:36]))
+
         if self.layout == LAYOUT_OSASCO_REPASSE:
             # Ordem invertida do padrão usual ("Número da Nota"): "Nota No.: 2440738"
             # ou "Nota Nº: 02479318" (variações vistas em documentos reais). No
@@ -3550,6 +3609,32 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             return self._extrair_discriminacao_feira_nacional()
         t = self.raw_text
+        if self.layout == LAYOUT_OSASCO_NFSE:
+            # "Discriminação do Servico:" até a próxima célula da grade. A
+            # faixa em branco abaixo do texto carrega anotações à caneta/
+            # carimbo (achado real: "OK" + carimbo vermelho -> ". A\ndio Wo
+            # alo fu)" no OCR) — corta sempre antes de "Local. Incid." / da
+            # grade de valores, e na 1ª linha sem nenhuma palavra de 3+
+            # letras (ruído de rabisco). Linhas da grade NBS/Classif. Trib.,
+            # que o OCR às vezes intercala, são descartadas.
+            m = re.search(
+                r'Discrimina[çc][ãa]o\s+do\s+Servi[çc]o\s*:?\s*\n(.*?)'
+                r'(?=Local\.?\s+Incid|Valor\s+Total\s+do\s+Servi[çc]o|Tributa[çc][ãa]o\s+Federal|$)',
+                t, re.IGNORECASE | re.DOTALL)
+            if m:
+                linhas = []
+                for ln in m.group(1).split('\n'):
+                    ln_clean = ln.strip()
+                    if re.match(r'NBS\s*:|Classif\.?\s+Trib', ln_clean, re.IGNORECASE):
+                        continue
+                    if not ln_clean:
+                        continue
+                    if not re.search(r'[A-Za-zÀ-ú]{3,}', ln_clean):
+                        break
+                    linhas.append(ln_clean)
+                if linhas:
+                    return re.sub(r'\s+', ' ', " ".join(linhas)).strip()
+
         if self.layout == LAYOUT_JOAO_PESSOA:
             # Bloco "DESCRIÇÃO DO SERVIÇO PRESTADO" (sem parêntese de nota
             # explicativa, ao contrário do Campinas — por isso não
@@ -4258,6 +4343,13 @@ class SPPdfExtractor:
             return _nota_loc.ITEM_LOCACAO
         if self.layout in _LAYOUTS_SAUBARA:
             return self._saubara_campos().codigo_servico
+        if self.layout == LAYOUT_OSASCO_NFSE:
+            # "Cód. do Serviço: 10.02 - Agenciamento, ..." (item LC 116 NN.NN).
+            # Ancorado no rótulo: o "NBS: 1.0905.11.00" logo abaixo também
+            # tem pedaços no formato NN.NN.
+            m = re.search(r'C[óo]d\.?\s+do\s+Servi[çc]o\s*:?\s*(\d{1,2})\.(\d{2})\b', t, re.IGNORECASE)
+            if m:
+                return m.group(1).zfill(2) + m.group(2)
         if self.layout == LAYOUT_RIBEIRAO_PRETO:
             # "| Código CNAE | Item LC 116/2003 Cód. NBS | Atividade do
             # Município\n| 6911701 17.14 1.1301.20.00 | ...". Ancorado no
@@ -4941,6 +5033,16 @@ class SPPdfExtractor:
                 if m_cod:
                     return m_cod.group(1).upper()
             m = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4})\b', t)
+            if m:
+                return m.group(1).upper()
+
+        if self.layout == LAYOUT_OSASCO_NFSE:
+            # "Autenticador: HYMUXRDB" é o código de verificação impresso da
+            # NFS-e de Osasco (mesmo papel do "Cód. de Autenticidade" do NF-R
+            # abaixo e do "Código de Verificação" de São Paulo). A "Chave
+            # NFS-e" de 50 dígitos é o identificador da nota (fonte de
+            # conferência do número), não o código de verificação.
+            m = re.search(r'Autenticador\s*:?\s*([A-Z0-9]{6,12})\b', t, re.IGNORECASE)
             if m:
                 return m.group(1).upper()
 
@@ -5670,7 +5772,7 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_SAO_PAULO and not is_intermediario and re.search(r'Bairro\s*:', t, re.IGNORECASE):
             return self._extrair_entidade_sao_paulo(is_prestador)
 
-        if self.layout == LAYOUT_OSASCO_REPASSE:
+        if self.layout in (LAYOUT_OSASCO_REPASSE, LAYOUT_OSASCO_NFSE):
             if is_intermediario:
                 return None
             return self._extrair_entidade_osasco_repasse(is_prestador)
@@ -14849,6 +14951,80 @@ class SPPdfExtractor:
             telefone=telefone,
         )
 
+    def _chave_osasco_nfse(self) -> Optional[str]:
+        """"Chave NFS-e" da NFS-e padrão de Osasco: "NFS" + 50 dígitos no
+        mesmo leiaute do Identificador nacional (cMun 7 | amb 1 | tpInsc 1 |
+        CNPJ 14 | nNFSe 13 | AAMM 4 | código 9 | DV 1). Só devolve a chave
+        se o cMun for o de Osasco (3534401) — guarda contra janela
+        deslocada/dígito perdido no OCR."""
+        m = re.search(r'NFS\s*((?:\d\s?){50})', self.raw_text)
+        if not m:
+            return None
+        chave = re.sub(r'\D', '', m.group(1))
+        return chave if len(chave) == 50 and chave.startswith('3534401') else None
+
+    def _extrair_valores_osasco_nfse(self) -> Valores:
+        """Grade de valores da NFS-e padrão de Osasco (LAYOUT_OSASCO_NFSE):
+
+            Valor Total do Serviço  Base de Cálculo (ISS)  Alíq. ISS  Valor ISS a Recolher
+            2.733,82                2.733,82               2,00%      54,68
+            Tributação Federal - Impostos Retidos na Fonte
+            Pis: 0,00 Cofins: 0,00 CSLL: 0,00 IRRF: 0,00 INSS: 0,00 Outros: 0,00
+            Tributação Federal - Impostos Não Retidos PIS: 45,11 Cofins: 207,77
+            ... Valor Total da Nota: 2.733,82
+
+        Só os RETIDOS vão para as tags de retenção ABRASF (os "Não Retidos"
+        são informativos, como em todo layout). ISS não retido: o rodapé diz
+        "ISS Devido pelo Prestador ... 'ISS Auto-Lançado'". O "Desconto
+        incondicional" aparece só no texto da discriminação (não na grade de
+        valores) — não é deduzido de nenhum valor impresso."""
+        t = self.raw_text
+        num = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+        valor_serv = base = iss = 0.0
+        aliquota = 0.0
+        m = re.search(
+            r'Valor\s+Total\s+do\s+Servi[cç]o[^\n]*?Valor\s+ISS[^\n]*\n+\s*'
+            + num + r'\s+' + num + r'\s+(\d{1,2},\d{1,4})\s*%\s+' + num,
+            t, re.IGNORECASE)
+        if m:
+            valor_serv = self._parse_valor(m.group(1))
+            base = self._parse_valor(m.group(2))
+            aliquota = self._parse_valor(m.group(3)) / 100.0
+            iss = self._parse_valor(m.group(4))
+
+        m_tot = re.search(r'Valor\s+Total\s+da\s+Nota\s*:?\s*' + num, t, re.IGNORECASE)
+        total_nota = self._parse_valor(m_tot.group(1)) if m_tot else 0.0
+        if not valor_serv:
+            valor_serv = total_nota
+        if not base and valor_serv and aliquota:
+            base = valor_serv
+
+        # Bloco dos RETIDOS: do título até o título dos "Não Retidos" (lá
+        # PIS/Cofins repetem os rótulos com os valores informativos).
+        m_ret = re.search(r'Impostos\s+Retidos\s+na\s+Fonte(.*?)(?=Impostos\s+N[ãa]o\s+Retidos|Base\s+de\s+C[áa]lculo\s+IVA|$)',
+                          t, re.IGNORECASE | re.DOTALL)
+        ret = m_ret.group(1) if m_ret else ''
+        # "Outros: 0,00" pode cair fora do bloco no OCR (fim da página).
+        m_outros = re.search(r'Outros\s*:\s*' + num, ret, re.IGNORECASE) or \
+            re.search(r'\bOutros\s*:\s*' + num, t, re.IGNORECASE)
+
+        def _ret(rotulo: str) -> float:
+            m_r = re.search(rotulo + r'\s*:\s*' + num, ret, re.IGNORECASE)
+            return self._parse_valor(m_r.group(1)) if m_r else 0.0
+
+        pis, cofins, csll = _ret(r'\bPis'), _ret(r'\bCofins'), _ret(r'\bCSLL')
+        ir, inss = _ret(r'\bIRRF'), _ret(r'\bINSS')
+        outras = self._parse_valor(m_outros.group(1)) if m_outros else 0.0
+        liquido = round(valor_serv - (pis + cofins + csll + ir + inss + outras), 2)
+        return Valores(
+            valor_servicos=valor_serv,
+            valor_pis=pis, valor_cofins=cofins, valor_csll=csll,
+            valor_ir=ir, valor_inss=inss, outras_retencoes=outras,
+            iss_retido=False, valor_iss=iss,
+            base_calculo=base, aliquota=aliquota,
+            valor_liquido_nfse=liquido,
+        )
+
     def _extrair_entidade_osasco_repasse(self, is_prestador: bool) -> Entidade:
         """Extrai EMITENTE/RECEPTOR do layout Osasco/SP (Nota Fiscal Eletrônica
         de Repasse - NF-R, ex: iFood Benefícios e Serviços Ltda). Campos em
@@ -14858,7 +15034,15 @@ class SPPdfExtractor:
         t = self.raw_text
         tipo_label = "Prestador" if is_prestador else "Tomador"
 
-        if is_prestador:
+        if self.layout == LAYOUT_OSASCO_NFSE:
+            # NFS-e padrão (LAYOUT_OSASCO_NFSE): mesmos rótulos "Rótulo: valor"
+            # do NF-R, mas os blocos são "PRESTADOR DO SERVIÇO" / "TOMADOR DO
+            # SERVIÇO", e o do tomador termina no "Cód. do Serviço".
+            if is_prestador:
+                m_bloco = re.search(r'PRESTADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=TOMADOR\s+DO\s+SERVI[CÇ]O|$)', t, re.IGNORECASE | re.DOTALL)
+            else:
+                m_bloco = re.search(r'TOMADOR\s+DO\s+SERVI[CÇ]O(.*?)(?=C[óo]d\.?\s+do\s+Servi[cç]o|DISCRIMINA[CÇ][AÃ]O|$)', t, re.IGNORECASE | re.DOTALL)
+        elif is_prestador:
             m_bloco = re.search(r'EMITENTE(.*?)(?=RECEPTOR|$)', t, re.IGNORECASE | re.DOTALL)
         else:
             m_bloco = re.search(r'RECEPTOR(.*?)(?=DISCRIMINA[CÇ][AÃ]O|IMPOSTOS\s+ADICIONAIS|$)', t, re.IGNORECASE | re.DOTALL)
@@ -14885,7 +15069,14 @@ class SPPdfExtractor:
         # O ":" após "Município"/"UF" nem sempre aparece no texto extraído da
         # tabela (varia até dentro do mesmo documento, entre EMITENTE/RECEPTOR).
         m_end = re.search(r'Endere[cç]o\s*:\s*(.+?)(?=Munic[ií]pio\s*:?|\n\s*UF\b|$)', bloco, re.IGNORECASE | re.DOTALL)
-        end_data = self._parse_endereco_livre_osasco(m_end.group(1)) if m_end else {
+        end_raw = m_end.group(1) if m_end else ''
+        if self.layout == LAYOUT_OSASCO_NFSE and end_raw:
+            # "R Rodovia BA-535, 0 - Industrial - 42800-938 - País: BRASIL":
+            # o sufixo "- País: ..." impede o CEP de ser o fim da string, e
+            # o OCR lê o número "0" como a letra "O" (", O - Industrial").
+            end_raw = re.sub(r'\s*-?\s*Pa[ií]s\s*:.*$', '', end_raw.strip(), flags=re.IGNORECASE | re.DOTALL)
+            end_raw = re.sub(r',\s*[Oo]\s*(?=-|,|$)', ', 0 ', end_raw)
+        end_data = self._parse_endereco_livre_osasco(end_raw) if m_end else {
             'logradouro': 'Não informado', 'numero': 'S/N', 'bairro': 'Não informado', 'cep': '00000000'
         }
 
@@ -17720,6 +17911,9 @@ class SPPdfExtractor:
                 valor_servicos=v, valor_liquido_nfse=v,
                 base_calculo=0.0, valor_iss=0.0, aliquota=0.0
             )
+
+        if self.layout == LAYOUT_OSASCO_NFSE:
+            return self._extrair_valores_osasco_nfse()
 
         if self.layout == LAYOUT_OSASCO_REPASSE:
             # NF-R de repasse: não discrimina Base de Cálculo/Alíquota/ISS (regime
