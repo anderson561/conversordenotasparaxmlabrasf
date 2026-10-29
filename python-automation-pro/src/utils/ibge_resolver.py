@@ -74,6 +74,14 @@ class IBGEResolver:
         "FEIRA DE SANTANA": "2910800",
         "BARREIRAS": "2903201",
         "OSASCO": "3534401",
+        # Extrema/MG - locador da "FATURA DE LOCAÇÃO" com PERÍODO DE REFERÊNCIA
+        # (LAYOUT_FATURA_LOCACAO_PERIODO, EXTREMA LOCACAO DE EQUIPAMENTOS LTDA,
+        # 2026-10-28); sem a entrada caía no fallback de Belo Horizonte. Código
+        # conferido na API oficial do IBGE (servicodados.ibge.gov.br/api/v1/
+        # localidades/municipios/3125101 -> "Extrema", MG; único município
+        # com esse nome no país). LAYOUT_NEOTAGUS_LOCACAO já usava o mesmo
+        # código fixo.
+        "EXTREMA": "3125101",
         "CUIABA": "5103403", "CUIABÁ": "5103403",
         "CAMPINA GRANDE": "2504009",
         "CAMPINAS": "3509502",
@@ -140,6 +148,12 @@ class IBGEResolver:
         # (LAYOUT_NOTA_LOCACAO, nota nº 1245, achado real 2026-10-16); código
         # conferido na API do IBGE (municipios/2910057 -> "Dias d'Ávila", BA).
         "DIAS D AVILA": "2910057",
+        # Mundo Novo/BA - prestador da DANFSe v2.0 nº 75 (RODRIGO GONCALVES DA
+        # SILVA, "nfs 16.10.pdf" pág. 2, foto, achado real 2026-10-26): o
+        # "Código IBGE / CEP" impresso (29.22102) sai ilegível no OCR. Código
+        # conferido na API do IBGE (municipios/2922102 -> "Mundo Novo", BA);
+        # homônimos de GO/MS barrados pelo prefixo de UF na validação.
+        "MUNDO NOVO": "2922102",
         # João Pessoa/PB - prestador do LAYOUT_JOAO_PESSOA (nota nº 1001671,
         # ESPACO A COMERCIO DE MOVEIS LTDA, achado real 2026-09-23). Já era o
         # fallback de capital de "PB" em DEFAULT_CODES_BY_UF, mas sem esta
@@ -160,12 +174,6 @@ class IBGEResolver:
         # de Santana de Parnaíba (3547304) - confirmado na fonte oficial do
         # IBGE (cidades.ibge.gov.br/brasil/sp/santana-de-parnaiba).
         "SANTANA DE PARNAIBA": "3547304", "SANTANA DE PARNAÍBA": "3547304",
-        # Bragança Paulista/SP - emitente do DANFE nº 478012 (STONE BUILDING SA
-        # INDUSTRIA E COMERCIO, achado real 2026-10-28). Sem esta entrada caía
-        # no fallback silencioso da capital (São Paulo, 3550308). Código
-        # conferido na API oficial do IBGE (servicodados.ibge.gov.br/api/v1/
-        # localidades/municipios/3507605 -> "Bragança Paulista", UF SP).
-        "BRAGANCA PAULISTA": "3507605", "BRAGANÇA PAULISTA": "3507605",
         # Candeias/BA - município do tomador da nota nº 6013 (CLINICA MEDICINA
         # HUMANA LTDA -> MASSA ALIMENTAÇÃO E SERVIÇOS S/A, layout Camaçari
         # escaneado, achado real 2026-10-08). Sem esta entrada caía no
@@ -190,6 +198,14 @@ class IBGEResolver:
         # em /estados/BA/municipios) e impresso na própria nota ("COD.
         # MUNICIPIO GERADOR 2929750BA").
         "SAUBARA": "2929750",
+        # Bragança Paulista/SP - prestador do LAYOUT_FATURA_LOCACAO_EQUIPAMENTOS
+        # (fatura de locação nº 15827, IVAN BARBOZA CORREA, achado real
+        # 2026-10-28; também emitente do DANFE nº 478012, STONE BUILDING SA
+        # INDUSTRIA E COMERCIO). Sem esta entrada caía no fallback da capital
+        # da UF (São Paulo, 3550308). Código 3507605 conferido na API oficial do IBGE
+        # (servicodados.ibge.gov.br/api/v1/localidades/municipios/3507605 ->
+        # "Bragança Paulista", UF SP).
+        "BRAGANCA PAULISTA": "3507605", "BRAGANÇA PAULISTA": "3507605",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
