@@ -174,6 +174,14 @@ class IBGEResolver:
         # de Santana de Parnaíba (3547304) - confirmado na fonte oficial do
         # IBGE (cidades.ibge.gov.br/brasil/sp/santana-de-parnaiba).
         "SANTANA DE PARNAIBA": "3547304", "SANTANA DE PARNAÍBA": "3547304",
+        # Birigui/SP (DANFE nº 946, MUNDIAL INDUSTRIA METALURGICA) - emitente,
+        # achado real 2026-10-29. Sem esta entrada caía no fallback da capital
+        # da UF. Código conferido na API oficial do IBGE (servicodados.ibge.
+        # gov.br/api/v1/localidades/municipios/3506508 -> "Birigui", SP).
+        # Extrema/MG (DANFE nº 44986, COMERCIAL CASA DA LAVOURA) já está
+        # registrada acima (3125101); Bragança Paulista/SP (DANFE nº 478012)
+        # está mais abaixo (3507605).
+        "BIRIGUI": "3506508",
         # Candeias/BA - município do tomador da nota nº 6013 (CLINICA MEDICINA
         # HUMANA LTDA -> MASSA ALIMENTAÇÃO E SERVIÇOS S/A, layout Camaçari
         # escaneado, achado real 2026-10-08). Sem esta entrada caía no

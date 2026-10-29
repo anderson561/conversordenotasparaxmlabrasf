@@ -319,6 +319,12 @@ def transportador_por_rotulos(t: str) -> Optional[Dict[str, Optional[str]]]:
         'peso_bruto': m_peso.group(1) if m_peso else None,
         'peso_liquido': m_peso.group(2) if m_peso else None,
     }
+    if r['frete_por_conta'] is None:
+        # "9 - SEM FRETE" numa linha propria longe do rotulo (nota nº 44986).
+        r['frete_por_conta'] = frete_por_extenso(sec)
+    if not m_peso:
+        # Pesos sem "kg", rotulos em ordem trocada (nota nº 946).
+        r['peso_bruto'], r['peso_liquido'] = pesos_bruto_liquido(sec)
     if not any(r.values()):
         return None
     return r
@@ -335,3 +341,517 @@ def dados_adicionais_sem_rotulo(t: str) -> Optional[str]:
         return None
     linhas = [l.strip() for l in m.group(1).split('\n') if l.strip()]
     return '\n'.join(linhas) or None
+
+
+# ===========================================================================
+# Ampliacao 2026-10-29 - notas nº 946 (MUNDIAL INDUSTRIA METALURGICA, Birigui/
+# SP) e nº 44986 (COMERCIAL CASA DA LAVOURA, Extrema/MG), dois geradores de
+# DANFE digital diferentes do Minerion e da GRAN COFFEE. Mesma filosofia:
+# leitura pela ESTRUTURA do DANFE (rotulos padronizados, tipos, identidades
+# aritmeticas impressas), nunca pelo nome do emitente; o que nao fecha vira
+# None (o chamador avisa), nunca um valor plausivel porem errado.
+# ===========================================================================
+
+# Faixas de CEP por UF (Correios) - contraprova estrutural de CEP x UF lidos.
+_CEP_FAIXAS = (
+    ('SP', 1000, 19999), ('RJ', 20000, 28999), ('ES', 29000, 29999), ('MG', 30000, 39999),
+    ('BA', 40000, 48999), ('SE', 49000, 49999), ('PE', 50000, 56999), ('AL', 57000, 57999),
+    ('PB', 58000, 58999), ('RN', 59000, 59999), ('CE', 60000, 63999), ('PI', 64000, 64999),
+    ('MA', 65000, 65999), ('PA', 66000, 68899), ('AP', 68900, 68999), ('AM', 69000, 69299),
+    ('RR', 69300, 69399), ('AM', 69400, 69899), ('AC', 69900, 69999), ('DF', 70000, 72799),
+    ('GO', 72800, 72999), ('DF', 73000, 73699), ('GO', 73700, 76799), ('RO', 76800, 76999),
+    ('TO', 77000, 77999), ('MT', 78000, 78899), ('MS', 79000, 79999), ('PR', 80000, 87999),
+    ('SC', 88000, 89999), ('RS', 90000, 99999),
+)
+
+
+def cep_confere_uf(cep: Optional[str], uf: Optional[str]) -> Optional[bool]:
+    """True/False se o CEP (8 digitos) cai/nao cai na faixa dos Correios da UF;
+    None quando falta um dos dois."""
+    d = _digitos(cep)
+    if len(d) != 8 or not uf:
+        return None
+    pref = int(d[:5])
+    return any(u == uf.upper() and ini <= pref <= fim for u, ini, fim in _CEP_FAIXAS)
+
+
+def nome_emitente_canhoto(t: str) -> Optional[str]:
+    """Razao social do emitente pela frase padrao do canhoto "RECEBEMOS DE
+    <EMITENTE> OS PRODUTOS ...". Usada quando o letterhead nao traz o nome
+    como TEXTO (nota nº 946: o nome e desenhado, o pdfminer so ve o endereco)."""
+    m = re.search(r'RECEBEMOS\s+DE\s+(.+?)\s*OS\s+PRODUTOS', t or '', re.IGNORECASE)
+    if not m:
+        return None
+    nome = m.group(1).strip(' -,')
+    return nome if val_texto(nome) else None
+
+
+def _norm(s: Optional[str]) -> str:
+    return re.sub(r'[^A-Z0-9]', '', (s or '').upper())
+
+
+_TIPO_LOGRADOURO = re.compile(
+    r'^(?:RUA|R\.|AV\.?|AVEN(?:IDA)?|ROD(?:OVIA)?\.?|ESTR(?:ADA)?\.?|AL(?:AMEDA)?\.?|TRAV(?:ESSA)?\.?|'
+    r'PRA[ÇC]A|P[ÇC]A\.?|LARGO|VIA|BR|SP|MG|BA|LOTEAMENTO|QUADRA|SITIO|S[ÍI]TIO|FAZENDA)\b', re.IGNORECASE)
+
+
+def _endereco_letterhead(linhas: List[str]) -> Optional[Tuple[str, Optional[str], Optional[str], Optional[str]]]:
+    """Linhas de endereco do letterhead (entre o nome e "<MUNICIPIO>-<UF>") ->
+    (logradouro, numero, complemento, bairro). A linha com ", <numero>" fecha
+    o logradouro (linhas anteriores sao a quebra do proprio logradouro: "RUA
+    RUA MANOEL SEGUNDO" / "CELICE, 540"); o que vem depois do numero na mesma
+    linha, separado por " - ", e [complemento -] bairro; linha seguinte
+    inteira e o bairro. Complemento NUNCA e juntado ao logradouro."""
+    idx = next((i for i, l in enumerate(linhas)
+                if re.search(r',\s+(?:\d+[A-Z]?|S\s*/?\s*N)\b', l, re.IGNORECASE)), None)
+    if idx is None:
+        return None
+    m = re.match(r'^(.*?),\s+(\d+[A-Z]?|S\s*/?\s*N)\b(.*)$', linhas[idx], re.IGNORECASE)
+    if not m:
+        return None
+    logradouro = re.sub(r'\s+', ' ', ' '.join(linhas[:idx] + [m.group(1)])).strip()
+    if not val_texto(logradouro):
+        return None
+    numero = m.group(2).strip()
+    cauda = m.group(3).strip().strip('-,').strip()
+    partes = [p.strip() for p in re.split(r'\s+-\s+|,\s+', cauda) if p.strip()] if cauda else []
+    resto = linhas[idx + 1:]
+    complemento, bairro = None, None
+    if resto:
+        bairro = resto[0]
+        complemento = ' - '.join(partes) or None
+        if len(resto) > 1:
+            return None  # linhas sobrando: estrutura nao reconhecida, sem chute
+    elif partes:
+        bairro = partes[-1]
+        complemento = ' - '.join(partes[:-1]) or None
+    return logradouro, numero, complemento, bairro
+
+
+def _linha_municipio_uf(l: str) -> Optional[Tuple[str, str, str]]:
+    """"BIRIGUI-SP" ou "EXTREMA - MG - 37640-000 - (35)3435-1586" ->
+    (municipio, uf, resto)."""
+    mm = re.fullmatch(r'(.+?)\s*[-/]\s*([A-Z]{2})(?:\s+-\s+(.*))?', l.strip())
+    if mm and mm.group(2) in UFS and val_municipio(mm.group(1)):
+        return mm.group(1).strip(), mm.group(2), (mm.group(3) or '').strip()
+    return None
+
+
+def emitente_letterhead_livre(t: str) -> Optional[Dict[str, Optional[str]]]:
+    """Letterhead do emitente em dois formatos que `emitente_letterhead` nao
+    cobre (canhoto no RODAPE, ou rotulo "IDENTIFICACAO DO EMITENTE"):
+
+    - nota nº 44986: "IDENTIFICACAO DO EMITENTE" / nome / "<logr>, <nº> -
+      <bairro> -" / "<MUNICIPIO> - <UF> - <CEP> - <fone>" / e-mail, ate "DANFE";
+    - nota nº 946: o texto da pagina COMECA pelo letterhead e o nome do
+      emitente nao existe como texto (desenhado) - so "<logr>" / "<logr>,
+      <nº>" / "<bairro>" / "<MUNICIPIO>-<UF>" / "CEP: ..." / "Fone: ...". O
+      nome vem do canhoto ("RECEBEMOS DE <EMITENTE> OS PRODUTOS").
+
+    Devolve None se o bloco nao fechar a estrutura (municipio-UF reconhecido,
+    linha de logradouro com numero) - sem chute."""
+    t = t or ''
+    nome_canhoto = nome_emitente_canhoto(t)
+    m = re.search(r'IDENTIFICA[ÇC][ÃA]O\s+DO\s+EMITENTE\s*\n(.+?)\n\s*DANFE\s*\n', t, re.IGNORECASE | re.DOTALL)
+    if m:
+        linhas = [l.strip() for l in m.group(1).split('\n') if l.strip()]
+        if not linhas:
+            return None
+        nome, corpo, origem = linhas[0], linhas[1:], 'letterhead'
+    else:
+        # Bloco no INICIO do texto, antes do 1o rotulo de caixa / "DANFE".
+        linhas = []
+        for l in t.split('\n'):
+            s = l.strip()
+            if not s:
+                continue
+            if eh_rotulo(s) or re.fullmatch(r'DANFE|NF-?e', s, re.IGNORECASE):
+                break
+            linhas.append(s)
+        if not linhas or not nome_canhoto:
+            return None
+        n = _norm(nome_canhoto)
+        # O nome pode estar (quebrado em ate 3 linhas) no topo do bloco ...
+        k = next((k for k in range(1, min(3, len(linhas)) + 1) if _norm(''.join(linhas[:k])) == n), 0)
+        if k:
+            nome, corpo, origem = ' '.join(linhas[:k]), linhas[k:], 'letterhead'
+        elif _TIPO_LOGRADOURO.match(linhas[0]):
+            # ... ou ausente do texto: o bloco comeca pelo logradouro.
+            nome, corpo, origem = nome_canhoto, linhas, 'canhoto'
+        else:
+            return None
+    idx_mun, municipio, uf, cep, fone = None, None, None, None, None
+    for i, l in enumerate(corpo):
+        mu = _linha_municipio_uf(l) if idx_mun is None else None
+        if mu:
+            idx_mun, (municipio, uf, resto) = i, mu
+            for parte in re.split(r'\s+-\s+', resto):
+                if not cep and re.fullmatch(r'\d{2}\.?\d{3}-?\d{3}', parte.strip()):
+                    cep = _digitos(parte)
+                elif not fone and val_fone(parte.strip()):
+                    fone = parte.strip()
+            continue
+        mc = re.fullmatch(r'CEP\s*:?\s*(\d{2}\.?\d{3}-?\d{3})', l, re.IGNORECASE)
+        if mc:
+            cep = _digitos(mc.group(1))
+            continue
+        mf = re.fullmatch(r'(?:Tel|Fone|Telefone)\.?\s*:?\s*([\d()\s.\-+]{8,})', l, re.IGNORECASE)
+        if mf:
+            fone = mf.group(1).strip()
+    if idx_mun is None or not val_texto(nome):
+        return None
+    meio = [l for l in corpo[:idx_mun] if not re.match(r'(?:CEP|Tel|Fone|Telefone)\b', l, re.IGNORECASE)]
+    end = _endereco_letterhead(meio)
+    if not end:
+        return None
+    logradouro, numero, complemento, bairro = end
+    return {
+        'razao_social': nome, 'logradouro': logradouro, 'numero': numero,
+        'complemento': complemento, 'bairro': bairro, 'municipio': municipio,
+        'uf': uf, 'cep': cep, 'telefone': fone, 'origem_nome': origem,
+    }
+
+
+def data_apos_rotulo(t: str, rotulo: str, max_linhas: int = 6) -> Optional[str]:
+    """1a data dd/mm/aaaa nas `max_linhas` linhas nao vazias seguintes ao
+    rotulo (linha inteira) - para grades em que o pdfminer intercala o valor
+    de uma caixa vizinha entre o rotulo e a data (nota nº 44986). O chamador
+    confere a data lida (periodo da chave, ordem emissao <= saida)."""
+    m = re.search(r'(?im)^[ \t]*(?:' + rotulo + r')[ \t]*$', t or '')
+    if not m:
+        return None
+    for l in [l.strip() for l in t[m.end():].split('\n') if l.strip()][:max_linhas]:
+        md = re.fullmatch(r'(\d{2}/\d{2}/\d{4})', l)
+        if md:
+            return md.group(1)
+    return None
+
+
+def data_emissao_canhoto(t: str) -> Optional[str]:
+    """"EMISSAO: 29/06/2026 - DEST. / REM.: ..." impresso no canhoto."""
+    m = re.search(r'\bEMISS[ÃA]O\s*:\s*(\d{2}/\d{2}/\d{4})', t or '', re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def valor_total_canhoto(t: str) -> Optional[float]:
+    """"VALOR TOTAL: R$ 6.102,00" / "Valor:  1.498,00" do canhoto - so para
+    CONFERIR o vNF lido na grade."""
+    m = re.search(r'RECEBEMOS\s+DE[^\n]*\n(?:[^\n]*\n){0,6}?[^\n]*\bVALOR(?:\s+TOTAL)?\s*:\s*(?:R\$\s*)?(' + _MONEY + r')',
+                  t or '', re.IGNORECASE)
+    return num_br(m.group(1)) if m else None
+
+
+def tipo_operacao_marcado(t: str) -> Optional[str]:
+    """Digito marcado na caixa "0-ENTRADA / 1-SAIDA" quando o pdfminer o
+    despeja algumas linhas depois da legenda (nº/serie/folha no meio)."""
+    m = re.search(r'1\s*-\s*SA[ÍI]DA[ \t]*\n', t or '', re.IGNORECASE)
+    if not m:
+        return None
+    for l in [l.strip() for l in t[m.end():].split('\n') if l.strip()][:5]:
+        if re.fullmatch(r'[01]', l):
+            return l
+    return None
+
+
+def uf_e_fone_mesma_linha(sec: str) -> Tuple[Optional[str], Optional[str]]:
+    """Rotulos "UF" e "FONE / FAX" seguidos de UMA linha "<UF> <fone>"
+    (nota nº 946: "UF\\nFONE / FAX\\nBA 14982237695")."""
+    m = re.search(r'(?im)^\s*UF\s*\n\s*FONE\s*/\s*FAX\s*\n\s*([A-Z]{2})\s+([\d()\s.\-+]{8,}?)\s*$', sec or '')
+    if m and m.group(1) in UFS and val_fone(m.group(2)):
+        return m.group(1), m.group(2).strip()
+    return None, None
+
+
+def valor_tipado_apos_rotulo(sec: str, rotulo: str, validar: Callable[[str], bool], max_linhas: int = 6) -> Optional[str]:
+    """1o valor que passa em `validar` nas `max_linhas` linhas nao vazias
+    seguintes a 1a ocorrencia do rotulo, pulando rotulos e valores de outro
+    tipo. Usado so para campos que a leitura adjacente (`valor_do_rotulo`) nao
+    achou, com contraprova pelo chamador (CEP x UF)."""
+    m = re.search(r'(?im)^[ \t]*(?:' + rotulo + r')[ \t]*$', sec or '')
+    if not m:
+        return None
+    for l in [l.strip() for l in sec[m.end():].split('\n') if l.strip()][:max_linhas]:
+        if not eh_rotulo(l) and validar(l):
+            return l
+    return None
+
+
+def destinatario_por_tipo(t: str) -> Dict[str, Optional[str]]:
+    """Bairro/CEP/UF/fone do destinatario quando o pdfminer despeja os valores
+    da 2a e 3a linhas da grade longe dos rotulos, intercalados com os de
+    outra caixa (nota nº 44986: "CEP\\n29/06/2026\\nDATA SAIDA...\\n
+    42700-130"). Le na zona DESTINATARIO -> CALCULO DO IMPOSTO o 1o valor de
+    cada TIPO depois do rotulo; a grade do destinatario vem antes da do local
+    de retirada/entrega. CEP so e aceito se cair na faixa da UF lida."""
+    sec = secao(t, _SEC_DEST_INI, _SEC_DEST_FIM)
+    r = {
+        'bairro': valor_tipado_apos_rotulo(sec, r'BAIRRO\s*/\s*DISTRITO', lambda v: val_texto(v) and not re.search(r'\d', v)),
+        'cep': valor_tipado_apos_rotulo(sec, r'CEP', val_cep),
+        'uf': valor_tipado_apos_rotulo(sec, r'UF', val_uf),
+        'telefone': valor_tipado_apos_rotulo(sec, r'FONE\s*/\s*FAX', val_fone),
+    }
+    if r['cep']:
+        r['cep'] = _digitos(r['cep'])
+    if r['uf']:
+        r['uf'] = r['uf'].upper()
+    if r['cep'] and cep_confere_uf(r['cep'], r['uf']) is not True:
+        r['cep'] = None
+    return r
+
+
+def cnpj_destinatario_por_exclusao(t: str, cnpj_emitente: str) -> Optional[str]:
+    """CNPJ do destinatario quando o pdfminer o despeja longe do rotulo
+    "CNPJ / CPF" (nota nº 44986: depois de "DATA DA EMISSAO"). Candidatos: CNPJ
+    com DV conferido, em LINHA PROPRIA (valor de caixa, nao texto corrido), na
+    zona DESTINATARIO -> CALCULO DO IMPOSTO, que nao seja o do emitente nem o
+    da grade do local de retirada/entrega. So devolve se houver exatamente
+    UM candidato - qualquer ambiguidade -> None."""
+    zona = secao(t, _SEC_DEST_INI, _SEC_DEST_FIM)
+    excluir = {cnpj_emitente}
+    loc = secao(t, r'INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL|LOCAL\s+DE\s+(?:RETIRADA|ENTREGA)',
+                r'(?m)^\s*(?:FATURA|DUPLICATAS)\s*$|' + _SEC_DEST_FIM)
+    c_loc = valor_do_rotulo(loc, r'CNPJ\s*/\s*CPF', val_cnpj_cpf)
+    if c_loc:
+        excluir.add(_digitos(c_loc))
+    cands: List[str] = []
+    for m in re.finditer(r'(?m)^[ \t]*(\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})[ \t]*$', zona):
+        d = _digitos(m.group(1))
+        if _cnpj_dv_ok(d) and d not in excluir and all(_digitos(c) != d for c in cands):
+            cands.append(m.group(1))
+    return cands[0] if len(cands) == 1 else None
+
+
+def ie_emitente_antes_destinatario(t: str) -> Optional[str]:
+    """IE do emitente quando o pdfminer a despeja longe do rotulo, como ultima
+    linha antes de "DESTINATARIO / REMETENTE" (nota nº 44986). So aceita se o
+    MESMO valor aparecer em outro ponto colado a um rotulo "INSCRICAO
+    ESTADUAL" (contraprova - na 44986, a grade do local de retirada)."""
+    m = re.search(r'\n\s*([\d./-]{2,20})[ \t]*\n+\s*DESTINAT[ÁA]RIO\s*/?\s*REMETENTE', t or '', re.IGNORECASE)
+    if not m or not val_ie(m.group(1)) or _cnpj_dv_ok(_digitos(m.group(1))):
+        return None
+    ie = _digitos(m.group(1))
+    for mo in re.finditer(r'(?im)^\s*INSCRI[ÇC][ÃA]O\s+ESTADUAL\s*\n\s*([\d./-]+)\s*$', t):
+        if _digitos(mo.group(1)) == ie:
+            return ie
+    return None
+
+
+def fatura_inline(t: str) -> List[Tuple[str, str, str]]:
+    """Duplicatas em texto corrido "N.:001 Vl.:R$ 9.328,20 Venc.:06/03/2026;
+    ..." (nota nº 946) -> (numero, vencimento, valor)."""
+    return [(m.group(1), m.group(3), m.group(2)) for m in re.finditer(
+        r'\bN\.?\s*[º°]?\s*:\s*(\w[\w/\-]*)\s+V(?:l|alor)\.?\s*:\s*(?:R\$\s*)?(' + _MONEY + r')\s+Venc(?:\.|imento)?\s*:\s*(\d{2}/\d{2}/\d{4})',
+        t or '', re.IGNORECASE)]
+
+
+def duplicatas_colunas(t: str) -> List[Tuple[str, str, str]]:
+    """Caixa "DUPLICATAS" com colunas "Nº DUPLICATA | VENC. | VALOR" (nota nº
+    44986) -> (numero, vencimento, valor)."""
+    sec = secao(t, r'(?m)^\s*DUPLICATAS\s*$', _SEC_DEST_FIM)
+    if not re.search(r'(?im)^\s*VENC(?:\.|IMENTO)\s*$', sec):
+        return []
+    return [(m.group(1), m.group(2), m.group(3)) for m in re.finditer(
+        r'(?m)^[ \t]*(\d[\w/\-]*)[ \t]*\n\s*(\d{2}/\d{2}/\d{4})[ \t]*\n\s*(' + _MONEY + r')[ \t]*$', sec)]
+
+
+def informacoes_complementares_ate_canhoto(t: str) -> Optional[str]:
+    """Texto de "INFORMACOES COMPLEMENTARES" quando o bloco nao termina em
+    "RESERVADO AO FISCO" (nota nº 946: rotulos da caixa do ISSQN no meio e o
+    canhoto "RECEBEMOS DE" logo depois)."""
+    m = re.search(r'INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES[ \t]*\n(.+?)(?=\n[^\n]*RECEBEMOS\s+DE|RESERVADO\s+AO\s+FISCO|\x0c|$)',
+                  t or '', re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    linhas = [l.strip() for l in m.group(1).split('\n') if l.strip() and not eh_rotulo(l.strip())]
+    return '\n'.join(linhas) or None
+
+
+def frete_por_extenso(sec: str) -> Optional[str]:
+    """Modalidade do frete impressa por extenso numa linha propria, longe do
+    rotulo ("9 - SEM FRETE", nota nº 44986). Codigo e texto precisam
+    concordar (0 remetente/emitente, 1 destinatario, 2 terceiros, 3/4
+    proprio, 9 sem frete); mais de uma linha candidata -> None."""
+    sentido = {'0': r'REMET|EMIT|CIF', '1': r'DEST|FOB', '2': r'TERC', '3': r'PR[ÓO]PRI', '4': r'PR[ÓO]PRI',
+               '9': r'SEM\s+(?:FRETE|OCORR|TRANSP)'}
+    achados = []
+    for m in re.finditer(r'(?im)^\s*([0-49])\s*-\s*([A-Za-zÀ-ÿ][^\n]*?)\s*$', sec or ''):
+        if re.search(sentido[m.group(1)], m.group(2), re.IGNORECASE):
+            achados.append(m.group(1))
+    return achados[0] if len(set(achados)) == 1 else None
+
+
+def pesos_bruto_liquido(sec: str) -> Tuple[Optional[str], Optional[str]]:
+    """Rotulos "PESO LIQUIDO" e "PESO BRUTO" (em qualquer ordem) seguidos dos
+    dois valores sem unidade (nota nº 946). A ordem dos valores no texto nao
+    e confiavel; peso bruto >= peso liquido (fisico) decide."""
+    m = re.search(r'(?im)^\s*PESO\s+(?:L[ÍI]QUIDO|BRUTO)[^\n]*\n\s*PESO\s+(?:L[ÍI]QUIDO|BRUTO)[^\n]*\n'
+                  r'\s*(\d{1,3}(?:\.\d{3})*,\d{1,4})\s*(?:kg)?\s*\n\s*(\d{1,3}(?:\.\d{3})*,\d{1,4})\s*(?:kg)?\s*$', sec or '')
+    if not m:
+        return None, None
+    a, b = m.group(1), m.group(2)
+    return (a, b) if num_br(a) >= num_br(b) else (b, a)
+
+
+# --- itens: tabela "DADOS DO PRODUTO / SERVICOS" com uma celula por linha ---
+
+_CAB_ITEM = re.compile(
+    r'^(?:C[ÓO]DIGO(?:\s+DO)?|PRODUTO|PROD\.?\s*/\s*SERV\.?|DESCRI[ÇC][ÃA]O.*|NCM\s*/?\s*SH|CST|CSOSN|'
+    r'CFOP(?:\s+UNID\.?)?|UND\.?|UNID\.?|UN\.?|QNT\.?|QUANT\.?|QTD\.?|VALOR|UNIT[ÁA]RIO|TOTAL|DESCONTO|'
+    r'B\.?\s*C[ÁA]LCULO|BASE|C[ÁA]LC\.?\s*ICMS|ICMS|IPI|I\.?C\.?M\.?S\.?|I\.?P\.?I\.?|AL[ÍI]Q\.?|AL[ÍI]QUOTAS)$',
+    re.IGNORECASE)
+_NUM_CEL = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{1,4}$|^\d+$')
+
+
+def itens_colunas(t: str) -> Tuple[List[Dict[str, object]], List[str]]:
+    """Itens da tabela "DADOS DO PRODUTO / SERVICOS" quando cada celula sai
+    numa linha (NCM, CST, CFOP e UNID. em linhas proprias ou juntas), com a
+    descricao possivelmente quebrada em varias linhas e o CODIGO despejado
+    entre os rotulos do cabecalho (notas nº 946 e nº 44986).
+
+    Colunas numericas, na ordem do cabecalho nacional: QUANT, V.UNIT, V.TOTAL,
+    [DESCONTO - so se o cabecalho tiver a coluna], BC ICMS, V.ICMS, V.IPI e as
+    duas aliquotas. A aliquota de ICMS e a que fecha BC x ALIQ = V.ICMS (o
+    texto do cabecalho "ALIQUOTAS / IPI / ICMS" nao reflete a ordem visual).
+    Cada item precisa fechar QUANT x V.UNIT = V.TOTAL e BC x ALIQ = V.ICMS;
+    qualquer item que nao feche, ou numero de CODIGOS diferente do de itens,
+    devolve lista VAZIA + motivos (o chamador avisa) - nunca um item chutado."""
+    sec = secao(t, r'DADOS\s+DOS?\s+PRODUTOS?\s*/\s*SERVI[ÇC]OS?', r'C[ÁA]LCULO\s+DO\s+ISSQN|DADOS\s+ADICI')
+    linhas = [l.strip() for l in sec.split('\n') if l.strip()]
+    # Codigos: celulas entre o rotulo "CODIGO..." e o rotulo "DESCRICAO...".
+    i_cod = next((i for i, l in enumerate(linhas) if re.match(r'C[ÓO]DIGO', l, re.IGNORECASE)), None)
+    i_des = next((i for i, l in enumerate(linhas) if re.match(r'DESCRI[ÇC][ÃA]O', l, re.IGNORECASE)), None)
+    if i_cod is None or i_des is None or i_des < i_cod:
+        return [], []
+    i_ncm = [i for i, l in enumerate(linhas) if i > i_des and re.match(r'^\d{8}\b', l)]
+    if not i_ncm:
+        return [], []
+    cab = linhas[:i_ncm[0]]
+    tem_desc = any(re.fullmatch(r'DESCONTO', l, re.IGNORECASE) for l in cab[i_des:])
+    codigos = [l for l in cab[i_cod + 1:i_des] if not _CAB_ITEM.match(l)]
+    ultimo_cab = max(i for i, l in enumerate(cab) if _CAB_ITEM.match(l) or i == i_des)
+    n_num = 9 if tem_desc else 8
+    itens: List[Dict[str, object]] = []
+    motivos: List[str] = []
+    inicio_desc = ultimo_cab + 1
+    pos = i_ncm[0]
+    while pos < len(linhas) and re.match(r'^\d{8}\b', linhas[pos]):
+        descricao = ' '.join(re.sub(r'\s+', ' ', l) for l in linhas[inicio_desc:pos]).strip()
+        tokens: List[str] = []
+        fim = pos
+        while fim < len(linhas) and len(tokens) < 4 + n_num:
+            tokens.extend(linhas[fim].split())
+            fim += 1
+        if len(tokens) != 4 + n_num:
+            return [], [f"item {len(itens) + 1}: células da linha da tabela não fecham com o cabeçalho"]
+        ncm, cst, cfop, unid = tokens[:4]
+        nums = tokens[4:]
+        if not (re.fullmatch(r'\d{8}', ncm) and re.fullmatch(r'\d{2,3}', cst) and re.fullmatch(r'\d{4}', cfop)
+                and re.fullmatch(r'[A-Za-z][A-Za-z0-9]{0,5}\.?', unid) and all(_NUM_CEL.match(n) for n in nums)
+                and val_texto(descricao)):
+            return [], [f"item {len(itens) + 1}: NCM/CST/CFOP/UNID./valores fora do tipo esperado"]
+        v = [num_br(n) for n in nums]
+        if tem_desc:
+            qtd, vun, vtot, vdesc, bc, vicms, vipi, a1, a2 = v
+        else:
+            (qtd, vun, vtot, bc, vicms, vipi, a1, a2), vdesc = v, 0.0
+        if abs(qtd * vun - vtot) > max(0.01, vtot * 0.001):
+            return [], [f"item {len(itens) + 1}: QUANT x VR.UNIT não fecha com o VALOR TOTAL impresso"]
+        fecha = [a for a in (a1, a2) if abs(round(bc * a / 100, 2) - vicms) <= 0.01]
+        if not fecha:
+            return [], [f"item {len(itens) + 1}: BC ICMS x ALÍQ. não fecha com o V. ICMS impresso"]
+        if len(fecha) == 2 and a1 != a2:
+            return [], [f"item {len(itens) + 1}: alíquotas de ICMS e IPI não distinguíveis (BC ICMS zerada)"]
+        aliq_icms = fecha[0]
+        aliq_ipi = a2 if aliq_icms == a1 else a1
+        if vipi and abs(round(vtot * aliq_ipi / 100, 2) - vipi) > 0.01:
+            motivos.append(f"item {len(itens) + 1}: V.IPI não fecha com V.TOTAL x ALÍQ.IPI - conferir")
+        if vdesc:
+            motivos.append(f"item {len(itens) + 1}: desconto no item ({nums[3]}) não levado ao XML - conferir")
+        itens.append({
+            'descricao': descricao, 'ncm': ncm, 'cst': cst, 'cfop': cfop, 'unidade': unid.rstrip('.'),
+            'quantidade': qtd, 'valor_unitario': vun, 'valor_total': vtot, 'bc_icms': bc,
+            'valor_icms': vicms, 'aliquota_icms': aliq_icms, 'valor_ipi': vipi, 'aliquota_ipi': aliq_ipi,
+        })
+        inicio_desc = fim
+        # proximo item: 1a linha de NCM depois desta
+        prox = next((i for i in i_ncm if i >= fim), None)
+        if prox is None:
+            break
+        pos = prox
+    if len(codigos) != len(itens):
+        return [], [f"{len(codigos)} código(s) de produto para {len(itens)} item(ns) - associação não confiável"]
+    for it, cod in zip(itens, codigos):
+        it['codigo'] = cod
+    return itens, motivos
+
+
+# --- grade CALCULO DO IMPOSTO pela identidade dos totais -------------------
+
+_ROT_GRADE = (
+    ('bc_st', r'BASE\s+(?:DE\s+)?C[ÁA]LC(?:ULO|\.)?\s+(?:DO\s+)?ICMS\s+(?:SUBST|S\.?\s*T).*'),
+    ('bc', r'BASE\s+(?:DE\s+)?C[ÁA]LC(?:ULO|\.)?\s+(?:DO\s+)?ICMS'),
+    ('st', r'VALOR\s+(?:DO\s+)?ICMS\s+(?:SUBST|S\.?\s*T).*'),
+    ('icms', r'VALOR\s+(?:DO\s+)?ICMS'),
+    ('trib', r'VALOR\s+APROX.*|V\.?\s*TOT\.?\s*TRIB.*|VALOR\s+TOTAL\s+(?:DOS\s+|APROX.*\s+)?TRIBUTOS.*'),
+    ('prod', r'VALOR\s+TOTAL\s+DOS\s+PRODUTOS'),
+    ('frete', r'VALOR\s+DO\s+FRETE'),
+    ('seguro', r'VALOR\s+DO\s+SEGURO'),
+    ('desc', r'DESCONTO'),
+    ('outras', r'OUTRAS\s+DESP.*'),
+    ('ipi', r'VALOR\s+(?:DO\s+)?IPI'),
+    ('nf', r'VALOR\s+TOTAL\s+DA\s+NOTA'),
+)
+
+
+def grade_por_identidade(t: str, itens: List[Dict[str, object]]) -> Optional[Dict[str, float]]:
+    """Grade "CALCULO DO IMPOSTO" quando o pdfminer despeja os valores numa
+    ordem propria, misturada com a caixa do transportador (notas nº 946 e nº
+    44986 - a ordem nao e a mesma nos dois geradores). Atribuicao por
+    IDENTIDADES, nao por posicao: com itens ja conferidos, vProd = soma
+    V.TOTAL, vBC = soma BC, vICMS = soma V.ICMS, vIPI = soma V.IPI (cada um
+    precisa estar entre os valores impressos); vNF = vProd + vIPI precisa
+    estar entre os restantes e todo o resto precisa ser zero - exceto um
+    unico valor quando a grade tem a caixa "VALOR APROX. DOS TRIBUTOS" (fora
+    da identidade do total). Qualquer outra situacao (frete, desconto, ST...
+    com valor) e ambigua por ordem de texto -> None (chamador avisa)."""
+    if not itens:
+        return None
+    sec = secao(t, r'C[ÁA]LCULO\s+D[OE]\s+IMPOSTO', r'DADOS\s+DOS?\s+PRODUTOS?\s*/\s*SERVI')
+    rotulos = set()
+    for l in sec.split('\n'):
+        s = l.strip()
+        for chave, pad in _ROT_GRADE:
+            if re.fullmatch(pad, s, re.IGNORECASE):
+                rotulos.add(chave)
+                break
+        else:
+            if re.match(r'(?:V\.|VALOR|BASE)\b.*\b(?:FCP|PIS|COFINS|II|UF|DIFAL|PARTILHA|DESON)', s, re.IGNORECASE):
+                return None  # caixa de tributo nao modelada: atribuicao insegura
+    obrig = {'bc', 'icms', 'prod', 'nf'}
+    if not obrig <= rotulos:
+        return None
+    vals = [round(num_br(v), 2) for v in re.findall(r'(?m)^[ \t]*(\d{1,3}(?:\.\d{3})*,\d{2})[ \t]*$', sec)]
+    if len(vals) != len(rotulos):
+        return None
+    s = lambda k: round(sum(float(i[k]) for i in itens), 2)
+    ancoras = {'prod': s('valor_total'), 'bc': s('bc_icms'), 'icms': s('valor_icms')}
+    if 'ipi' in rotulos:
+        ancoras['ipi'] = s('valor_ipi')
+    resto = list(vals)
+    for v in ancoras.values():
+        if v not in resto:
+            return None
+        resto.remove(v)
+    v_nf = round(ancoras['prod'] + ancoras.get('ipi', 0.0), 2)
+    if v_nf not in resto:
+        return None
+    resto.remove(v_nf)
+    nao_zero = [v for v in resto if v != 0]
+    if nao_zero and not ('trib' in rotulos and len(nao_zero) == 1):
+        return None
+    return {
+        'base_calculo_icms': ancoras['bc'], 'valor_icms': ancoras['icms'], 'base_calculo_icms_st': 0.0,
+        'valor_icms_st': 0.0, 'valor_total_produtos': ancoras['prod'], 'valor_frete': 0.0,
+        'valor_seguro': 0.0, 'desconto': 0.0, 'outras_despesas': 0.0,
+        'valor_ipi': ancoras.get('ipi', 0.0), 'valor_total_nota': v_nf,
+    }
