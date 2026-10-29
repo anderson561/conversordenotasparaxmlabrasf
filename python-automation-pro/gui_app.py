@@ -5,7 +5,7 @@ from datetime import datetime, date
 from src.main import run_batch_conversion, run_contrato_conversion, separar_por_formato
 from src.gui_selecao import (
     LARGURA_DIALOGO, AnaliseArquivo, altura_dialogo, analise_de_notas, deve_mostrar_dialogo,
-    montar_grupos, montar_paginas_por_arquivo, nao_selecionaveis,
+    caminho_xml_arquivo_unico, montar_grupos, montar_paginas_por_arquivo, nao_selecionaveis,
 )
 from src.models.contrato_locacao_model import ContratoLocacao, EntidadeContrato
 from src.version import APP_VERSION
@@ -577,7 +577,9 @@ def main(page: ft.Page):
                         if arquivo_unico:
                             from src.main import run_conversion
                             # Chama run_conversion direto se for um único arquivo, pois suporta selected_pages
-                            output_xml = os.path.join(out_dir, "temp.xml") # run_conversion espera o caminho do xml, embora vá gerar os corretos
+                            # Prefixo dos XMLs = nome do PDF ORIGINAL (antes: "temp.xml"
+                            # fixo -> "temp_Pagina_1_NF_<n>.xml"; achado real 2026-10-27).
+                            output_xml = caminho_xml_arquivo_unico(files_to_check[0], out_dir)
                             run_conversion(
                                 pdf_path=files_to_check[0],
                                 output_xml_path=output_xml,
