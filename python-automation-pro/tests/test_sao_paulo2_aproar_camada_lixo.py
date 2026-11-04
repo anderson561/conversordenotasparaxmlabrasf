@@ -22,7 +22,7 @@ from src.extractors.pdf_extractor import SPPdfExtractor
 
 CAMADA = '19I「O鰹026, 17二鞠\n\nEmail - Luiz AngoIo - Out10Ok\n\nPR断割TURÅ Do MUN-CipiO DE SÅo pAUしO\n\nSたCRどIA膿IA MUNICI寄AしDA FAZENDA\n\nNOTA馴ScAし且的ONICA鵬S囲IVl$OS - NFS・e\n\nN心m屯ro dむNo章a\n\nOOOOO2ま8\n\nひa章aさ魅o棺de E請issきo\n\n1 9I書伽を026 1 4:45脚5\n\n髄拙go de Ⅵ如簡閲辞o\nV喜8寄・珊\n\nC陣CNP」: 11.437.働けIOOl-章5\n\n書nsc噂o議unicゆa農`.㈱.榔事2\n\n飾訊眼\n\nNomel京a務o敏鵜ial: ▲農韓o餓pし側と」A調印町0寄調書議o軸l▲し皿\n\np則:S¶軸)o照りたS田恥部悔\n\nNome佃敬重o SociaI: P鼻面りCO則書PAT書棚譲oNIAしし丁DA.\n\nC即すCNPJ: 00.625.書91脚1-87\n\nEnder基準O: AVI: TAN脚o関崎「側15 ]偶5 - c劇議事剛鵬問晩S ▲照Vo駆お葛cEP: \'1鮫lト0弧\nMuれic重め納柵\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000U「:田A E・ma旺・・機\n\n動恥部脚0京劇; S駆れ偶coS\n\nCPFICNPJ: -・-\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000\u3000Nome/Razao S[貼aI: ・・--\n\ntN丁圏的霊園"A則O\n\nDE S囲IVleOS\n\n馴SC則棚NA$ao眼S駅VICOS\n\nⅥ鵬舶関りo S圃Ⅳl印墓場4章.雷的脚\n\n墳町筋岬P同軸膿軸-韓髄ぬく購)\n\nc〇㌔巾的軒鯵軸ais ・同地S (時)\n\n親臨00∞鴫的。き血。血岬調調は。.血糊馳帥復職陥。他種1ぬ\nV8厨丁億8ミ(鐙S晩鴫S (京$\n\n寄ase僻c細則ぬ(噂)\n\n叫00\n\n4書.32ふ1抑\n\nValα do置ミ遅く的\n\nC他説〇時請種da軸陣(韓靭\n\n2.劃i車軸I\n\n0.00\n\nM脚輯pめdeかきs略ゆdo鎚Ⅳi印\n\n軸t m輯〇億S調印く鴎e直隠\n\nV81e富句調達部劃わdos丁蹄競OS l鼠)競艇\n\nOU隔晩S i討Fo剛閲的鯵\n\n場ま葛購置,55\n\n(1 ) Esta NFSでfoi em舶a com leSpa調o na Lei no 14.097/2脚5; @) D純a de venc加ento do ISS desta NFSせ10/書1 I2026; @) Infoma串es pr鎚調騨das\n\nnes campas de PiS e COFINS sao鳩fe唆ntes cos vaIo記S toぬis sく心re a opl的確〇、;\n\nhttps:伽u軸ooIuive.債珊面uailhnboxnd仏AkAしgARAAAAHYQD EapmEc2b]小CqAC%2F馴喝OA[I4IMY5LGNkGVh3¶.xl oしugAJatIT53QAA/§X§AuA…\u30001 /1\n\n\x0c'
 
-OCR = 'Código do Serviço\n03115 - (releitura dedicada)\nSP2RET_FEDERAIS: 0,00 619,89 1.239,78 268,62\nSP2RET_CSLL: 413,26\n\nNúmero da Nota\n00000228\nData e Hora de Emissão\n19/10/2026 14:45:05\nCódigo de Verificação\nVIBQ-C4WQ\nSP_COD_VERIF_ALTERNATIVO: VI8Q-C4WQ\n\n19/10/2026, 17:34 Email — Luiz Argolo — Outlook\n\nNúmero da Nota\n00000228\nData e Hora de Emissão\n19/10/2026 14:45:05\nCódigo de Verificação\nVIBQ-C4WQ\n\nPREFEITURA DO MUNICÍPIO DE SÃO PAULO\nSECRETARIA MUNICIPAL DA FAZENDA\n\nNOTA FISCAL ELETRÔNICA DE SERVIÇOS - NFS-e\n\n|\n20261019u11437087000185\n\nPRESTADOR DE SERVIÇOS\nCPF/CNPJ: 11.437.087/0001-85 Inscrição Municipal: 4.003.857-2\nA Nome/Razão Social: APROAR PLANEJAMENTO PATRIMONIAL LTDA\nAPROAR Endereço: AV REBOUCAS 3970, ANDAR 17 - PINHEIROS - CEP: 05402-918 |\nMunicípio: São Paulo UF: SP\n\n| TOMADOR DE SERVIÇOS\n\n| Nome/Razão Social: PATRICORP PATRIMONIAL LTDA. |\nCPF/CNPJ: 00.625.191/0001-87 Inscrição Municipal: ----\nEndereço: AVE TANCREDO NEVES, 1485 1485 - CAMINHO DAS ARVORES - CEP: 41820-020\n\nMunicípio: Salvador UF: BA E-mail: ----\n\n= |]|]]][]]]D]D[DD>>>>>—>—————————1——\n| INTERMEDIÁRIO DE SERVIÇOS\n\nCPF/CNPJ: ---- Nome/Razão Social: ----\n| DISCRIMINAÇÃO DE SERVIÇOS |\nServiços prestados.\n(=) Valor liquido: R$ 38.784,45\nPIS: R$ 268,62\nCofins: R$ 1.239,78\nCSLL: R$ 413,26\nIRRF: R$ 619,89\nVALOR TOTAL DO SERVIÇO = R$ 41.326,00\n\n| Contribuição Previdenciária - Retida (R$) PIS/PASEP (R$) | IPI(RS)\n\n| 0,00 268,62 -\nContribuições Sociais - Retidas (R$) Descrição Contribuições Sociais - Retidas\n\n| 413,26 -\n\nRo\n\n| Código do Serviço |\n\n715 - Assessoria ou consultoria de qualquer natureza, não contida em outros itens desta lista.\n\n| Valor Total das Deduções (R$) Base de Cálculo (R$) Aliquota (3) Valor do ISS (R$) Crédito Programa da NFP (R$)\n| 0,00 41.326,00 5,00% 2.066,30 0,00\nValor Aproximado dos Tributos / Fonte 1\n\n| Município de Prestação do Serviço Número Inscrição da Obra\n| = R$ 2.541,55\n\n| &\n| OUTRAS INFORMAÇÕES\n| (1) Esta NFS-e foi emitida com respaldo na Lei nº 14.097/2005; (2) Data de vencimento do ISS desta NFS-e: 10/11/2026; (3) Informações preenchidas\n| nos campos de PIS e COFINS são referentes aos valores totais sobre a operação.;\n\n|\n\n|\n|\n|\n\nhttps://outiook.live.com/mailfinbox/id/AAkALgAAAAAAHY QDEapmEc2byACqAC %ZFEWg0AgaIMYSLGNKGVh3fLx1oLUgAJaATS3QAA/sxs/AAKA...\n'
+OCR = 'Código do Serviço\n03115 - (releitura dedicada)\nSP2RET_FEDERAIS: 0,00 619,89 1.239,78 268,62\nSP2RET_CSLL: 413,26\n\nNúmero da Nota\n00000228\nData e Hora de Emissão\n19/10/2026 14:45:05\nCódigo de Verificação\nVI8Q-C4WQ\nSP_COD_VERIF_ALTERNATIVO: VIBQ-C4WQ\n\n19/10/2026, 17:34 Email — Luiz Argolo — Outlook\n\nNúmero da Nota\n00000228\nData e Hora de Emissão\n19/10/2026 14:45:05\nCódigo de Verificação\nVIBQ-C4WQ\n\nPREFEITURA DO MUNICÍPIO DE SÃO PAULO\nSECRETARIA MUNICIPAL DA FAZENDA\n\nNOTA FISCAL ELETRÔNICA DE SERVIÇOS - NFS-e\n\n|\n20261019u11437087000185\n\nPRESTADOR DE SERVIÇOS\nCPF/CNPJ: 11.437.087/0001-85 Inscrição Municipal: 4.003.857-2\nA Nome/Razão Social: APROAR PLANEJAMENTO PATRIMONIAL LTDA\nAPROAR Endereço: AV REBOUCAS 3970, ANDAR 17 - PINHEIROS - CEP: 05402-918 |\nMunicípio: São Paulo UF: SP\n\n| TOMADOR DE SERVIÇOS\n\n| Nome/Razão Social: PATRICORP PATRIMONIAL LTDA. |\nCPF/CNPJ: 00.625.191/0001-87 Inscrição Municipal: ----\nEndereço: AVE TANCREDO NEVES, 1485 1485 - CAMINHO DAS ARVORES - CEP: 41820-020\n\nMunicípio: Salvador UF: BA E-mail: ----\n\n= |]|]]][]]]D]D[DD>>>>>—>—————————1——\n| INTERMEDIÁRIO DE SERVIÇOS\n\nCPF/CNPJ: ---- Nome/Razão Social: ----\n| DISCRIMINAÇÃO DE SERVIÇOS |\nServiços prestados.\n(=) Valor liquido: R$ 38.784,45\nPIS: R$ 268,62\nCofins: R$ 1.239,78\nCSLL: R$ 413,26\nIRRF: R$ 619,89\nVALOR TOTAL DO SERVIÇO = R$ 41.326,00\n\n| Contribuição Previdenciária - Retida (R$) PIS/PASEP (R$) | IPI(RS)\n\n| 0,00 268,62 -\nContribuições Sociais - Retidas (R$) Descrição Contribuições Sociais - Retidas\n\n| 413,26 -\n\nRo\n\n| Código do Serviço |\n\n715 - Assessoria ou consultoria de qualquer natureza, não contida em outros itens desta lista.\n\n| Valor Total das Deduções (R$) Base de Cálculo (R$) Aliquota (3) Valor do ISS (R$) Crédito Programa da NFP (R$)\n| 0,00 41.326,00 5,00% 2.066,30 0,00\nValor Aproximado dos Tributos / Fonte 1\n\n| Município de Prestação do Serviço Número Inscrição da Obra\n| = R$ 2.541,55\n\n| &\n| OUTRAS INFORMAÇÕES\n| (1) Esta NFS-e foi emitida com respaldo na Lei nº 14.097/2005; (2) Data de vencimento do ISS desta NFS-e: 10/11/2026; (3) Informações preenchidas\n| nos campos de PIS e COFINS são referentes aos valores totais sobre a operação.;\n\n|\n\n|\n|\n|\n\nhttps://outiook.live.com/mailfinbox/id/AAkALgAAAAAAHY QDEapmEc2byACqAC %ZFEWg0AgaIMYSLGNKGVh3fLx1oLUgAJaATS3QAA/sxs/AAKA...\n'
 
 
 def _parse(monkeypatch, camada, ocr_pag1, nome):
@@ -73,10 +73,12 @@ def test_aproar_228_camada_lixo_vai_para_ocr_e_extrai_todos_os_campos(monkeypatc
     n = notas[0]
 
     assert n.numero == "00000228"
-    # Leitura 'por' do Tesseract (impresso "VI8Q-C4WQ"): a divergência B/8
-    # com a leitura 'eng' vira aviso, sem trocar o valor (ver docstring).
-    assert n.codigo_verificacao == "VIBQ-C4WQ"
-    assert any("VIBQ-C4WQ" in a and "VI8Q-C4WQ" in a and "B/8" in a for a in n.avisos)
+    # Impresso "VI8Q-C4WQ" (confirmado pelo usuário): a leitura 'por' dá
+    # "VIBQ"; a 'eng', unânime nos 3 zooms, vence em B/8 e a 'por' fica no
+    # aviso com as duas leituras.
+    assert n.codigo_verificacao == "VI8Q-C4WQ"
+    assert any('lido "VI8Q-C4WQ"' in a and 'alternativa "VIBQ-C4WQ"' in a and "B/8" in a
+               for a in n.avisos)
     assert n.data_emissao.strftime("%d/%m/%Y %H:%M:%S") == "19/10/2026 14:45:05"
     # Sem competência impressa: mês da emissão (convenção do SP escaneado),
     # nunca a data/hora do cabeçalho do navegador.
@@ -130,6 +132,30 @@ def test_aproar_228_camada_lixo_vai_para_ocr_e_extrai_todos_os_campos(monkeypatc
     assert "Outlook" not in n.discriminacao and "outlook" not in n.discriminacao
     # Único aviso: a ambiguidade B/8 do código de verificação.
     assert len(n.avisos) == 1
+
+
+def test_codigo_verificacao_eng_unanime_vence_em_b8():
+    escolher = SPPdfExtractor._sp_escolher_codigo_verificacao
+    assert escolher("VIBQ-C4WQ", ["VI8Q-C4WQ"] * 3) == ("VI8Q-C4WQ", "VIBQ-C4WQ")
+    # O par vale nos dois sentidos.
+    assert escolher("BWP8-LR3Z", ["BWPB-LR3Z"] * 3) == ("BWPB-LR3Z", "BWP8-LR3Z")
+
+
+def test_codigo_verificacao_eng_nao_unanime_mantem_por_com_aviso():
+    escolher = SPPdfExtractor._sp_escolher_codigo_verificacao
+    assert escolher("VIBQ-C4WQ", ["VI8Q-C4WQ", "VIBQ-C4WQ", "VI8Q-C4WQ"]) == ("VIBQ-C4WQ", "VI8Q-C4WQ")
+    # Um zoom sem leitura também quebra a unanimidade.
+    assert escolher("VIBQ-C4WQ", ["VI8Q-C4WQ", None, "VI8Q-C4WQ"]) == ("VIBQ-C4WQ", "VI8Q-C4WQ")
+
+
+def test_codigo_verificacao_divergencia_fora_dos_pares_mantem_por_sem_aviso():
+    escolher = SPPdfExtractor._sp_escolher_codigo_verificacao
+    # O/0 e I/1 não têm evidência: não decidem nem geram aviso.
+    assert escolher("GZCS-2BDP", ["GZCS-2BD0"] * 3) == ("GZCS-2BDP", None)
+    assert escolher("VIBQ-C4WQ", ["VI1Q-C4WQ"] * 3) == ("VIBQ-C4WQ", None)
+    # Tamanho diferente ("ViI8Q", lido assim no zoom 5x) e leitura igual.
+    assert escolher("VIBQ-C4WQ", ["VII8Q-C4WQ"] * 3) == ("VIBQ-C4WQ", None)
+    assert escolher("PQHZ-BYVT", ["PQHZ-BYVT"] * 3) == ("PQHZ-BYVT", None)
 
 
 def test_linha_de_retencoes_incompleta_nunca_e_distribuida_por_posicao(monkeypatch):

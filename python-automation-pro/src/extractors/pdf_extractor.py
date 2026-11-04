@@ -23431,6 +23431,34 @@ class SPPdfExtractor:
             return ""
 
     @staticmethod
+    def _sp_escolher_codigo_verificacao(leitura_por: str, leituras_eng):
+        """Decide o Código de Verificação do SP escaneado entre a leitura
+        'por' (valor histórico) e as releituras 'eng' da mesma caixa.
+
+        Devolve (código, alternativa_para_aviso_ou_None):
+        - 'eng' diverge da 'por' SÓ em pares B/8 (único par com evidência
+          real — APROAR nº 00000228, impresso "VI8Q-C4WQ", 'por' lê "VIBQ")
+          e é UNÂNIME em todos os zooms (nenhuma leitura falhou ou divergiu)
+          -> vale a 'eng'; a 'por' vai para o aviso;
+        - divergência só em B/8 sem unanimidade -> mantém a 'por'; a 'eng'
+          mais frequente vai para o aviso;
+        - 'eng' igual à 'por', ou divergindo em outro caractere/tamanho ->
+          mantém a 'por', sem aviso (nada a decidir com segurança)."""
+        PARES = ({'B', '8'},)
+
+        def so_pares(a, b):
+            return a != b and len(a) == len(b) and all(
+                x == y or {x, y} in PARES for x, y in zip(a, b))
+
+        candidatas = [e for e in leituras_eng if e and so_pares(e, leitura_por)]
+        if not candidatas:
+            return leitura_por, None
+        if len(set(leituras_eng)) == 1 and leituras_eng[0] in candidatas:
+            return leituras_eng[0], leitura_por
+        from collections import Counter
+        return leitura_por, Counter(candidatas).most_common(1)[0][0]
+
+    @staticmethod
     def _ocr_header_box_sao_paulo(page, angle: int = 0) -> str:
         """Recorta e reprocessa em zoom alto (6x) as 3 mini-tabelas empilhadas
         do canto superior direito da NFS-e de São Paulo ESCANEADA (JPG/foto):
@@ -23714,26 +23742,36 @@ class SPPdfExtractor:
                 m_cod = re.search(r'\b([A-Z0-9]{3,5}[-.][A-Z0-9]{3,6})\b', texto_cod, re.IGNORECASE)
                 if m_cod:
                     cod_norm = re.sub(r'[^A-Z0-9-]', '', m_cod.group(1).upper().replace('.', '-'))
-                    linhas.append(f"Código de Verificação\n{cod_norm}")
                     # Achado real 2026-11-04 (APROAR nº 00000228, impresso
-                    # "VI8Q-C4WQ"): o modelo 'por' do Tesseract lê o "8" como
-                    # "B" em todos os zooms/PSMs testados (3x a 12x), o 'eng'
-                    # lê "8". Sem validação em outras notas para escolher um
-                    # dos dois, o valor do XML continua o da leitura 'por'
-                    # (comportamento validado nas notas anteriores) e a
-                    # divergência B/8 vira AVISO com a leitura alternativa —
-                    # o usuário confere o caractere na nota.
-                    try:
-                        texto_eng = pytesseract.image_to_string(
-                            img_cod.crop((x0, y0, x1, y1)).convert('L'), lang='eng', config='--psm 6')
-                    except Exception:
-                        texto_eng = ''
-                    m_eng = re.search(r'\b([A-Z0-9]{3,5}[-.][A-Z0-9]{3,6})\b', texto_eng, re.IGNORECASE)
-                    if m_eng:
-                        alt = re.sub(r'[^A-Z0-9-]', '', m_eng.group(1).upper().replace('.', '-'))
-                        if alt != cod_norm and len(alt) == len(cod_norm) and all(
-                                a == b or {a, b} == {'B', '8'} for a, b in zip(alt, cod_norm)):
-                            linhas.append(f"SP_COD_VERIF_ALTERNATIVO: {alt}")
+                    # "VI8Q-C4WQ", confirmado pelo usuário): o modelo 'por' do
+                    # Tesseract lê o "8" como "B" em todos os zooms/PSMs
+                    # testados (3x a 12x); o 'eng' lê "8". Relê a MESMA caixa
+                    # com 'eng' em 3 zooms e decide em
+                    # `_sp_escolher_codigo_verificacao`; havendo divergência
+                    # B/8, a outra leitura vai para o aviso.
+                    leituras_eng = []
+                    for zoom_eng in (6.0, 8.0, 10.0):
+                        try:
+                            f = zoom_eng / zoom_cod
+                            if zoom_eng == zoom_cod:
+                                img_eng = img_cod
+                            else:
+                                img_eng = Image.open(io.BytesIO(page.get_pixmap(
+                                    matrix=pymupdf.Matrix(zoom_eng, zoom_eng)).tobytes("png")))
+                                if angle:
+                                    img_eng = img_eng.rotate(-angle, expand=True)
+                            texto_eng = pytesseract.image_to_string(
+                                img_eng.crop((int(x0 * f), int(y0 * f), int(x1 * f), int(y1 * f))).convert('L'),
+                                lang='eng', config='--psm 6')
+                        except Exception:
+                            texto_eng = ''
+                        m_eng = re.search(r'\b([A-Z0-9]{3,5}[-.][A-Z0-9]{3,6})\b', texto_eng, re.IGNORECASE)
+                        leituras_eng.append(
+                            re.sub(r'[^A-Z0-9-]', '', m_eng.group(1).upper().replace('.', '-')) if m_eng else None)
+                    escolhido, alternativa = SPPdfExtractor._sp_escolher_codigo_verificacao(cod_norm, leituras_eng)
+                    linhas.append(f"Código de Verificação\n{escolhido}")
+                    if alternativa:
+                        linhas.append(f"SP_COD_VERIF_ALTERNATIVO: {alternativa}")
 
             return "\n".join(linhas) + ("\n" if linhas else "")
         except Exception:
