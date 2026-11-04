@@ -455,6 +455,36 @@ class SPPdfExtractor:
             return False
         return (t.count(' ') / len(t)) < 0.01
 
+    @staticmethod
+    def _camada_texto_ilegivel(texto: str) -> bool:
+        """Detecta uma camada de texto embutida que é LIXO de OCR de terceiros
+        (scanner/impressora com OCR no idioma errado), e não texto utilizável.
+
+        Achado real 2026-11-04 (Notas/102026/APROAR NF 228 AGO OUT004.pdf):
+        NFS-e da Prefeitura de São Paulo impressa do navegador e escaneada; o
+        scanner gravou uma camada de 1196 caracteres reconhecida como japonês
+        ("PR断割TURÅ Do MUN-CipiO DE SÅo pAUしO"). Ela passava no portão global
+        (tem "CNPJ", > 200 caracteres), então o OCR nunca rodava, nenhum layout
+        casava e o PDF saía com zero notas ("parece ser baseado em imagem/scan
+        ou vazio").
+
+        Critério GENÉRICO, pela qualidade do texto e não pelo emissor: fração
+        de caracteres não brancos fora dos alfabetos latinos (Latin-1 + Latin
+        Extended, U+0000–U+024F) e da pontuação tipográfica comum
+        (U+2000–U+20CF: travessões, aspas, "€"). Documento fiscal brasileiro é
+        escrito em alfabeto latino; um PDF digital legítimo fica em ~0% (o
+        maior valor medido no lote real está registrado no teste). A camada
+        lixo desta nota fica em ~37%. Limiar de 10% em textos de 300+
+        caracteres não brancos — margem larga dos dois lados."""
+        nao_brancos = [c for c in texto if not c.isspace()]
+        if len(nao_brancos) < 300:
+            return False
+        estranhos = sum(
+            1 for c in nao_brancos
+            if ord(c) > 0x024F and not (0x2000 <= ord(c) <= 0x20CF)
+        )
+        return estranhos / len(nao_brancos) > 0.10
+
     def _reconstruir_texto_por_coordenadas(self) -> str:
         """Reconstrói o texto de uma página a partir da posição real de cada
         caractere (`LTChar.x0/y0`), em vez de confiar na ordem de leitura que
@@ -7587,6 +7617,22 @@ class SPPdfExtractor:
             if m_razao_linha and m_razao_linha.group(1).strip():
                 razao = m_razao_linha.group(1).strip()
 
+        # São Paulo escaneado: mesma situação do Barreiras acima — o campo
+        # "Nome/Razão Social" do modelo da Prefeitura ocupa uma linha só, e a
+        # linha seguinte pode começar com texto do LOGOTIPO do prestador
+        # impresso à esquerda do bloco (achado real 2026-11-04, APROAR nº
+        # 00000228: "...PATRIMONIAL LTDA\nAPROAR Endereço: ..." virava
+        # "APROAR PLANEJAMENTO PATRIMONIAL LTDA APROAR"). Relê limitado ao fim
+        # da linha do rótulo, com os mesmos stop patterns; só sobrepõe quando
+        # a leitura de linha é um PREFIXO não vazio da leitura achatada.
+        if self.layout == LAYOUT_SAO_PAULO_2 and razao:
+            m_razao_linha = re.search(
+                rf'(?:{p_extra})[:\s/]*((?:(?!{stop_patterns})[^\n])+)', bloco, re.IGNORECASE)
+            if m_razao_linha:
+                razao_linha = m_razao_linha.group(1).strip()
+                if razao_linha and razao.startswith(razao_linha):
+                    razao = razao_linha
+
         # Limpeza de ruídos de labels e pontuação inicial
         labels_limpeza = [
             relax("Nome / Razão Social"), relax("Nome/Razão Social"),
@@ -8231,6 +8277,16 @@ class SPPdfExtractor:
                         elif re.fullmatch(r'S/?N|\d+[A-Za-z]?', depois_sp, re.IGNORECASE):
                             end_data['logradouro'] = antes_sp
                             end_data['numero'] = depois_sp
+                        elif re.fullmatch(r'(\d+[A-Za-z]?)\s+(\S.*)', depois_sp):
+                            # "<logradouro>, <número> <complemento>" (achado
+                            # real 2026-11-04, tomador da APROAR nº 00000228:
+                            # "AVE TANCREDO NEVES, 1485 1485 - CAMINHO DAS
+                            # ARVORES") — número antes do complemento, em vez
+                            # de "S/N" com o par inteiro no complemento.
+                            m_num_comp = re.fullmatch(r'(\d+[A-Za-z]?)\s+(\S.*)', depois_sp)
+                            end_data['logradouro'] = antes_sp
+                            end_data['numero'] = m_num_comp.group(1)
+                            end_data['complemento'] = m_num_comp.group(2)
                         else:
                             end_data['logradouro'] = antes_sp
                             if depois_sp:
@@ -17467,7 +17523,10 @@ class SPPdfExtractor:
             NUM = r'([\d\.]*,\d{2})'
             m_grid = re.search(
                 r'Valor\s+Total\s+das\s+Dedu[çc][õo]es.*?Base\s+de\s+C[áa]lculo.*?'
-                r'Al[íi]quota.*?Valor\s+do\s+ISS.*?\n\s*'
+                # `[\s|]*`: a borda esquerda da caixa pode vir lida como "|"
+                # antes da linha de valores (achado real 2026-11-04, APROAR
+                # nº 00000228: "| 0,00 41.326,00 5,00% 2.066,30 0,00").
+                r'Al[íi]quota.*?Valor\s+do\s+ISS.*?\n[\s|]*'
                 + NUM + r'\s+' + NUM + r'\s+' + NUM + r'%?\s+' + NUM,
                 t, re.IGNORECASE | re.DOTALL)
             if m_grid:
@@ -17506,7 +17565,27 @@ class SPPdfExtractor:
                 r'IRRF\s*\(R\$\)\s+CSLL\s*\(R\$\)\s+COFINS\s*\(R\$\)\s+PIS/PASEP\s*\(R\$\)\s*\n\s*'
                 + NUM + r'\s+' + NUM + r'\s+' + NUM + r'\s+' + NUM,
                 t, re.IGNORECASE)
-            if m_federais:
+            inss = 0.0
+            ret_previdenciaria = self._sp2_retencoes_modelo_previdenciaria(t)
+            if ret_previdenciaria is not None:
+                # Modelo novo da grade (INSS | IRRF | COFINS | PIS | IPI +
+                # linha da CSLL) — ver `_sp2_retencoes_modelo_previdenciaria`.
+                # Tem precedência sobre `m_federais`: neste modelo a linha
+                # sintética do recorte antigo rotula INSS como IRRF.
+                inss, ir, cofins, pis, csll = ret_previdenciaria
+                liquido = round(val_serv - inss - ir - csll - cofins - pis, 2)
+                # Conferência com o "(=) Valor líquido: R$ ..." que o
+                # prestador costuma repetir na discriminação: divergência
+                # vira aviso (nunca troca o valor da grade).
+                m_liq = re.search(r'Valor\s+l[ií]quido\s*:?\s*R\s*[\$S]\s*([\d.]+,\d{2})', t, re.IGNORECASE)
+                if m_liq and abs(self._parse_valor(m_liq.group(1)) - liquido) > 0.011:
+                    aviso_liq = (
+                        f"Valor líquido calculado pela grade de retenções (R$ {liquido:.2f}) "
+                        f"diverge do impresso na discriminação (R$ {m_liq.group(1)}) - "
+                        "conferir as retenções federais na nota")
+                    if aviso_liq not in self._sp_avisos:
+                        self._sp_avisos.append(aviso_liq)
+            elif m_federais:
                 ir = self._parse_valor(m_federais.group(1))
                 csll = self._parse_valor(m_federais.group(2))
                 cofins = self._parse_valor(m_federais.group(3))
@@ -17528,6 +17607,7 @@ class SPPdfExtractor:
                 valor_csll=csll,
                 valor_cofins=cofins,
                 valor_pis=pis,
+                valor_inss=inss,
                 base_calculo=base,
                 aliquota=aliquota,
                 valor_iss=iss,
@@ -20092,10 +20172,40 @@ class SPPdfExtractor:
                     # de `_ocr_recut_grade_valores_sao_paulo`). Só dispara
                     # quando o rótulo "IRRF" aparece no texto (evita custo
                     # extra em notas cuja grade já sai legível).
-                    if re.search(r'IRRF', best_text, re.IGNORECASE):
+                    # Modelo novo da grade ("Contribuição Previdenciária -
+                    # Retida | IRRF | COFINS | PIS/PASEP | IPI" + linha
+                    # "Contribuições Sociais - Retidas" = CSLL): o rótulo
+                    # "IRRF" pode sumir da leitura de página inteira junto com
+                    # os valores das colunas IRRF/COFINS (achado real
+                    # 2026-11-04, APROAR nº 00000228) — o gatilho passa a
+                    # aceitar também o rótulo da 1ª coluna desse modelo.
+                    modelo_previdenciaria = re.search(
+                        r'Contribui\S*\s+Previdenci', best_text, re.IGNORECASE)
+                    if re.search(r'IRRF', best_text, re.IGNORECASE) or modelo_previdenciaria:
                         grade_sp = self._ocr_recut_grade_valores_sao_paulo(page, best_angle)
                         if grade_sp.strip():
                             best_text = f"{grade_sp}\n{best_text}"
+                    if modelo_previdenciaria:
+                        ret_sp = self._ocr_recut_retencoes_sao_paulo_previdenciaria(page, best_angle)
+                        if ret_sp.strip():
+                            best_text = f"{ret_sp}\n{best_text}"
+
+                    # Código do Serviço: ver `_ocr_recut_codigo_servico_sao_paulo`.
+                    # Só quando a leitura atual não traz "NNNN(N) - <texto>"
+                    # logo após o rótulo (mesma regra do parser SP escaneado).
+                    m_lab_cod = re.search(r'C[oó]digo\s+do\s+Servi[çc]o', best_text, re.IGNORECASE)
+                    if not (m_lab_cod and re.search(
+                            r'(\d{4,5})\s*-\s*[A-Za-zÀ-ú]',
+                            best_text[m_lab_cod.end(): m_lab_cod.end() + 120])):
+                        cod_sp = self._ocr_recut_codigo_servico_sao_paulo(page, best_angle)
+                        if cod_sp.strip():
+                            best_text = f"{cod_sp}{best_text}"
+
+                    # Discriminação em fonte fina (Courier claro) que a
+                    # leitura de página inteira descarta quase toda — ver
+                    # `_ocr_recut_discriminacao_sao_paulo`.
+                    best_text = self._sp_substituir_discriminacao_pobre(
+                        best_text, self._ocr_recut_discriminacao_sao_paulo(page, best_angle))
 
                 # Ribeirão Preto/SP (PDF digital): a caixa "Número / Data de
                 # emissão / Código de verificação" só recupera o rótulo
@@ -23605,6 +23715,25 @@ class SPPdfExtractor:
                 if m_cod:
                     cod_norm = re.sub(r'[^A-Z0-9-]', '', m_cod.group(1).upper().replace('.', '-'))
                     linhas.append(f"Código de Verificação\n{cod_norm}")
+                    # Achado real 2026-11-04 (APROAR nº 00000228, impresso
+                    # "VI8Q-C4WQ"): o modelo 'por' do Tesseract lê o "8" como
+                    # "B" em todos os zooms/PSMs testados (3x a 12x), o 'eng'
+                    # lê "8". Sem validação em outras notas para escolher um
+                    # dos dois, o valor do XML continua o da leitura 'por'
+                    # (comportamento validado nas notas anteriores) e a
+                    # divergência B/8 vira AVISO com a leitura alternativa —
+                    # o usuário confere o caractere na nota.
+                    try:
+                        texto_eng = pytesseract.image_to_string(
+                            img_cod.crop((x0, y0, x1, y1)).convert('L'), lang='eng', config='--psm 6')
+                    except Exception:
+                        texto_eng = ''
+                    m_eng = re.search(r'\b([A-Z0-9]{3,5}[-.][A-Z0-9]{3,6})\b', texto_eng, re.IGNORECASE)
+                    if m_eng:
+                        alt = re.sub(r'[^A-Z0-9-]', '', m_eng.group(1).upper().replace('.', '-'))
+                        if alt != cod_norm and len(alt) == len(cod_norm) and all(
+                                a == b or {a, b} == {'B', '8'} for a, b in zip(alt, cod_norm)):
+                            linhas.append(f"SP_COD_VERIF_ALTERNATIVO: {alt}")
 
             return "\n".join(linhas) + ("\n" if linhas else "")
         except Exception:
@@ -23839,6 +23968,306 @@ class SPPdfExtractor:
             return "\n".join(linhas) + ("\n" if linhas else "")
         except Exception:
             return ""
+
+    @staticmethod
+    def _sp_localizar_palavras(page, angle: int, zoom: float):
+        """`image_to_data` da página inteira no zoom pedido (com a mesma
+        rotação do `_ocr_page`). Devolve (imagem, dicionário do Tesseract)."""
+        import pymupdf
+        import pytesseract
+        from PIL import Image
+        import io
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        if angle:
+            img = img.rotate(-angle, expand=True)
+        data = pytesseract.image_to_data(img, lang='por', output_type=pytesseract.Output.DICT)
+        return img, data
+
+    @classmethod
+    def _ocr_recut_retencoes_sao_paulo_previdenciaria(cls, page, angle: int = 0) -> str:
+        """Releitura das retenções federais no MODELO NOVO da grade da NFS-e
+        de São Paulo escaneada: 1ª linha "Contribuição Previdenciária - Retida
+        (R$) | IRRF (R$) | COFINS (R$) | PIS/PASEP (R$) | IPI (R$)", 2ª linha
+        "Contribuições Sociais - Retidas (R$)" (= CSLL) | "Descrição
+        Contribuições Sociais - Retidas".
+
+        Achado real 2026-11-04 (APROAR PLANEJAMENTO PATRIMONIAL LTDA nº
+        00000228, impressa do navegador e escaneada): a leitura de página
+        inteira perde as colunas IRRF e COFINS (rótulos E valores: "0,00
+        268,62 -"), e o recorte do modelo antigo (`_ocr_recut_grade_valores_
+        sao_paulo`) rotula os 4 primeiros números como IRRF/CSLL/COFINS/PIS —
+        neste modelo eles são INSS/IRRF/COFINS/PIS, e a CSLL fica na linha de
+        baixo. Recorta cada linha entre o seu rótulo e o rótulo da linha
+        seguinte (faixas medidas na própria página, não percentuais fixos) e
+        lê em 3 zooms (3x/4x/6x, PSM 6 — medido: os três devolvem "0,00
+        619,89 1.239,78 268,62"). Só emite o que pelo menos DOIS zooms leram
+        igual (leituras independentes da mesma tinta); sem concordância, não
+        emite nada e o parser cai na sentinela + aviso.
+
+        Devolve linhas sintéticas `SP2RET_FEDERAIS: <inss> <irrf> <cofins>
+        <pis>` e `SP2RET_CSLL: <csll>` (marcadores que não colidem com nenhum
+        rótulo real)."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            zoom_locate = 3.0
+            _img, data = cls._sp_localizar_palavras(page, angle, zoom_locate)
+            textos = data['text']
+            i_prev = next((i for i, tx in enumerate(textos)
+                           if re.search(r'Previdenci', tx or '', re.IGNORECASE)), None)
+            if i_prev is None:
+                return ""
+            y_prev = data['top'][i_prev]
+            i_soc = next((i for i, tx in enumerate(textos)
+                          if re.search(r'Sociais', tx or '', re.IGNORECASE)
+                          and data['top'][i] > y_prev + data['height'][i_prev] * 1.5), None)
+            if i_soc is None:
+                return ""
+            y_soc = data['top'][i_soc]
+            altura = y_soc - y_prev
+            if altura <= 0:
+                return ""
+
+            NUM = r'\d{1,3}(?:\.\d{3})*,\d{2}'
+            votos_fed, votos_csll = Counter(), Counter()
+            for zoom in (3.0, 4.0, 6.0):
+                escala = zoom / zoom_locate
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                if angle:
+                    img = img.rotate(-angle, expand=True)
+                w = img.size[0]
+                faixa1 = img.crop((0, int(y_prev * escala), w, int(y_soc * escala)))
+                faixa2 = img.crop((0, int(y_soc * escala), w, int((y_soc + altura) * escala)))
+                t1 = pytesseract.image_to_string(faixa1, lang='por', config='--psm 6')
+                t2 = pytesseract.image_to_string(faixa2, lang='por', config='--psm 6')
+                # Linha de valores = a 1ª linha (após a dos rótulos) com
+                # valores monetários. IPI costuma vir "-"; se vier valor, é o
+                # 5º e é ignorado (não tem tag no ABRASF).
+                for ln in t1.split('\n')[1:]:
+                    vals = re.findall(NUM, ln)
+                    if vals:
+                        if len(vals) in (4, 5):
+                            votos_fed[tuple(vals[:4])] += 1
+                        break
+                for ln in t2.split('\n')[1:]:
+                    vals = re.findall(NUM, ln)
+                    if vals:
+                        if len(vals) == 1:
+                            votos_csll[vals[0]] += 1
+                        break
+
+            linhas = []
+            if votos_fed:
+                fed, n = votos_fed.most_common(1)[0]
+                if n >= 2:
+                    linhas.append("SP2RET_FEDERAIS: " + " ".join(fed))
+            if votos_csll:
+                csll, n = votos_csll.most_common(1)[0]
+                if n >= 2:
+                    linhas.append(f"SP2RET_CSLL: {csll}")
+            return "\n".join(linhas) + ("\n" if linhas else "")
+        except Exception:
+            return ""
+
+    @classmethod
+    def _ocr_recut_discriminacao_sao_paulo(cls, page, angle: int = 0) -> str:
+        """Releitura do corpo da caixa "DISCRIMINAÇÃO DE SERVIÇOS" da NFS-e de
+        São Paulo escaneada, entre o título da caixa e a linha "VALOR TOTAL DO
+        SERVIÇO" (faixa medida na própria página), em zoom 4x/PSM 6.
+
+        Achado real 2026-11-04 (APROAR nº 00000228): o texto livre vem em
+        fonte monoespaçada fina e clara; a leitura de página inteira só
+        recupera "serviços prestados." e descarta as linhas "(=) Valor
+        liquido: R$ 38.784,45 / PIS: R$ 268,62 / Cofins: ... / CSLL: ... /
+        IRRF: ..." — o recorte devolve todas. Devolve "" quando não localiza
+        as duas âncoras."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            zoom_locate = 3.0
+            _img, data = cls._sp_localizar_palavras(page, angle, zoom_locate)
+            textos = data['text']
+            i_tit = next((i for i, tx in enumerate(textos)
+                          if re.search(r'DISCRIMINA', tx or '', re.IGNORECASE)), None)
+            if i_tit is None:
+                return ""
+            y_tit, h_tit = data['top'][i_tit], data['height'][i_tit]
+            i_tot = next((i for i, tx in enumerate(textos)
+                          if re.fullmatch(r'TOTAL', (tx or '').strip(), re.IGNORECASE)
+                          and data['top'][i] > y_tit + h_tit * 2
+                          and any(re.search(r'SERVI', textos[k] or '', re.IGNORECASE)
+                                  for k in range(i + 1, min(i + 4, len(textos))))), None)
+            if i_tot is None:
+                return ""
+            y_tot = data['top'][i_tot]
+
+            zoom = 4.0
+            escala = zoom / zoom_locate
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            if angle:
+                img = img.rotate(-angle, expand=True)
+            w = img.size[0]
+            y0 = int((y_tit + h_tit * 1.05) * escala)
+            y1 = int((y_tot - h_tit * 0.3) * escala)
+            if y1 <= y0:
+                return ""
+            return pytesseract.image_to_string(
+                img.crop((0, y0, w, y1)).convert('L'), lang='por', config='--psm 6')
+        except Exception:
+            return ""
+
+    @classmethod
+    def _ocr_recut_codigo_servico_sao_paulo(cls, page, angle: int = 0) -> str:
+        """Releitura da linha "Código do Serviço" da NFS-e de São Paulo
+        escaneada (código de 5 dígitos do cadastro paulistano + descrição).
+
+        Achado real 2026-11-04 (APROAR nº 00000228): a leitura de página
+        inteira devolve "715 - Assessoria ou consultoria ..." (perde o "03"
+        de "03115") e o recorte de `_ocr_recut_grade_valores_sao_paulo` só
+        roda ancorado no rótulo "IRRF", ausente aqui. Ancora no próprio
+        rótulo "Código do Serviço" e lê 3 alturas de faixa em zoom 4x/5x/6x
+        (tons de cinza, PSM 6); um risco de caneta sobre o rótulo faz parte
+        das leituras sair "037115" (6 dígitos, descartada). Só emite o código
+        com ao menos 2 votos e maioria estrita entre as leituras válidas."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            zoom_locate = 3.0
+            _img, data = cls._sp_localizar_palavras(page, angle, zoom_locate)
+            textos = data['text']
+            i_cod = next((i for i in range(len(textos) - 2)
+                          if re.fullmatch(r'C[oó]digo', (textos[i] or '').strip(), re.IGNORECASE)
+                          and re.fullmatch(r'do', (textos[i + 1] or '').strip(), re.IGNORECASE)
+                          and re.match(r'Servi', textos[i + 2] or '', re.IGNORECASE)), None)
+            if i_cod is None:
+                return ""
+            y_top, h_lab = data['top'][i_cod], data['height'][i_cod]
+
+            votos = Counter()
+            for zoom in (4.0, 5.0, 6.0):
+                escala = zoom / zoom_locate
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                if angle:
+                    img = img.rotate(-angle, expand=True)
+                img = img.convert('L')
+                # Só a metade ESQUERDA da linha (o código fica no início dela):
+                # medido, a linha inteira leva o Tesseract a fundir o risco de
+                # caneta ao código ("03715"/"037115" em 5 de 9 leituras); a
+                # metade esquerda lê "03115" em 8 de 9.
+                w = img.size[0] // 2
+                for k in (2.5, 3.0, 3.5):
+                    txt = pytesseract.image_to_string(
+                        img.crop((0, int(y_top * escala), w, int((y_top + h_lab * k) * escala))),
+                        lang='por', config='--psm 6')
+                    m = re.search(r'(?<!\d)(\d{5})\s*-\s*[A-Za-zÀ-ú]', txt)
+                    if m:
+                        votos[m.group(1)] += 1
+            if not votos:
+                return ""
+            (cod, n), *resto = votos.most_common()
+            # Maioria estrita entre as leituras válidas e ao menos 2 votos.
+            if n >= 2 and all(n > r[1] for r in resto):
+                return f"Código do Serviço\n{cod} - (releitura dedicada)\n"
+            return ""
+        except Exception:
+            return ""
+
+    def _sp2_retencoes_modelo_previdenciaria(self, t: str):
+        """Retenções federais do MODELO NOVO da grade da NFS-e de São Paulo
+        escaneada (ver `_ocr_recut_retencoes_sao_paulo_previdenciaria`):
+        devolve (inss, irrf, cofins, pis, csll) ou None quando a nota não é
+        desse modelo.
+
+        Fontes, em ordem: (1) marcadores votados `SP2RET_FEDERAIS`/
+        `SP2RET_CSLL` do recorte; (2) a própria linha da leitura de página
+        inteira, só se trouxer os 4 valores (INSS/IRRF/COFINS/PIS — 5 com o
+        IPI). Uma linha com MENOS valores perdeu colunas (APROAR nº 00000228:
+        "| 0,00 268,62 -") e nunca é distribuída por posição. Sem fonte
+        confiável: zeros (sentinela) + aviso — nunca o recorte do modelo
+        antigo, que neste modelo lê INSS como IRRF."""
+        if not re.search(r'Contribui\S*\s+Previdenci', t, re.IGNORECASE):
+            return None
+        NUM = r'\d{1,3}(?:\.\d{3})*,\d{2}'
+        fed = csll = None
+
+        m = re.search(r'SP2RET_FEDERAIS:\s*(' + NUM + r')\s+(' + NUM + r')\s+(' + NUM + r')\s+(' + NUM + r')', t)
+        if m:
+            fed = [self._parse_valor(g) for g in m.groups()]
+        else:
+            m_lin = re.search(r'Contribui\S*\s+Previdenci[^\n]*PIS[^\n]*\n[\s|]*([^\n]*)', t, re.IGNORECASE)
+            if m_lin:
+                vals = re.findall(NUM, m_lin.group(1))
+                if len(vals) in (4, 5):
+                    fed = [self._parse_valor(v) for v in vals[:4]]
+
+        m = re.search(r'SP2RET_CSLL:\s*(' + NUM + r')', t)
+        if m:
+            csll = self._parse_valor(m.group(1))
+        elif not re.search(r'Contribui\S*\s+Sociais', t, re.IGNORECASE):
+            # Linha da CSLL ausente do texto (nem o rótulo): mantém o
+            # comportamento anterior (0,00 sem aviso) — a nota BOM NEGÓCIO nº
+            # 00331020 (`test_sao_paulo2_scan_layout.py`) não traz essa linha
+            # no OCR e tem todas as retenções zeradas.
+            csll = 0.0
+        else:
+            m_lin = re.search(r'Contribui\S*\s+Sociais\s*-\s*Retidas\s*\(R\$\)[^\n]*\n[\s|]*([^\n]*)', t, re.IGNORECASE)
+            if m_lin:
+                vals = re.findall(NUM, m_lin.group(1))
+                if len(vals) == 1:
+                    csll = self._parse_valor(vals[0])
+
+        ilegiveis = []
+        if fed is None:
+            fed = [0.0, 0.0, 0.0, 0.0]
+            ilegiveis.append("INSS/IRRF/COFINS/PIS")
+        if csll is None:
+            csll = 0.0
+            ilegiveis.append("CSLL (Contribuições Sociais - Retidas)")
+        if ilegiveis:
+            aviso = (
+                "Retenções federais ilegíveis no scan (" + ", ".join(ilegiveis) +
+                ") - gravadas como 0,00; conferir na nota antes de importar")
+            if aviso not in self._sp_avisos:
+                self._sp_avisos.append(aviso)
+        inss, ir, cofins, pis = fed
+        return inss, ir, cofins, pis, csll
+
+    @staticmethod
+    def _sp_substituir_discriminacao_pobre(texto: str, recut: str) -> str:
+        """Troca o corpo da discriminação lido na página inteira pela
+        releitura dedicada SÓ quando a releitura traz claramente mais conteúdo
+        (pelo menos o dobro de letras/dígitos e +20). Nota cuja discriminação
+        já sai legível na página inteira fica intocada."""
+        if not recut or not recut.strip():
+            return texto
+        m = re.search(
+            r'(DISCRIMINA[ÇC][ÃA]O\s+D[EO]S?\s+SERVI[ÇC]OS[^\n]*\n)(.*?)(\n[^\n]*VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O)',
+            texto, re.IGNORECASE | re.DOTALL)
+        if not m:
+            return texto
+        n_orig = len(re.findall(r'\w', m.group(2)))
+        n_novo = len(re.findall(r'\w', recut))
+        if n_novo < max(2 * n_orig, n_orig + 20):
+            return texto
+        # Linhas com menos de 2 letras/dígitos são respingo do scan ("é").
+        corpo = '\n'.join(ln.strip() for ln in recut.split('\n')
+                          if len(re.findall(r'\w', ln)) >= 2)
+        return texto[:m.start(2)] + corpo + texto[m.end(2):]
 
     @staticmethod
     def _ocr_numero_box_cuiaba(page) -> str:
@@ -24880,6 +25309,13 @@ class SPPdfExtractor:
             avisos.extend(self._feira_nac_avisos)
         if self.layout == LAYOUT_SAO_PAULO_2:
             avisos.extend(a for a in self._sp_avisos if a not in avisos)
+            # Ver `_ocr_header_box_sao_paulo`: leituras 'por' × 'eng' do
+            # Código de Verificação divergem só em B/8.
+            m_alt = re.search(r'SP_COD_VERIF_ALTERNATIVO:\s*(\S+)', self.raw_text)
+            if m_alt and codigo_verificacao and m_alt.group(1) != codigo_verificacao:
+                avisos.append(
+                    f"Código de Verificação ambíguo no scan (B/8): lido \"{codigo_verificacao}\", "
+                    f"leitura alternativa \"{m_alt.group(1)}\" - conferir na nota")
         if self.layout == LAYOUT_LOCALIZA:
             avisos.extend(a for a in self.__dict__.get('_localiza_avisos', []) if a not in avisos)
         if self.layout == LAYOUT_NACIONAL and re.search(r'\*{3,}', self.raw_text):
@@ -27404,6 +27840,13 @@ class SPPdfExtractor:
                 precisa_ocr = True
                 eh_patologia_sem_espacos = True
                 motivo = "texto digital sem espaços entre palavras (patologia do gerador de PDF)"
+
+            # Fallback por QUALIDADE da camada de texto: camada embutida longa,
+            # mas lixo de OCR de terceiros em alfabeto não latino — ver
+            # `_camada_texto_ilegivel` (São Paulo escaneado, APROAR nº 228).
+            if not precisa_ocr and self._camada_texto_ilegivel(pages[idx]):
+                precisa_ocr = True
+                motivo = "camada de texto ilegível (OCR de terceiros em alfabeto não latino)"
 
             if precisa_ocr:
                 if eh_patologia_sem_espacos:
