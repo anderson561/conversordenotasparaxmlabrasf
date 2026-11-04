@@ -3602,6 +3602,11 @@ class SPPdfExtractor:
                 chave = re.sub(r'\D', '', m_chave.group(0))
                 if len(chave) >= 50:
                     n_nf = chave[23:36].lstrip('0')
+                    # DANFSe v2.0 DIGITAL: o impresso é exato e prevalece
+                    # quando diverge da chave (com aviso) — ver o helper.
+                    n_impresso = self._danfse_v2_numero_impresso_divergente(chave)
+                    if n_impresso:
+                        return n_impresso
                     if n_nf:
                         return n_nf
 
@@ -3672,6 +3677,44 @@ class SPPdfExtractor:
                 return m_filename.group(1).strip()
 
         return '00000000'
+
+    def _danfse_v2_numero_impresso_divergente(self, chave: str) -> Optional[str]:
+        """Número IMPRESSO no campo "NÚMERO DA NFS-E" de uma DANFSe v2.0
+        DIGITAL quando ele diverge do nNFSe codificado na chave de acesso.
+
+        A chave vale mais que o impresso só onde o impresso não é confiável
+        (OCR). No texto embutido o valor logo abaixo do rótulo é exato, e há
+        geradores ("Ambiente Gerador: Sistema Próprio do Município") cuja
+        chave NÃO casa com o número impresso — achado real 2026-11-04 (DANFSe
+        v2.0 de Teresina/PI, "NF 3E ENG.pdf"): impresso nº 53, chave com
+        nNFSe 47 e cMun 2207801. O XML saía com o número da chave. Devolve o
+        impresso (e registra o aviso) só nesse caso; concordância, scan ou
+        rótulo sem valor numérico isolado na linha seguinte -> None (o
+        chamador segue com a chave, como sempre)."""
+        if self.layout != LAYOUT_NACIONAL_REFORMA or self._pagina_e_escaneada():
+            return None
+        t = self.raw_text or ''
+        m = re.search(r'N[UÚ]MERO\s+DA\s+NFS-?E[ \t]*\n[ \t]*(\d{1,15})[ \t]*\n', t, re.IGNORECASE)
+        if not m:
+            return None
+        impresso = m.group(1).lstrip('0')
+        n_chave = chave[23:36].lstrip('0')
+        if not impresso or impresso == n_chave:
+            return None
+        detalhe_chave, detalhe_imp = '', ''
+        m_mun = re.search(r'Munic[íi]pio\s*:\s*([^\n/]+?)\s*/\s*([A-Za-z]{2})\b', t)
+        if m_mun:
+            nome, uf = re.sub(r'\s+', ' ', m_mun.group(1)).strip(), m_mun.group(2).upper()
+            cod = _ibge_resolver.extract_and_validate(nome, uf, city_hint=nome, raw_doc_text=t) or ''
+            if cod and cod != chave[:7]:
+                detalhe_chave = f" / município {chave[:7]}"
+                detalhe_imp = f" / {nome}/{uf} ({cod})"
+        aviso = (f"Chave de acesso codifica nº {n_chave}{detalhe_chave}, diverge do impresso "
+                 f"nº {impresso}{detalhe_imp} - usado o número impresso; confira a chave de acesso")
+        avisos = self.__dict__.setdefault('_reforma_avisos', [])
+        if aviso not in avisos:
+            avisos.append(aviso)
+        return impresso
 
     def _danfse_chave_rodape_confirmada(self) -> Optional[str]:
         """Chave de acesso do rodapé da DANFSe ("Nº NFS-e / CHAVE NFS-e" ->
@@ -13187,7 +13230,41 @@ class SPPdfExtractor:
                 regiao_ = secoes[0] if is_prestador else secoes[1]
                 # Lido só na própria seção: a 1ª (única) ocorrência é a dela.
                 return ([None] * idx) + _colher_em(regiao_, label_re, aceita)
+            cabecalho = _colher_cabecalho(label_re, aceita)
+            if cabecalho is not None:
+                return cabecalho + _colher_em(regiao_, label_re, aceita)
             return _colher_em(regiao_, label_re, aceita)
+
+        def _colher_cabecalho(label_re, aceita):
+            """Coluna do PRESTADOR despejada ANTES do cabeçalho "PRESTADOR /
+            FORNECEDOR" no texto digital (pdfminer).
+
+            Achado real 2026-11-04 (DANFSe v2.0 de Teresina/PI, "Sistema
+            Próprio do Município", "NF 3E ENG.pdf"): "Telefone" e "Código IBGE
+            / CEP 2211001 / 64057-310" do prestador saem no topo da página,
+            junto do QR Code, e só a coluna do TOMADOR fica depois do
+            cabeçalho. Com uma única ocorrência na região, o ordinal 0 (o do
+            prestador) pegava a do tomador — prestador com IBGE/CEP de Lauro
+            de Freitas e tomador sem CEP. Só vale quando o rótulo aparece
+            EXATAMENTE uma vez antes do cabeçalho e uma vez na região (par
+            prestador/tomador completo); o valor do cabeçalho é lido só até o
+            fim do próprio parágrafo ou o próximo rótulo de coluna (campo em
+            branco -> None, sem escorregar para a chave de acesso logo
+            abaixo). Página de OCR não entra: lá não há parágrafos confiáveis."""
+            if not m_prest or self._pagina_e_escaneada():
+                return None
+            antes = t[:m_prest.start()]
+            oc_antes = list(re.finditer(label_re, antes, re.IGNORECASE))
+            if len(oc_antes) != 1 or len(re.findall(label_re, regiao, re.IGNORECASE)) != 1:
+                return None
+            resto = antes[oc_antes[0].end():]
+            m_corte = re.search(r'\n[ \t]*\n|' + _colunas_entidade, resto, re.IGNORECASE)
+            janela = resto[:m_corte.start()] if m_corte else resto
+            for linha in janela.split('\n'):
+                linha = linha.strip()
+                if linha:
+                    return [aceita(linha)]
+            return [None]
 
         def _colher_em(regiao, label_re, aceita):
             ocorrencias = list(re.finditer(label_re, regiao, re.IGNORECASE))
@@ -13336,7 +13413,9 @@ class SPPdfExtractor:
         ibge_cep = _pega(_colher(r'(?:C[óo]digo\s+)?IBGE\s*[/\[|!(]?\s*CEP', _ac_ibge_cep)) or ('', '')
         email = _pega(_colher(r'E-?\s*mail', _ac_email))
         telefone = _pega(_colher(r'Telefone', _ac_telefone))
-        inscricao = _pega(_colher(r'Indicador\s+Municipal\s*\(Inscri[çc][ãa]o\)', _ac_im))
+        # "Inscrição Municipal" (sem "Indicador"): rótulo do gerador "Sistema
+        # Próprio do Município" de Teresina/PI ("NF 3E ENG.pdf", IM 822741).
+        inscricao = _pega(_colher(r'Indicador\s+Municipal\s*\(Inscri[çc][ãa]o\)|Inscri[çc][ãa]o\s+Municipal', _ac_im))
 
         municipio, uf = mun_uf
         cod_mun, cep = ibge_cep
