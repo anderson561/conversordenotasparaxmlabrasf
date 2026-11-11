@@ -8,6 +8,29 @@ import json
 from datetime import datetime
 
 
+def _configurar_saida_console(streams=None) -> None:
+    """Torna stdout/stderr tolerantes a caracteres fora da codificação do console.
+
+    O console do Windows costuma ser cp1252 com errors="strict": um nome de PDF com
+    acento em forma decomposta (ex.: "c" + U+0327, gravado por scanners) derrubava a
+    conversão inteira com UnicodeEncodeError num simples print. Aqui mantemos a
+    codificação do console e só trocamos o tratamento de erro para "replace" — o
+    caractere sai como "?" na tela, mas a conversão segue. Não afeta caminhos de
+    arquivo (só a exibição). Streams None (exe sem console) ou sem reconfigure são
+    ignorados.
+    """
+    if streams is None:
+        streams = (sys.stdout, sys.stderr)
+    for stream in streams:
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            # Stream sem reconfigure (não é TextIOWrapper) ou já fechado: segue sem ajuste.
+            continue
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Conversor PDF NFS-e / Contratos de Locação para ABRASF XML")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -68,4 +91,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    _configurar_saida_console()  # antes de qualquer saída (ver docstring)
     main()
