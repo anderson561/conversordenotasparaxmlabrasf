@@ -34,8 +34,44 @@ from . import fatura_locacao_equipamentos as _fat_loc
 from . import localiza_fatura as _localiza
 from . import danfe_produto_texto as _danfe_txt
 from datetime import datetime
+import logging
 
 _ibge_resolver = IBGEResolver()
+
+logger = logging.getLogger(__name__)
+
+
+def _render_excede_limite_pil(page, zoom: float) -> bool:
+    """True quando o render da página INTEIRA em `zoom` daria uma imagem que o
+    `Image.open` do PIL recusa com `DecompressionBombError` (mais de
+    `2 * Image.MAX_IMAGE_PIXELS` pixels, lido em runtime; `None` = sem limite).
+
+    Achado real 2026-11-11 (scan "Digitalização em 6 de nov. de 2026", página
+    declarada 2336x3520 pt, 16x um A4): os recortes de zoom fixo calibrados
+    para A4 renderizavam pixmaps de 0,85 a 1,9 GB, que em seguida morriam no
+    `Image.open` e caíam no `except` do recorte (valor vazio). Os recortes
+    consultam esta função ANTES do `get_pixmap` e devolvem direto o mesmo valor
+    de falha — mesmo resultado, sem o pico de memória nem o tempo perdido.
+
+    O tamanho usa o mesmo arredondamento do pymupdf (`irect` do retângulo
+    transformado — conferido contra `pix.width * pix.height`). Qualquer erro
+    ao medir devolve False (o recorte segue o caminho de sempre)."""
+    try:
+        import pymupdf
+        from PIL import Image
+        limite = Image.MAX_IMAGE_PIXELS
+        if limite is None:
+            return False
+        ir = (page.rect * pymupdf.Matrix(zoom, zoom)).irect
+        pixels = ir.width * ir.height
+    except Exception as e:  # noqa: BLE001
+        logger.debug("guarda de pixels: não deu para medir a página (%s)", e)
+        return False
+    if pixels > 2 * limite:
+        logger.debug("render de página inteira pulado: %dx%d px em zoom %s excede o limite do PIL (%d px)",
+                     ir.width, ir.height, zoom, 2 * limite)
+        return True
+    return False
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -12211,6 +12247,8 @@ class SPPdfExtractor:
                 page = doc[page_idx]
 
                 zoom_loc = 4.0
+                if _render_excede_limite_pil(page, zoom_loc):
+                    return ''
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom_loc, zoom_loc))
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 data = pytesseract.image_to_data(img, lang='por', config='--psm 6', output_type=Output.DICT)
@@ -15609,6 +15647,8 @@ class SPPdfExtractor:
             pg = doc[pagina_idx]
 
             zoom0 = 4
+            if _render_excede_limite_pil(pg, zoom0):
+                return ''
             pix0 = pg.get_pixmap(matrix=pymupdf.Matrix(zoom0, zoom0))
             img0 = Image.open(_io.BytesIO(pix0.tobytes("png")))
             dados = pytesseract.image_to_data(img0, lang="por", output_type=pytesseract.Output.DICT)
@@ -20804,6 +20844,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 4.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
@@ -20917,6 +20959,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 6.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por')
@@ -21239,6 +21283,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 3.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             if angle:
@@ -21475,6 +21521,8 @@ class SPPdfExtractor:
             # não repetições do mesmo ponto.
             candidatos = []
             for zoom, psm in ((3.0, 6), (4.5, 6), (6.0, 6), (7.0, 4), (8.0, 4), (9.0, 4)):
+                if _render_excede_limite_pil(page, zoom):
+                    return ""
                 texto = _tentativa(zoom, psm)
                 m = re.search(r'N[uú]mero\s+da\s+Nota\D{0,20}(\d{4,10})', texto, re.IGNORECASE)
                 if m:
@@ -21553,8 +21601,12 @@ class SPPdfExtractor:
             def _tem_numero_valido(texto_ocr):
                 return bool(re.search(r'N[uú]mero\s+da\s+Nota\D{0,15}?(\d{3,10})', texto_ocr, re.IGNORECASE | re.DOTALL))
 
+            if _render_excede_limite_pil(page, 4.5):
+                return ""
             tentativas = [_tentativa(4.5, 0.11, 6)]
             for zoom, hfrac, psm in ((4.5, 0.16, 6), (8.0, 0.16, 4)):
+                if _render_excede_limite_pil(page, zoom):
+                    return ""
                 tentativas.append(_tentativa(zoom, hfrac, psm))
 
             for t in tentativas:
@@ -22010,6 +22062,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 6.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             w, h = img.size
@@ -22051,6 +22105,8 @@ class SPPdfExtractor:
 
             melhor = ""
             for zoom in (5.0, 6.0, 7.0):
+                if _render_excede_limite_pil(page, zoom):
+                    return ""
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 if angle:
@@ -22123,6 +22179,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 3.0):
+                return ""
             pix_lo = page.get_pixmap(matrix=pymupdf.Matrix(3.0, 3.0))
             img_lo = Image.open(io.BytesIO(pix_lo.tobytes("png")))
             data = pytesseract.image_to_data(img_lo, lang='por', output_type=Output.DICT)
@@ -22183,6 +22241,8 @@ class SPPdfExtractor:
             import io
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return None
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
@@ -22200,6 +22260,8 @@ class SPPdfExtractor:
 
             zoom_final = 10.0
             escala = zoom_final / zoom_locate
+            if _render_excede_limite_pil(page, zoom_final):
+                return None
             pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
             img_f = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
             w_f, h_f = img_f.size
@@ -22241,6 +22303,8 @@ class SPPdfExtractor:
             import io
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return ""
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             if angle:
@@ -22260,6 +22324,8 @@ class SPPdfExtractor:
 
             zoom_final = 8.0
             escala = zoom_final / zoom_locate
+            if _render_excede_limite_pil(page, zoom_final):
+                return ""
             pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
             img_f = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
             if angle:
@@ -22314,6 +22380,8 @@ class SPPdfExtractor:
             import io
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return None
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
@@ -22336,6 +22404,8 @@ class SPPdfExtractor:
 
             zoom_final = 10.0
             escala = zoom_final / zoom_locate
+            if _render_excede_limite_pil(page, zoom_final):
+                return None
             pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
             img_f = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
             w_f, h_f = img_f.size
@@ -22389,6 +22459,8 @@ class SPPdfExtractor:
             import io
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return None
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
@@ -22413,6 +22485,8 @@ class SPPdfExtractor:
 
             zoom_final = 12.0
             escala = zoom_final / zoom_locate
+            if _render_excede_limite_pil(page, zoom_final):
+                return None
             pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
             img_full = Image.open(io.BytesIO(pix_f.tobytes("png"))).convert('L')
             w_f, h_f = img_full.size
@@ -22498,6 +22572,8 @@ class SPPdfExtractor:
             import io
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return None
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             if angle:
@@ -22511,6 +22587,8 @@ class SPPdfExtractor:
 
             zoom_final = 8.0
             escala = zoom_final / zoom_locate
+            if _render_excede_limite_pil(page, zoom_final):
+                return None
             pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
             img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
             if angle:
@@ -22559,6 +22637,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 8.0):
+                return None
             pix = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             w, h = img.size
@@ -22604,6 +22684,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 8.0):
+                return None
             pix = page.get_pixmap(matrix=pymupdf.Matrix(8.0, 8.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             w, h = img.size
@@ -22659,6 +22741,8 @@ class SPPdfExtractor:
             import collections
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return None
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             data = pytesseract.image_to_data(img_l, lang='por', output_type=pytesseract.Output.DICT)
@@ -22726,6 +22810,8 @@ class SPPdfExtractor:
             import pytesseract
             from PIL import Image
             import io
+            if _render_excede_limite_pil(page, cls._SSA_ZOOM_PALAVRAS):
+                return None
             pix = page.get_pixmap(matrix=pymupdf.Matrix(cls._SSA_ZOOM_PALAVRAS, cls._SSA_ZOOM_PALAVRAS))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_data(img, lang='por', output_type=pytesseract.Output.DICT)
@@ -22782,6 +22868,8 @@ class SPPdfExtractor:
             from collections import Counter
 
             zoom_a = 4.0
+            if _render_excede_limite_pil(page, zoom_a):
+                return ''
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom_a, zoom_a))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             w, h = img.size
@@ -23016,6 +23104,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 5.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             if angle:
@@ -23603,6 +23693,8 @@ class SPPdfExtractor:
                 return pytesseract.image_to_string(crop_img.convert('L'), lang='por', config='--psm 6')
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return ""
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             if angle:
@@ -23617,6 +23709,8 @@ class SPPdfExtractor:
 
             zoom_final = 6.0
             escala = zoom_final / zoom_locate
+            if _render_excede_limite_pil(page, zoom_final):
+                return ""
             pix_f = page.get_pixmap(matrix=pymupdf.Matrix(zoom_final, zoom_final))
             img_f = Image.open(io.BytesIO(pix_f.tobytes("png")))
             if angle:
@@ -23804,6 +23898,8 @@ class SPPdfExtractor:
                 # acima o "I" de sobra persiste ("BWP2-LRIZ", perdendo o "3").
                 zoom_cod = 10.0
                 escala_cod = zoom_cod / zoom_locate
+                if _render_excede_limite_pil(page, zoom_cod):
+                    return ""
                 pix_cod = page.get_pixmap(matrix=pymupdf.Matrix(zoom_cod, zoom_cod))
                 img_cod = Image.open(io.BytesIO(pix_cod.tobytes("png")))
                 if angle:
@@ -24016,6 +24112,8 @@ class SPPdfExtractor:
             import io
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return ""
             pix_l = page.get_pixmap(matrix=pymupdf.Matrix(zoom_locate, zoom_locate))
             img_l = Image.open(io.BytesIO(pix_l.tobytes("png")))
             if angle:
@@ -24030,6 +24128,8 @@ class SPPdfExtractor:
                 y_top, h_label = data['top'][i], data['height'][i]
                 zoom_a = 4.0
                 escala_a = zoom_a / zoom_locate
+                if _render_excede_limite_pil(page, zoom_a):
+                    return ""
                 pix_a = page.get_pixmap(matrix=pymupdf.Matrix(zoom_a, zoom_a))
                 img_a = Image.open(io.BytesIO(pix_a.tobytes("png")))
                 if angle:
@@ -24066,6 +24166,8 @@ class SPPdfExtractor:
                 y_top, h_label = data['top'][i], data['height'][i]
                 zoom_b = 9.0
                 escala_b = zoom_b / zoom_locate
+                if _render_excede_limite_pil(page, zoom_b):
+                    return ""
                 pix_b = page.get_pixmap(matrix=pymupdf.Matrix(zoom_b, zoom_b))
                 img_b = Image.open(io.BytesIO(pix_b.tobytes("png")))
                 if angle:
@@ -24133,6 +24235,8 @@ class SPPdfExtractor:
             from collections import Counter
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return ""
             _img, data = cls._sp_localizar_palavras(page, angle, zoom_locate)
             textos = data['text']
             i_prev = next((i for i, tx in enumerate(textos)
@@ -24154,6 +24258,8 @@ class SPPdfExtractor:
             votos_fed, votos_csll = Counter(), Counter()
             for zoom in (3.0, 4.0, 6.0):
                 escala = zoom / zoom_locate
+                if _render_excede_limite_pil(page, zoom):
+                    return ""
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 if angle:
@@ -24211,6 +24317,8 @@ class SPPdfExtractor:
             import io
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return ""
             _img, data = cls._sp_localizar_palavras(page, angle, zoom_locate)
             textos = data['text']
             i_tit = next((i for i, tx in enumerate(textos)
@@ -24229,6 +24337,8 @@ class SPPdfExtractor:
 
             zoom = 4.0
             escala = zoom / zoom_locate
+            if _render_excede_limite_pil(page, zoom):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             if angle:
@@ -24264,6 +24374,8 @@ class SPPdfExtractor:
             from collections import Counter
 
             zoom_locate = 3.0
+            if _render_excede_limite_pil(page, zoom_locate):
+                return ""
             _img, data = cls._sp_localizar_palavras(page, angle, zoom_locate)
             textos = data['text']
             i_cod = next((i for i in range(len(textos) - 2)
@@ -24277,6 +24389,8 @@ class SPPdfExtractor:
             votos = Counter()
             for zoom in (4.0, 5.0, 6.0):
                 escala = zoom / zoom_locate
+                if _render_excede_limite_pil(page, zoom):
+                    return ""
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 if angle:
@@ -24418,6 +24532,8 @@ class SPPdfExtractor:
 
             votos = []
             for zoom in (6.0, 8.0, 10.0):
+                if _render_excede_limite_pil(page, zoom):
+                    return ""
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
                 w, h = img.size
@@ -24797,6 +24913,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 5.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
@@ -24820,6 +24938,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 5.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por', config='--psm 6')
@@ -24842,6 +24962,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 4.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             if angle:
@@ -24899,6 +25021,8 @@ class SPPdfExtractor:
             import pytesseract
             from PIL import Image
             import io
+            if _render_excede_limite_pil(page, 5.0):
+                return body
             pix = page.get_pixmap(matrix=pymupdf.Matrix(5.0, 5.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             if angle:
@@ -24939,6 +25063,8 @@ class SPPdfExtractor:
             from PIL import Image
             import io
 
+            if _render_excede_limite_pil(page, 6.0):
+                return ""
             pix = page.get_pixmap(matrix=pymupdf.Matrix(6.0, 6.0))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             if angle:
@@ -26941,6 +27067,8 @@ class SPPdfExtractor:
             pg = doc[pagina_idx]
 
             zoom0 = 3
+            if _render_excede_limite_pil(pg, zoom0):
+                return ''
             pix0 = pg.get_pixmap(matrix=pymupdf.Matrix(zoom0, zoom0))
             img0 = Image.open(_io.BytesIO(pix0.tobytes("png")))
             dados = pytesseract.image_to_data(img0, lang="por", output_type=pytesseract.Output.DICT)
@@ -27026,6 +27154,8 @@ class SPPdfExtractor:
                 return caixas
             pg = doc[pagina_idx]
             zoom0, zoom1 = 3, 6
+            if _render_excede_limite_pil(pg, zoom0):
+                return caixas
             img0 = Image.open(_io.BytesIO(pg.get_pixmap(matrix=pymupdf.Matrix(zoom0, zoom0)).tobytes("png")))
             dados = pytesseract.image_to_data(img0, lang="por", output_type=pytesseract.Output.DICT)
             textos = [w.strip().upper() for w in dados['text']]
