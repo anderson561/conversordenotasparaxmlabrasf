@@ -16180,6 +16180,105 @@ class SPPdfExtractor:
         return valores.model_copy(update={
             'valor_servicos': recebido, 'valor_liquido_nfse': liquido}), [aviso]
 
+    # ------------------------------------------------------------------
+    # São Paulo/SP: "VALOR TOTAL RECEBIDO" maior que o "VALOR TOTAL DO SERVIÇO"
+    # ------------------------------------------------------------------
+    _SP_VALOR_BRL = r'(\d{1,3}(?:\.\d{3})*,\d{2})(?![\d,])'
+    _SP_SERVICO_IMPRESSO_PATTERN = (
+        r'VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O\s*[=:]?\s*R?\s*[$S5]?\s*' + _SP_VALOR_BRL)
+    _SP_RECEBIDO_IMPRESSO_PATTERN = (
+        r'VALOR\s+TOTAL\s+RECEBIDO\s*[=:]?\s*R?\s*[$S5]?\s*' + _SP_VALOR_BRL)
+
+    @staticmethod
+    def _brl(valor: float) -> str:
+        return f"{valor:,.2f}".replace(',', '#').replace('.', ',').replace('#', '.')
+
+    def _aplicar_sp_valor_total_recebido(self, valores: Valores):
+        """Regra de negócio (decisão do usuário, 2026-11-12, notas da PLUXEE
+        BENEFICIOS BRASIL S.A. no lote PH Gestão 10/2026): a NFS-e de São Paulo
+        que imprime "VALOR TOTAL RECEBIDO" MAIOR que o "VALOR TOTAL DO SERVIÇO"
+        (ex.: serviço R$ 6,00, recebido R$ 16,00 - os R$ 10,00 a mais são o
+        crédito de vale-refeição/alimentação repassado) vai para o XML com:
+        ValorServicos = recebido; ValorDeducoes = recebido - serviço (o
+        repasse); Base de Cálculo/Alíquota/ISS como IMPRESSOS (o ISS incide só
+        sobre o serviço - nada é recalculado sobre o recebido); líquido =
+        recebido - retenções.
+
+        Acionada pela presença do campo impresso (não pelo CNPJ), só nos
+        layouts São Paulo (digital e escaneado). Só aplica quando a conta
+        fecha: serviço lido == ValorServicos extraído, um único valor recebido
+        legível (todas as ocorrências iguais), deduções impressas zeradas e
+        serviço - deduções == base impressa. Fora disso mantém o comportamento
+        anterior e avisa - nunca fabrica valor. Serviço impresso 0,00 fica com
+        a regra própria do prestador Flash (`_aplicar_flash_valor_recebido`),
+        que roda antes; esta não age nesse caso.
+
+        Devolve `(valores, avisos)`."""
+        if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
+            return valores, []
+        t = self.raw_text or ''
+        if not re.search(r'VALOR\s+TOTAL\s+RECEBIDO', t, re.IGNORECASE):
+            return valores, []
+        servico = valores.valor_servicos
+        if servico <= 0.0:
+            return valores, []
+
+        def _mantido(motivo: str) -> list:
+            return [
+                f"VALOR TOTAL RECEBIDO impresso na nota, mas {motivo} - mantido "
+                f"ValorServicos R$ {self._brl(servico)} (valor do serviço); conferir na nota"]
+
+        recebidos = {self._parse_valor(v) for v in re.findall(
+            self._SP_RECEBIDO_IMPRESSO_PATTERN, t, re.IGNORECASE)}
+        if len(recebidos) != 1:
+            motivo = ("o valor não foi lido com segurança" if not recebidos else
+                      "há leituras divergentes do valor (" + ", ".join(
+                          f"R$ {self._brl(v)}" for v in sorted(recebidos)) + ")")
+            return valores, _mantido(motivo)
+        recebido = recebidos.pop()
+        if abs(recebido - servico) <= 0.005:
+            # Recebido igual ao serviço é o caso comum: nada a fazer, sem aviso.
+            return valores, []
+        if recebido < servico:
+            return valores, _mantido(
+                f"o valor recebido (R$ {self._brl(recebido)}) é menor que o do serviço")
+
+        servicos_impressos = {self._parse_valor(v) for v in re.findall(
+            self._SP_SERVICO_IMPRESSO_PATTERN, t, re.IGNORECASE)}
+        if servicos_impressos != {servico}:
+            return valores, _mantido(
+                "o VALOR TOTAL DO SERVIÇO impresso não confere com o valor extraído")
+        deducoes, base = valores.valor_deducoes, valores.base_calculo
+        if self.layout == LAYOUT_SAO_PAULO:
+            # No digital, `_extrair_valores` troca uma Base impressa 0,00 pelo
+            # valor do serviço; a conferência usa a grade COMO IMPRESSA.
+            grade = self._sp_grade_valores_por_estrutura(t)
+            if grade is not None:
+                deducoes, base = grade[0], grade[1]
+        if abs(deducoes) > 0.005:
+            return valores, _mantido(
+                f"a nota já imprime deduções (R$ {self._brl(deducoes)}) e a "
+                "diferença recebido - serviço não pode ser lançada nelas")
+        if abs(servico - deducoes - base) > 0.005:
+            return valores, _mantido(
+                f"serviço - deduções (R$ {self._brl(servico - deducoes)}) não "
+                f"confere com a base de cálculo impressa (R$ {self._brl(base)})")
+
+        diferenca = round(recebido - servico, 2)
+        retencoes = (valores.valor_pis + valores.valor_cofins + valores.valor_inss
+                     + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
+                     + valores.valor_contribuicoes_sociais_retidas
+                     + (valores.valor_iss_retido if valores.iss_retido else 0.0))
+        aviso = (
+            f"Valor total recebido R$ {self._brl(recebido)} usado como ValorServicos; "
+            f"diferença de R$ {self._brl(diferenca)} para o valor do serviço "
+            f"(R$ {self._brl(servico)}) lançada em ValorDeducoes (repasse)")
+        return valores.model_copy(update={
+            'valor_servicos': recebido,
+            'valor_deducoes': diferenca,
+            'valor_liquido_nfse': round(recebido - retencoes, 2),
+        }), [aviso]
+
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
@@ -25272,6 +25371,9 @@ class SPPdfExtractor:
 
         valores   = self._extrair_valores()
         valores, avisos_flash = self._aplicar_flash_valor_recebido(prestador, valores)
+        # Depois da regra da Flash (serviço impresso 0,00), que tem precedência.
+        valores, avisos_recebido = self._aplicar_sp_valor_total_recebido(valores)
+        avisos_flash = avisos_flash + avisos_recebido
 
         # Guarda GERAL (todos os layouts) do teto legal do ISS — LC 116/2003,
         # art. 8º, II: não existe alíquota de ISS acima de 5%, então uma
