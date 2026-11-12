@@ -62,6 +62,30 @@ def eh_pagina_anexo_ibs_cbs(texto: str) -> bool:
         not re.search(r'PRESTADOR\s*DE\s*SERVI', texto or '', re.IGNORECASE)
 
 
+_RE_BLOCO_VALORES_SP = r'VALOR\s*TOTAL\s*DO\s*SERVI[ÇC]O\s*=\s*R\s*\$'
+_RE_CABECALHO_NOTA_SP = (r'NOTA\s*FISCAL\s*ELETR[ÔO]NICA\s*DE\s*SERVI|PRESTADOR\s*DE\s*SERVI'
+                         r'|TOMADOR\s*DE\s*SERVI|N[UÚ]MERO\s*DA\s*NOTA')
+
+
+def tem_bloco_valores_sp(texto: str) -> bool:
+    """Linha "VALOR TOTAL DO SERVICO = R$ ..." do template da Prefeitura de SP."""
+    return bool(re.search(_RE_BLOCO_VALORES_SP, texto or '', re.IGNORECASE))
+
+
+def eh_pagina_continuacao_valores(texto: str) -> bool:
+    """Metade de BAIXO de uma NFS-e de SP que a digitalizacao deslocou para a
+    pagina seguinte (cabecalho/prestador/tomador/discriminacao numa pagina, o
+    bloco de valores na outra). Tem "VALOR TOTAL DO SERVICO = R$" e a grade
+    "Valor Total das Deducoes", e NENHUM sinal de cabecalho de nota (titulo,
+    PRESTADOR/TOMADOR, "Numero da Nota"), nem e o anexo IBS/CBS. Achado real:
+    lote Guarajuba 10/2026, Pluxee nº 09125393, pags. 33/34."""
+    t = texto or ''
+    return tem_bloco_valores_sp(t) \
+        and bool(re.search(r'Valor\s*Total\s*das\s*Dedu[çc][õo]es', t, re.IGNORECASE)) \
+        and not re.search(_RE_CABECALHO_NOTA_SP, t, re.IGNORECASE) \
+        and not eh_pagina_anexo_ibs_cbs(t)
+
+
 def cnpj_do_prestador(texto: str) -> Optional[str]:
     """1o CNPJ pontuado apos o cabecalho "PRESTADOR DE SERVICOS" (14 digitos)."""
     m = re.search(r'PRESTADOR\s*DE\s*SERVI[ÇC]OS.{0,300}?(' + _RE_CNPJ_PONTUADO + ')',

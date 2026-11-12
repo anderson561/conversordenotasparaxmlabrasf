@@ -28252,11 +28252,29 @@ class SPPdfExtractor:
 
         self.invalid_pages = []
         filtered_pages = []
+        # Páginas (1-based) que são a metade de baixo — bloco de valores — de
+        # uma NFS-e de SP cujo topo ficou na página anterior (scan deslocado,
+        # ver `_sp_ident.eh_pagina_continuacao_valores`). Sem cabeçalho, caíam
+        # em "Layout não reconhecido" e a nota saía com todos os valores 0,00
+        # (lote Guarajuba 10/2026, Pluxee nº 09125393, págs. 33/34).
+        continuacoes_sp = set()
+        layout_anterior = None
         for idx, page in enumerate(pages, start=1):
             if re.search(self.TRASH_PATTERN, page, re.IGNORECASE):
                 self.invalid_pages.append({"page": idx, "reason": "Lixo/Recibo detectado"})
+                layout_anterior = None
                 continue
             layout = self._detect_layout_page(page)
+            if layout == LAYOUT_GENERICO and layout_anterior in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) \
+                    and filtered_pages and filtered_pages[-1][1] == idx - 1 \
+                    and not _sp_ident.tem_bloco_valores_sp(filtered_pages[-1][0]) \
+                    and _sp_ident.eh_pagina_continuacao_valores(page):
+                print(f"[*] Página {idx}: continuação (bloco de valores) da NFS-e de SP da página {idx - 1}.")
+                continuacoes_sp.add(idx)
+                filtered_pages.append((page, idx))
+                layout_anterior = None
+                continue
+            layout_anterior = layout
             if layout == LAYOUT_BARREIRAS and not self.from_ocr:
                 # PDF escaneado que chega com camada de texto de OCR de
                 # TERCEIROS: longa o bastante para o portão de OCR acima
@@ -28436,6 +28454,13 @@ class SPPdfExtractor:
         for block_text, page_idx in granular_blocks:
             # Tenta identificar o número da nota no bloco atual (suporta Número e Nº)
             block_num = _numero_heuristico_bloco(block_text)
+
+            if page_idx in continuacoes_sp and current_invoice:
+                # Metade de baixo da nota SP da página anterior: o número
+                # heurístico dela ("RPS Nº ...") não é o da nota e não pode
+                # nem abrir nota nova nem trocar `current_num`.
+                current_invoice.append((block_text, page_idx))
+                continue
 
             if is_new_invoice(block_text, current_num):
                 if current_invoice:
