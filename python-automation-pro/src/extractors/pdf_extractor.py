@@ -418,6 +418,9 @@ class SPPdfExtractor:
         # que apareceram — preenchido por `parse_multiple`, consultado por
         # `_sp_numero_pela_chave`. Ver `sp_identificador.py`.
         self._sp_identificadores_doc = {}
+        # Código de verificação impresso em cada um desses anexos (mesma
+        # indexação) — amarra o anexo à SUA nota (ver `_sp_numero_pela_chave`).
+        self._sp_cv_anexos_doc = {}
         self._sp_avisos: List[str] = []
         # Recorte dedicado do bloco do PRESTADOR (Simões Filho/BA), sem o
         # rótulo "PRESTADOR" (o crop começa em "Razão Social:") — não pode
@@ -2832,13 +2835,31 @@ class SPPdfExtractor:
         da caixa "Número da Nota". Procura a chave no próprio texto da nota e no
         anexo IBS/CBS da página SEGUINTE (`sp_identificador.eh_pagina_anexo_ibs_cbs`
         — a página seguinte de uma nota sem anexo é outra nota e nunca entra).
-        Devolve o número com 8 dígitos (convenção do layout) ou None."""
+        Devolve o número com 8 dígitos (convenção do layout) ou None.
+
+        A chave não carrega o código de verificação, e duas notas do mesmo
+        prestador no mesmo mês passam igualmente em `decodificar` (CNPJ + AAMM):
+        "página seguinte" não basta. Achado real (lote PH Gestão 10/2026, Pluxee
+        nº 08980330/08980332): os anexos vinham TROCADOS no PDF — a pág. 10 era
+        o anexo da nota da pág. 11 e a pág. 12 o da pág. 9 —, a nota da pág. 11
+        herdava o número 08980330 do anexo seguinte e era depois descartada
+        como "duplicata" da pág. 9, sem aviso. Por isso o anexo cujo código de
+        verificação impresso diverge do da nota é recusado, e o anexo cujo
+        código bate (em qualquer página do lote) é usado no lugar dele."""
         t = self.raw_text
         candidatas = list(_sp_ident.extrair_identificadores(t))
         pagina = getattr(self, '_pagina_hint', None)
+        cvs_nota = _sp_ident.codigos_verificacao_nota(t)
+        cv_anexos = getattr(self, '_sp_cv_anexos_doc', {}) or {}
         if pagina:
             # `_pagina_hint` é 1-based: o índice 0-based da página seguinte é ele mesmo.
-            candidatas.extend(self._sp_identificadores_doc.get(pagina, []))
+            if not _sp_ident.anexo_e_de_outra_nota(cv_anexos.get(pagina), cvs_nota):
+                candidatas.extend(self._sp_identificadores_doc.get(pagina, []))
+        # Anexo fora da posição esperada, reconhecido pelo código de verificação
+        # igual ao da nota (os dois legíveis).
+        for idx, cv_anexo in sorted(cv_anexos.items()):
+            if idx != pagina and cv_anexo and cvs_nota and not _sp_ident.anexo_e_de_outra_nota(cv_anexo, cvs_nota):
+                candidatas.extend(self._sp_identificadores_doc.get(idx, []))
         if not candidatas:
             return None
         cnpj_prestador = _sp_ident.cnpj_do_prestador(t)
@@ -16159,6 +16180,194 @@ class SPPdfExtractor:
         return valores.model_copy(update={
             'valor_servicos': recebido, 'valor_liquido_nfse': liquido}), [aviso]
 
+    # ------------------------------------------------------------------
+    # São Paulo/SP: "VALOR TOTAL RECEBIDO" maior que o "VALOR TOTAL DO SERVIÇO"
+    # ------------------------------------------------------------------
+    _SP_VALOR_BRL = r'(\d{1,3}(?:\.\d{3})*,\d{2})(?![\d,])'
+    _SP_SERVICO_IMPRESSO_PATTERN = (
+        r'VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O\s*[=:]?\s*R?\s*[$S5]?\s*' + _SP_VALOR_BRL)
+    _SP_RECEBIDO_IMPRESSO_PATTERN = (
+        r'VALOR\s+TOTAL\s+RECEBIDO\s*[=:]?\s*R?\s*[$S5]?\s*' + _SP_VALOR_BRL)
+
+    @staticmethod
+    def _brl(valor: float) -> str:
+        return f"{valor:,.2f}".replace(',', '#').replace('.', ',').replace('#', '.')
+
+    def _aplicar_sp_valor_total_recebido(self, valores: Valores):
+        """Regra de negócio (decisão do usuário, 2026-11-12, notas da PLUXEE
+        BENEFICIOS BRASIL S.A. no lote PH Gestão 10/2026): a NFS-e de São Paulo
+        que imprime "VALOR TOTAL RECEBIDO" MAIOR que o "VALOR TOTAL DO SERVIÇO"
+        (ex.: serviço R$ 6,00, recebido R$ 16,00 - os R$ 10,00 a mais são o
+        crédito de vale-refeição/alimentação repassado) vai para o XML com:
+        ValorServicos = recebido; ValorDeducoes = recebido - serviço (o
+        repasse); Base de Cálculo/Alíquota/ISS como IMPRESSOS (o ISS incide só
+        sobre o serviço - nada é recalculado sobre o recebido); líquido =
+        recebido - retenções.
+
+        Acionada pela presença do campo impresso (não pelo CNPJ), só nos
+        layouts São Paulo (digital e escaneado). Só aplica quando a conta
+        fecha: serviço lido == ValorServicos extraído, um único valor recebido
+        legível (todas as ocorrências iguais), deduções impressas zeradas e
+        serviço - deduções == base impressa. Fora disso mantém o comportamento
+        anterior e avisa - nunca fabrica valor. Serviço impresso 0,00 fica com
+        a regra própria do prestador Flash (`_aplicar_flash_valor_recebido`),
+        que roda antes; esta não age nesse caso.
+
+        Devolve `(valores, avisos)`."""
+        if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
+            return valores, []
+        t = self.raw_text or ''
+        if not re.search(r'VALOR\s+TOTAL\s+RECEBIDO', t, re.IGNORECASE):
+            return valores, []
+        servico = valores.valor_servicos
+        if servico <= 0.0:
+            return valores, []
+
+        def _mantido(motivo: str) -> list:
+            return [
+                f"VALOR TOTAL RECEBIDO impresso na nota, mas {motivo} - mantido "
+                f"ValorServicos R$ {self._brl(servico)} (valor do serviço); conferir na nota"]
+
+        recebidos = {self._parse_valor(v) for v in re.findall(
+            self._SP_RECEBIDO_IMPRESSO_PATTERN, t, re.IGNORECASE)}
+        if len(recebidos) != 1:
+            motivo = ("o valor não foi lido com segurança" if not recebidos else
+                      "há leituras divergentes do valor (" + ", ".join(
+                          f"R$ {self._brl(v)}" for v in sorted(recebidos)) + ")")
+            return valores, _mantido(motivo)
+        recebido = recebidos.pop()
+        if abs(recebido - servico) <= 0.005:
+            # Recebido igual ao serviço é o caso comum: nada a fazer, sem aviso.
+            return valores, []
+        if recebido < servico:
+            return valores, _mantido(
+                f"o valor recebido (R$ {self._brl(recebido)}) é menor que o do serviço")
+
+        servicos_impressos = {self._parse_valor(v) for v in re.findall(
+            self._SP_SERVICO_IMPRESSO_PATTERN, t, re.IGNORECASE)}
+        if servicos_impressos != {servico}:
+            return valores, _mantido(
+                "o VALOR TOTAL DO SERVIÇO impresso não confere com o valor extraído")
+        deducoes, base = valores.valor_deducoes, valores.base_calculo
+        if self.layout == LAYOUT_SAO_PAULO:
+            # No digital, `_extrair_valores` troca uma Base impressa 0,00 pelo
+            # valor do serviço; a conferência usa a grade COMO IMPRESSA.
+            grade = self._sp_grade_valores_por_estrutura(t)
+            if grade is not None:
+                deducoes, base = grade[0], grade[1]
+        if abs(deducoes) > 0.005:
+            return valores, _mantido(
+                f"a nota já imprime deduções (R$ {self._brl(deducoes)}) e a "
+                "diferença recebido - serviço não pode ser lançada nelas")
+        if abs(servico - deducoes - base) > 0.005:
+            return valores, _mantido(
+                f"serviço - deduções (R$ {self._brl(servico - deducoes)}) não "
+                f"confere com a base de cálculo impressa (R$ {self._brl(base)})")
+
+        diferenca = round(recebido - servico, 2)
+        retencoes = (valores.valor_pis + valores.valor_cofins + valores.valor_inss
+                     + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
+                     + valores.valor_contribuicoes_sociais_retidas
+                     + (valores.valor_iss_retido if valores.iss_retido else 0.0))
+        aviso = (
+            f"Valor total recebido R$ {self._brl(recebido)} usado como ValorServicos; "
+            f"diferença de R$ {self._brl(diferenca)} para o valor do serviço "
+            f"(R$ {self._brl(servico)}) lançada em ValorDeducoes (repasse)")
+        return valores.model_copy(update={
+            'valor_servicos': recebido,
+            'valor_deducoes': diferenca,
+            'valor_liquido_nfse': round(recebido - retencoes, 2),
+        }), [aviso]
+
+    # ------------------------------------------------------------------
+    # São Paulo/SP, Pluxee: serviço impresso 0,00 e só o crédito EMV
+    # ------------------------------------------------------------------
+    _CNPJ_PLUXEE = '69034668000156'
+    _PLUXEE_VALOR_DISCRIMINACAO = re.compile(r'^(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$')
+    _PLUXEE_ROTULO_TAXA = r'\bT[Xx]\b|COBRAN[CÇ]A'
+
+    def _aplicar_sp_pluxee_credito_emv(self, prestador, valores: Valores):
+        """Regra de negócio (decisão do usuário, 2026-11-12, nota nº 08937118
+        da PLUXEE BENEFICIOS BRASIL S.A., lote Guarajuba 10/2026): a NFS-e de
+        São Paulo da Pluxee que imprime "VALOR TOTAL DO SERVIÇO = R$ 0,00",
+        grade Base 0,00 / ISS 0,00 e NÃO imprime "VALOR TOTAL RECEBIDO" é só o
+        repasse de crédito de vale-refeição/alimentação — o valor está na
+        discriminação, item "EMV" ("9 ALIMENTAÇÃO EMV 1620.00"). XML:
+        ValorServicos = ValorDeducoes = crédito EMV (o repasse); Base/Alíquota/
+        ISS como impressos; líquido = crédito − retenções.
+
+        Escopo ESTREITO: só `sao_paulo_sp`/`sao_paulo_sp_scan`, só o CNPJ da
+        Pluxee, só com o ValorServicos extraído 0,00. Com "VALOR TOTAL
+        RECEBIDO" impresso, esta regra não age (o recebido tem prioridade).
+        Exige: serviço impresso legível e 0,00 em toda ocorrência; deduções,
+        base e ISS 0,00; todo item "EMV" com valor legível (vários itens: soma
+        — cada um é crédito de um produto, e só soma se TODOS foram lidos); as
+        taxas da discriminação ("TX ...", "... COBRANCA") todas lidas (um valor
+        por rótulo) e todas 0,00. Em qualquer dúvida: 0,00 mantido + aviso com
+        o motivo. Flash e demais prestadores nunca entram aqui.
+
+        Devolve `(valores, avisos)`."""
+        if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
+            return valores, []
+        if re.sub(r'\D', '', getattr(prestador, 'cnpj_cpf', '') or '') != self._CNPJ_PLUXEE:
+            return valores, []
+        if valores.valor_servicos != 0.0:
+            return valores, []
+        t = self.raw_text or ''
+        if re.search(r'VALOR\s+TOTAL\s+RECEBIDO', t, re.IGNORECASE):
+            return valores, []
+
+        def _mantido(motivo: str):
+            return valores, [
+                "Prestador Pluxee: serviço impresso R$ 0,00 sem \"Valor total recebido\" e "
+                f"{motivo} - crédito EMV da discriminação não usado, ValorServicos mantido em 0,00 "
+                "(nada foi inferido); conferir na nota"]
+
+        servicos = {self._parse_valor(v) for v in re.findall(
+            self._SP_SERVICO_IMPRESSO_PATTERN, t, re.IGNORECASE)}
+        if servicos != {0.0}:
+            return _mantido("o VALOR TOTAL DO SERVIÇO impresso não foi lido como 0,00 com segurança")
+        deducoes, base, iss = valores.valor_deducoes, valores.base_calculo, valores.valor_iss
+        if self.layout == LAYOUT_SAO_PAULO:
+            grade = self._sp_grade_valores_por_estrutura(t)
+            if grade is not None:
+                deducoes, base = grade[0], grade[1]
+        if any(abs(x) > 0.005 for x in (deducoes, base, iss)):
+            return _mantido("a grade imprime deduções/base/ISS diferentes de zero")
+
+        m = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DE\s+SERVI[ÇC]OS(.*?)VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O',
+                      t, re.IGNORECASE | re.DOTALL)
+        if not m:
+            return _mantido("a discriminação não foi localizada")
+        linhas = m.group(1).splitlines()
+        emv = [re.search(r'\bEMV\b\s*(\S*)', ln) for ln in linhas]
+        emv_lidos = [x.group(1) for x in emv if x]
+        if not emv_lidos or not all(self._PLUXEE_VALOR_DISCRIMINACAO.match(v) for v in emv_lidos):
+            return _mantido("o crédito EMV da discriminação não foi lido com segurança")
+        taxas_txt = "\n".join(ln for ln, x in zip(linhas, emv)
+                              if not x and not re.search(r'IRRF', ln, re.IGNORECASE))
+        rotulos = re.findall(self._PLUXEE_ROTULO_TAXA, taxas_txt)
+        taxas = re.findall(r'(?<![\d/.,])\d+[.,]\d{2}(?![\d/])', taxas_txt)
+        if not rotulos or len(taxas) != len(rotulos):
+            return _mantido("as taxas da discriminação não foram todas lidas")
+        if any(float(x.replace(',', '.')) != 0.0 for x in taxas):
+            return _mantido("as taxas da discriminação não somam 0,00")
+
+        credito = round(sum(float(v.replace(',', '')) for v in emv_lidos), 2)
+        retencoes = (valores.valor_pis + valores.valor_cofins + valores.valor_inss
+                     + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
+                     + valores.valor_contribuicoes_sociais_retidas
+                     + (valores.valor_iss_retido if valores.iss_retido else 0.0))
+        aviso = (
+            "Serviço impresso R$ 0,00 sem \"Valor total recebido\"; crédito EMV "
+            f"R$ {self._brl(credito)} da discriminação usado como ValorServicos e "
+            "lançado em ValorDeducoes (repasse)")
+        return valores.model_copy(update={
+            'valor_servicos': credito,
+            'valor_deducoes': credito,
+            'valor_liquido_nfse': round(credito - retencoes, 2),
+        }), [aviso]
+
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
@@ -17645,8 +17854,11 @@ class SPPdfExtractor:
                 # `[\s|]*`: a borda esquerda da caixa pode vir lida como "|"
                 # antes da linha de valores (achado real 2026-11-04, APROAR
                 # nº 00000228: "| 0,00 41.326,00 5,00% 2.066,30 0,00").
+                # `[\s|]+` entre os valores: a divisória interna da grade
+                # também pode vir lida como "|" (achado real 2026-11-12,
+                # PLUXEE nº 08980330: "0,00 6,00 2,00% | 0,12 0,00").
                 r'Al[íi]quota.*?Valor\s+do\s+ISS.*?\n[\s|]*'
-                + NUM + r'\s+' + NUM + r'\s+' + NUM + r'%?\s+' + NUM,
+                + NUM + r'[\s|]+' + NUM + r'[\s|]+' + NUM + r'%?[\s|]+' + NUM,
                 t, re.IGNORECASE | re.DOTALL)
             if m_grid:
                 deducoes = self._parse_valor(m_grid.group(1))
@@ -25251,6 +25463,12 @@ class SPPdfExtractor:
 
         valores   = self._extrair_valores()
         valores, avisos_flash = self._aplicar_flash_valor_recebido(prestador, valores)
+        # Depois da regra da Flash (serviço impresso 0,00), que tem precedência.
+        valores, avisos_recebido = self._aplicar_sp_valor_total_recebido(valores)
+        # Pluxee com serviço 0,00 e sem "VALOR TOTAL RECEBIDO" (o recebido,
+        # quando impresso, tem prioridade): crédito EMV da discriminação.
+        valores, avisos_emv = self._aplicar_sp_pluxee_credito_emv(prestador, valores)
+        avisos_flash = avisos_flash + avisos_recebido + avisos_emv
 
         # Guarda GERAL (todos os layouts) do teto legal do ISS — LC 116/2003,
         # art. 8º, II: não existe alíquota de ISS acima de 5%, então uma
@@ -28119,14 +28337,36 @@ class SPPdfExtractor:
             for i, p in enumerate(pages)
             if _sp_ident.eh_pagina_anexo_ibs_cbs(p)
         }
+        self._sp_cv_anexos_doc = {
+            i: _sp_ident.codigo_verificacao_anexo(pages[i])
+            for i in self._sp_identificadores_doc
+        }
 
         self.invalid_pages = []
         filtered_pages = []
+        # Páginas (1-based) que são a metade de baixo — bloco de valores — de
+        # uma NFS-e de SP cujo topo ficou na página anterior (scan deslocado,
+        # ver `_sp_ident.eh_pagina_continuacao_valores`). Sem cabeçalho, caíam
+        # em "Layout não reconhecido" e a nota saía com todos os valores 0,00
+        # (lote Guarajuba 10/2026, Pluxee nº 09125393, págs. 33/34).
+        continuacoes_sp = set()
+        layout_anterior = None
         for idx, page in enumerate(pages, start=1):
             if re.search(self.TRASH_PATTERN, page, re.IGNORECASE):
                 self.invalid_pages.append({"page": idx, "reason": "Lixo/Recibo detectado"})
+                layout_anterior = None
                 continue
             layout = self._detect_layout_page(page)
+            if layout == LAYOUT_GENERICO and layout_anterior in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) \
+                    and filtered_pages and filtered_pages[-1][1] == idx - 1 \
+                    and not _sp_ident.tem_bloco_valores_sp(filtered_pages[-1][0]) \
+                    and _sp_ident.eh_pagina_continuacao_valores(page):
+                print(f"[*] Página {idx}: continuação (bloco de valores) da NFS-e de SP da página {idx - 1}.")
+                continuacoes_sp.add(idx)
+                filtered_pages.append((page, idx))
+                layout_anterior = None
+                continue
+            layout_anterior = layout
             if layout == LAYOUT_BARREIRAS and not self.from_ocr:
                 # PDF escaneado que chega com camada de texto de OCR de
                 # TERCEIROS: longa o bastante para o portão de OCR acima
@@ -28210,12 +28450,23 @@ class SPPdfExtractor:
             if current_group_num:
                 num_prox = _numero_heuristico_bloco(text)
                 if num_prox and num_prox == current_group_num:
-                    return False
+                    # ...a não ser que os códigos de verificação legíveis das
+                    # duas provem que são notas DISTINTAS com o mesmo número
+                    # aparente (número lido errado numa delas): fundir as duas
+                    # num bloco só faria uma sumir sem aviso — mesma família
+                    # do descarte mudo de `_aceitar` (lote PH Gestão 10/2026).
+                    cvs_prox = _sp_ident.codigos_verificacao_nota(text)
+                    if not (current_cvs and cvs_prox and all(
+                            _sp_ident.codigos_verificacao_divergem(a, b)
+                            for a in current_cvs for b in cvs_prox)):
+                        return False
 
             return has_start_pattern or has_num_cnpj
 
         is_localiza = False
         current_num = None
+        # Códigos de verificação ("XXXX-XXXX") lidos na nota em formação.
+        current_cvs = set()
 
         # Processamento granular: quebra páginas que contêm múltiplas notas (divisores internos ou novos cabeçalhos)
         granular_blocks = []
@@ -28296,12 +28547,20 @@ class SPPdfExtractor:
             # Tenta identificar o número da nota no bloco atual (suporta Número e Nº)
             block_num = _numero_heuristico_bloco(block_text)
 
+            if page_idx in continuacoes_sp and current_invoice:
+                # Metade de baixo da nota SP da página anterior: o número
+                # heurístico dela ("RPS Nº ...") não é o da nota e não pode
+                # nem abrir nota nova nem trocar `current_num`.
+                current_invoice.append((block_text, page_idx))
+                continue
+
             if is_new_invoice(block_text, current_num):
                 if current_invoice:
                     invoices_texts.append(("\n\x0c\n".join([c[0] for c in current_invoice]), current_invoice[0][1]))
                     current_invoice = []
                 current_invoice.append((block_text, page_idx))
                 current_num = block_num
+                current_cvs = _sp_ident.codigos_verificacao_nota(block_text)
                 # Verifica se a nota que acabou de iniciar é da Localiza
                 is_localiza = bool(re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', block_text, re.IGNORECASE))
             else:
@@ -28337,13 +28596,65 @@ class SPPdfExtractor:
                 # aqui; uma vez passado ele, o append deve sempre acontecer.
                 current_invoice.append((block_text, page_idx))
                 if block_num: current_num = block_num
+                current_cvs |= _sp_ident.codigos_verificacao_nota(block_text)
                     
         if current_invoice:
             invoices_texts.append(("\n\x0c\n".join([c[0] for c in current_invoice]), current_invoice[0][1]))
             
         results = []
-        seen_numbers = set()
-        
+        # (numero, documento do emitente) -> notas já aceitas com essa chave.
+        vistas = {}
+
+        def _aceitar(nota, documento: str, discriminador: Optional[str], page_idx: int) -> None:
+            """Deduplicação do lote. Mesmo número + mesmo emitente só é
+            duplicata (fatiamento que pegou a mesma nota duas vezes, ou nota de
+            várias páginas que o fatiamento não uniu) quando o DISCRIMINADOR
+            (código de verificação / chave de acesso) não prova o contrário.
+
+            Antes a chave era só `numero_emitente`, e o descarte era mudo: uma
+            nota distinta com número lido igual ao de outra (OCR, contexto de
+            outra página) sumia do lote sem nenhum log — achado real, lote PH
+            Gestão 10/2026, Pluxee nº 08980332 (pág. 11) descartada como
+            "duplicata" da 08980330 (pág. 9), códigos de verificação XX95-VZL3
+            × WN9H-KAHK. Agora: discriminadores legíveis e diferentes => notas
+            distintas, as duas ficam, com aviso de número repetido; duplicata
+            de verdade continua descartada, mas com aviso na nota mantida."""
+            numero = nota.numero
+            key = (numero, documento)
+            if numero == '00000000' or key not in vistas:
+                nota.pagina_origem = page_idx
+                vistas.setdefault(key, []).append(nota)
+                results.append(nota)
+                return
+            for anterior in vistas[key]:
+                disc_anterior = _discriminador_nota(anterior)
+                if not _discriminadores_divergem(disc_anterior, discriminador):
+                    # Descarte sempre visível: no console e em `invalid_pages`
+                    # (a GUI lista). Também vai para os avisos da nota mantida
+                    # quando a identidade NÃO está provada (código de
+                    # verificação/chave ausente num dos lados) — com os dois
+                    # legíveis e iguais é a mesma nota com certeza (ex.: 2ª
+                    # página de uma DANFSe com a mesma chave), e repetir isso
+                    # em todo XML de nota de 2 páginas seria só ruído.
+                    msg = (f"Página {page_idx} descartada como duplicata desta nota "
+                           f"(mesmo número {numero} e mesmo emitente)")
+                    print(f"[AVISO] Nota {numero} (pág {anterior.pagina_origem}): {msg}")
+                    self.invalid_pages.append({"page": page_idx, "reason": f"Duplicata da nota {numero} (pág {anterior.pagina_origem})"})
+                    identidade_provada = bool(disc_anterior and discriminador)
+                    if not identidade_provada and msg not in anterior.avisos:
+                        anterior.avisos.append(msg)
+                    return
+            nota.pagina_origem = page_idx
+            paginas = [a.pagina_origem for a in vistas[key]] + [page_idx]
+            discs = [_discriminador_nota(a) for a in vistas[key]] + [discriminador]
+            msg = (f"Número {numero} repetido no lote (págs. {', '.join(map(str, paginas))}) "
+                   f"com códigos de verificação/chaves diferentes ({' × '.join(map(str, discs))}) "
+                   f"- notas distintas mantidas, conferir o número")
+            for n in vistas[key] + [nota]:
+                n.avisos.append(msg)
+            vistas[key].append(nota)
+            results.append(nota)
+
         for text_block, page_idx in invoices_texts:
             if len(text_block.strip()) < 50: continue
 
@@ -28361,6 +28672,7 @@ class SPPdfExtractor:
             # `_recuperar_cnpj_tomador_camacari`).
             sub_ext._pagina_hint = page_idx
             sub_ext._sp_identificadores_doc = self._sp_identificadores_doc
+            sub_ext._sp_cv_anexos_doc = self._sp_cv_anexos_doc
 
             # Propaga os recortes dedicados do PASSWORD/eNotas Gateway
             # ESCANEADO (ver `__init__`/`_ocr_page`) da página de origem
@@ -28391,12 +28703,7 @@ class SPPdfExtractor:
                 # digital/estrutural, sem o mesmo risco de falso-negativo de
                 # nome que a trava abaixo cobre para NFS-e escaneada).
                 if isinstance(nfse, NfeProduto):
-                    key = f"{nfse.numero}_{nfse.emitente.cnpj_cpf}"
-                    if key in seen_numbers and nfse.numero != '00000000':
-                        continue
-                    nfse.pagina_origem = page_idx
-                    seen_numbers.add(key)
-                    results.append(nfse)
+                    _aceitar(nfse, nfse.emitente.cnpj_cpf, _discriminador_nota(nfse), page_idx)
                     continue
 
                 # CteOS (DACTE OS/CT-e Modelo 67) - mesmo racional do
@@ -28404,12 +28711,7 @@ class SPPdfExtractor:
                 # mesma trava antilixo de NFS-e escaneada não se aplica
                 # (detecção 100% estrutural, ver LAYOUT_DACTE_OS).
                 if isinstance(nfse, CteOS):
-                    key = f"{nfse.numero}_{nfse.emitente.cnpj_cpf}"
-                    if key in seen_numbers and nfse.numero != '00000000':
-                        continue
-                    nfse.pagina_origem = page_idx
-                    seen_numbers.add(key)
-                    results.append(nfse)
+                    _aceitar(nfse, nfse.emitente.cnpj_cpf, _discriminador_nota(nfse), page_idx)
                     continue
 
                 # Trava contra Lixo Residual (Páginas processadas que não são notas).
@@ -28429,13 +28731,8 @@ class SPPdfExtractor:
 
                 # Evita duplicidade se o fatiamento falhou e pegou a mesma nota duas vezes
                 # ou se a nota tem múltiplas páginas e o fatiamento não as uniu
-                key = f"{nfse.numero}_{nfse.prestador.cnpj_cpf}"
-                if key in seen_numbers and nfse.numero != '00000000':
-                    continue
-
-                nfse.pagina_origem = page_idx
-                seen_numbers.add(key)
-                results.append(nfse)
+                # — sem nunca fundir notas distintas (ver `_aceitar`).
+                _aceitar(nfse, nfse.prestador.cnpj_cpf, _discriminador_nota(nfse), page_idx)
             except Exception as e:
                 print(f"[EXTRACTOR ERROR] Problema ao fatiar nota do lote: {e}")
                 
@@ -28444,6 +28741,28 @@ class SPPdfExtractor:
 # ---------------------------------------------------------------------------
 # Funções auxiliares
 # ---------------------------------------------------------------------------
+
+# Códigos de verificação que são SENTINELA/convenção do conversor (não lidos do
+# documento): nunca provam que duas notas são distintas.
+_CV_SENTINELAS = {'', 'XXXX-XXXX', 'FATURA', 'TELECOM', 'NFCOM'}
+
+
+def _discriminador_nota(nota) -> Optional[str]:
+    """O que distingue duas notas de mesmo número/emitente: o código de
+    verificação (NFS-e) ou a chave de acesso (NF-e/CT-e OS). None se ausente
+    ou sentinela."""
+    valor = getattr(nota, 'codigo_verificacao', None) or getattr(nota, 'chave_acesso', None)
+    valor = (valor or '').strip()
+    if valor.upper() in _CV_SENTINELAS or not re.search(r'[A-Za-z0-9]', valor):
+        return None
+    return valor
+
+
+def _discriminadores_divergem(a: Optional[str], b: Optional[str]) -> bool:
+    """Os dois legíveis e diferentes além de uma confusão de OCR (O/0, I/1...)
+    — ver `sp_identificador.codigos_verificacao_divergem`."""
+    return _sp_ident.codigos_verificacao_divergem(a, b)
+
 
 def _parse_dmy(data_str: str, hora_str: Optional[str] = None) -> Optional[datetime]:
     try:
