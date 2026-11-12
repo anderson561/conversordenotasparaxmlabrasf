@@ -17765,8 +17765,11 @@ class SPPdfExtractor:
                 # `[\s|]*`: a borda esquerda da caixa pode vir lida como "|"
                 # antes da linha de valores (achado real 2026-11-04, APROAR
                 # nº 00000228: "| 0,00 41.326,00 5,00% 2.066,30 0,00").
+                # `[\s|]+` entre os valores: a divisória interna da grade
+                # também pode vir lida como "|" (achado real 2026-11-12,
+                # PLUXEE nº 08980330: "0,00 6,00 2,00% | 0,12 0,00").
                 r'Al[íi]quota.*?Valor\s+do\s+ISS.*?\n[\s|]*'
-                + NUM + r'\s+' + NUM + r'\s+' + NUM + r'%?\s+' + NUM,
+                + NUM + r'[\s|]+' + NUM + r'[\s|]+' + NUM + r'%?[\s|]+' + NUM,
                 t, re.IGNORECASE | re.DOTALL)
             if m_grid:
                 deducoes = self._parse_valor(m_grid.group(1))

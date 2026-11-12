@@ -100,16 +100,49 @@ def test_pag11_xml_sai_igual_nas_duas_secoes(monkeypatch, tmp_path):
         k: v for k, v in valores_nfse.items() if k != "ValorLiquidoNfse"}
 
 
-def test_pag9_regra_aplicada_com_a_grade_ilegivel(monkeypatch, tmp_path):
-    """Pág. 9: o OCR lê a grade "0,00 6,00 2,00% | 0,12 0,00" e o "|" no meio
-    impede a leitura (fora do escopo desta regra): Alíquota/ISS saem 0 e a
-    Base cai no fallback = serviço (6,00). Os dois totais impressos são lidos
-    limpos, então a regra se aplica sobre eles."""
+GRADE_PAG9 = "0,00 6,00 2,00% | 0,12 0,00"   # linha REAL do OCR da pág. 9
+
+
+def test_pag9_grade_com_barra_do_ocr_e_lida(monkeypatch, tmp_path):
+    """Pág. 9: o OCR lê a grade "0,00 6,00 2,00% | 0,12 0,00" (divisória
+    interna lida como "|"). A grade precisa ser lida mesmo assim: Alíquota 2%
+    e ISS 0,12 como impressos, e a regra do recebido aplicada por cima."""
+    assert GRADE_PAG9 in PAG9_NOTA_08980330
     nfse = _parse_ocr(monkeypatch, tmp_path, PAG9_NOTA_08980330)
+    assert nfse.numero == "08980330"
     v = nfse.valores
     assert (v.valor_servicos, v.valor_deducoes, v.base_calculo, v.valor_liquido_nfse) == (16.00, 10.00, 6.00, 16.00)
-    assert (v.aliquota, v.valor_iss) == (0.0, 0.0)
+    assert v.aliquota == pytest.approx(0.02)
+    assert v.valor_iss == 0.12
     assert AVISO_REGRA in nfse.avisos
+
+
+def test_pag9_xml_sai_igual_a_pag11(monkeypatch, tmp_path):
+    nfse9 = _parse_ocr(monkeypatch, tmp_path, PAG9_NOTA_08980330)
+    nfse11 = _parse_ocr(monkeypatch, tmp_path, PAG11_NOTA_08980332)
+    assert _secoes_xml(nfse9) == _secoes_xml(nfse11)
+
+
+def test_pag9_grade_sem_barra_continua_lida(monkeypatch, tmp_path):
+    """Mesma pág. 9 com a linha da grade sem o "|" (como na pág. 11): o
+    separador só de espaços continua aceito."""
+    texto = PAG9_NOTA_08980330.replace(GRADE_PAG9, GRADE_PAG11)
+    assert "2,00% | 0,12" not in texto
+    nfse = _parse_ocr(monkeypatch, tmp_path, texto)
+    v = nfse.valores
+    assert (v.base_calculo, v.valor_iss) == (6.00, 0.12)
+    assert v.aliquota == pytest.approx(0.02)
+    assert (v.valor_servicos, v.valor_deducoes) == (16.00, 10.00)
+
+
+def test_pag9_barra_entre_todos_os_valores_da_grade(monkeypatch, tmp_path):
+    """Divisórias lidas como "|" entre todos os valores (inclusive colado ao
+    número): a grade continua lida na ordem certa."""
+    texto = PAG9_NOTA_08980330.replace(GRADE_PAG9, "0,00 |6,00 | 2,00%| 0,12 | 0,00")
+    nfse = _parse_ocr(monkeypatch, tmp_path, texto)
+    v = nfse.valores
+    assert (v.base_calculo, v.valor_iss) == (6.00, 0.12)
+    assert v.aliquota == pytest.approx(0.02)
 
 
 def test_regra_e_disparada_pelo_campo_e_nao_pelo_cnpj(monkeypatch, tmp_path):
