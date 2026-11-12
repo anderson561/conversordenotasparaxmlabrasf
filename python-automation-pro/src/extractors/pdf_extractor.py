@@ -418,6 +418,9 @@ class SPPdfExtractor:
         # que apareceram — preenchido por `parse_multiple`, consultado por
         # `_sp_numero_pela_chave`. Ver `sp_identificador.py`.
         self._sp_identificadores_doc = {}
+        # Código de verificação impresso em cada um desses anexos (mesma
+        # indexação) — amarra o anexo à SUA nota (ver `_sp_numero_pela_chave`).
+        self._sp_cv_anexos_doc = {}
         self._sp_avisos: List[str] = []
         # Recorte dedicado do bloco do PRESTADOR (Simões Filho/BA), sem o
         # rótulo "PRESTADOR" (o crop começa em "Razão Social:") — não pode
@@ -2832,13 +2835,31 @@ class SPPdfExtractor:
         da caixa "Número da Nota". Procura a chave no próprio texto da nota e no
         anexo IBS/CBS da página SEGUINTE (`sp_identificador.eh_pagina_anexo_ibs_cbs`
         — a página seguinte de uma nota sem anexo é outra nota e nunca entra).
-        Devolve o número com 8 dígitos (convenção do layout) ou None."""
+        Devolve o número com 8 dígitos (convenção do layout) ou None.
+
+        A chave não carrega o código de verificação, e duas notas do mesmo
+        prestador no mesmo mês passam igualmente em `decodificar` (CNPJ + AAMM):
+        "página seguinte" não basta. Achado real (lote PH Gestão 10/2026, Pluxee
+        nº 08980330/08980332): os anexos vinham TROCADOS no PDF — a pág. 10 era
+        o anexo da nota da pág. 11 e a pág. 12 o da pág. 9 —, a nota da pág. 11
+        herdava o número 08980330 do anexo seguinte e era depois descartada
+        como "duplicata" da pág. 9, sem aviso. Por isso o anexo cujo código de
+        verificação impresso diverge do da nota é recusado, e o anexo cujo
+        código bate (em qualquer página do lote) é usado no lugar dele."""
         t = self.raw_text
         candidatas = list(_sp_ident.extrair_identificadores(t))
         pagina = getattr(self, '_pagina_hint', None)
+        cvs_nota = _sp_ident.codigos_verificacao_nota(t)
+        cv_anexos = getattr(self, '_sp_cv_anexos_doc', {}) or {}
         if pagina:
             # `_pagina_hint` é 1-based: o índice 0-based da página seguinte é ele mesmo.
-            candidatas.extend(self._sp_identificadores_doc.get(pagina, []))
+            if not _sp_ident.anexo_e_de_outra_nota(cv_anexos.get(pagina), cvs_nota):
+                candidatas.extend(self._sp_identificadores_doc.get(pagina, []))
+        # Anexo fora da posição esperada, reconhecido pelo código de verificação
+        # igual ao da nota (os dois legíveis).
+        for idx, cv_anexo in sorted(cv_anexos.items()):
+            if idx != pagina and cv_anexo and cvs_nota and not _sp_ident.anexo_e_de_outra_nota(cv_anexo, cvs_nota):
+                candidatas.extend(self._sp_identificadores_doc.get(idx, []))
         if not candidatas:
             return None
         cnpj_prestador = _sp_ident.cnpj_do_prestador(t)
@@ -28119,6 +28140,10 @@ class SPPdfExtractor:
             for i, p in enumerate(pages)
             if _sp_ident.eh_pagina_anexo_ibs_cbs(p)
         }
+        self._sp_cv_anexos_doc = {
+            i: _sp_ident.codigo_verificacao_anexo(pages[i])
+            for i in self._sp_identificadores_doc
+        }
 
         self.invalid_pages = []
         filtered_pages = []
@@ -28210,12 +28235,23 @@ class SPPdfExtractor:
             if current_group_num:
                 num_prox = _numero_heuristico_bloco(text)
                 if num_prox and num_prox == current_group_num:
-                    return False
+                    # ...a não ser que os códigos de verificação legíveis das
+                    # duas provem que são notas DISTINTAS com o mesmo número
+                    # aparente (número lido errado numa delas): fundir as duas
+                    # num bloco só faria uma sumir sem aviso — mesma família
+                    # do descarte mudo de `_aceitar` (lote PH Gestão 10/2026).
+                    cvs_prox = _sp_ident.codigos_verificacao_nota(text)
+                    if not (current_cvs and cvs_prox and all(
+                            _sp_ident.codigos_verificacao_divergem(a, b)
+                            for a in current_cvs for b in cvs_prox)):
+                        return False
 
             return has_start_pattern or has_num_cnpj
 
         is_localiza = False
         current_num = None
+        # Códigos de verificação ("XXXX-XXXX") lidos na nota em formação.
+        current_cvs = set()
 
         # Processamento granular: quebra páginas que contêm múltiplas notas (divisores internos ou novos cabeçalhos)
         granular_blocks = []
@@ -28302,6 +28338,7 @@ class SPPdfExtractor:
                     current_invoice = []
                 current_invoice.append((block_text, page_idx))
                 current_num = block_num
+                current_cvs = _sp_ident.codigos_verificacao_nota(block_text)
                 # Verifica se a nota que acabou de iniciar é da Localiza
                 is_localiza = bool(re.search(r'LOCALIZA RENT A CAR S/A|FATURA\s*/\s*DUPLICATA', block_text, re.IGNORECASE))
             else:
@@ -28337,13 +28374,65 @@ class SPPdfExtractor:
                 # aqui; uma vez passado ele, o append deve sempre acontecer.
                 current_invoice.append((block_text, page_idx))
                 if block_num: current_num = block_num
+                current_cvs |= _sp_ident.codigos_verificacao_nota(block_text)
                     
         if current_invoice:
             invoices_texts.append(("\n\x0c\n".join([c[0] for c in current_invoice]), current_invoice[0][1]))
             
         results = []
-        seen_numbers = set()
-        
+        # (numero, documento do emitente) -> notas já aceitas com essa chave.
+        vistas = {}
+
+        def _aceitar(nota, documento: str, discriminador: Optional[str], page_idx: int) -> None:
+            """Deduplicação do lote. Mesmo número + mesmo emitente só é
+            duplicata (fatiamento que pegou a mesma nota duas vezes, ou nota de
+            várias páginas que o fatiamento não uniu) quando o DISCRIMINADOR
+            (código de verificação / chave de acesso) não prova o contrário.
+
+            Antes a chave era só `numero_emitente`, e o descarte era mudo: uma
+            nota distinta com número lido igual ao de outra (OCR, contexto de
+            outra página) sumia do lote sem nenhum log — achado real, lote PH
+            Gestão 10/2026, Pluxee nº 08980332 (pág. 11) descartada como
+            "duplicata" da 08980330 (pág. 9), códigos de verificação XX95-VZL3
+            × WN9H-KAHK. Agora: discriminadores legíveis e diferentes => notas
+            distintas, as duas ficam, com aviso de número repetido; duplicata
+            de verdade continua descartada, mas com aviso na nota mantida."""
+            numero = nota.numero
+            key = (numero, documento)
+            if numero == '00000000' or key not in vistas:
+                nota.pagina_origem = page_idx
+                vistas.setdefault(key, []).append(nota)
+                results.append(nota)
+                return
+            for anterior in vistas[key]:
+                disc_anterior = _discriminador_nota(anterior)
+                if not _discriminadores_divergem(disc_anterior, discriminador):
+                    # Descarte sempre visível: no console e em `invalid_pages`
+                    # (a GUI lista). Também vai para os avisos da nota mantida
+                    # quando a identidade NÃO está provada (código de
+                    # verificação/chave ausente num dos lados) — com os dois
+                    # legíveis e iguais é a mesma nota com certeza (ex.: 2ª
+                    # página de uma DANFSe com a mesma chave), e repetir isso
+                    # em todo XML de nota de 2 páginas seria só ruído.
+                    msg = (f"Página {page_idx} descartada como duplicata desta nota "
+                           f"(mesmo número {numero} e mesmo emitente)")
+                    print(f"[AVISO] Nota {numero} (pág {anterior.pagina_origem}): {msg}")
+                    self.invalid_pages.append({"page": page_idx, "reason": f"Duplicata da nota {numero} (pág {anterior.pagina_origem})"})
+                    identidade_provada = bool(disc_anterior and discriminador)
+                    if not identidade_provada and msg not in anterior.avisos:
+                        anterior.avisos.append(msg)
+                    return
+            nota.pagina_origem = page_idx
+            paginas = [a.pagina_origem for a in vistas[key]] + [page_idx]
+            discs = [_discriminador_nota(a) for a in vistas[key]] + [discriminador]
+            msg = (f"Número {numero} repetido no lote (págs. {', '.join(map(str, paginas))}) "
+                   f"com códigos de verificação/chaves diferentes ({' × '.join(map(str, discs))}) "
+                   f"- notas distintas mantidas, conferir o número")
+            for n in vistas[key] + [nota]:
+                n.avisos.append(msg)
+            vistas[key].append(nota)
+            results.append(nota)
+
         for text_block, page_idx in invoices_texts:
             if len(text_block.strip()) < 50: continue
 
@@ -28361,6 +28450,7 @@ class SPPdfExtractor:
             # `_recuperar_cnpj_tomador_camacari`).
             sub_ext._pagina_hint = page_idx
             sub_ext._sp_identificadores_doc = self._sp_identificadores_doc
+            sub_ext._sp_cv_anexos_doc = self._sp_cv_anexos_doc
 
             # Propaga os recortes dedicados do PASSWORD/eNotas Gateway
             # ESCANEADO (ver `__init__`/`_ocr_page`) da página de origem
@@ -28391,12 +28481,7 @@ class SPPdfExtractor:
                 # digital/estrutural, sem o mesmo risco de falso-negativo de
                 # nome que a trava abaixo cobre para NFS-e escaneada).
                 if isinstance(nfse, NfeProduto):
-                    key = f"{nfse.numero}_{nfse.emitente.cnpj_cpf}"
-                    if key in seen_numbers and nfse.numero != '00000000':
-                        continue
-                    nfse.pagina_origem = page_idx
-                    seen_numbers.add(key)
-                    results.append(nfse)
+                    _aceitar(nfse, nfse.emitente.cnpj_cpf, _discriminador_nota(nfse), page_idx)
                     continue
 
                 # CteOS (DACTE OS/CT-e Modelo 67) - mesmo racional do
@@ -28404,12 +28489,7 @@ class SPPdfExtractor:
                 # mesma trava antilixo de NFS-e escaneada não se aplica
                 # (detecção 100% estrutural, ver LAYOUT_DACTE_OS).
                 if isinstance(nfse, CteOS):
-                    key = f"{nfse.numero}_{nfse.emitente.cnpj_cpf}"
-                    if key in seen_numbers and nfse.numero != '00000000':
-                        continue
-                    nfse.pagina_origem = page_idx
-                    seen_numbers.add(key)
-                    results.append(nfse)
+                    _aceitar(nfse, nfse.emitente.cnpj_cpf, _discriminador_nota(nfse), page_idx)
                     continue
 
                 # Trava contra Lixo Residual (Páginas processadas que não são notas).
@@ -28429,13 +28509,8 @@ class SPPdfExtractor:
 
                 # Evita duplicidade se o fatiamento falhou e pegou a mesma nota duas vezes
                 # ou se a nota tem múltiplas páginas e o fatiamento não as uniu
-                key = f"{nfse.numero}_{nfse.prestador.cnpj_cpf}"
-                if key in seen_numbers and nfse.numero != '00000000':
-                    continue
-
-                nfse.pagina_origem = page_idx
-                seen_numbers.add(key)
-                results.append(nfse)
+                # — sem nunca fundir notas distintas (ver `_aceitar`).
+                _aceitar(nfse, nfse.prestador.cnpj_cpf, _discriminador_nota(nfse), page_idx)
             except Exception as e:
                 print(f"[EXTRACTOR ERROR] Problema ao fatiar nota do lote: {e}")
                 
@@ -28444,6 +28519,28 @@ class SPPdfExtractor:
 # ---------------------------------------------------------------------------
 # Funções auxiliares
 # ---------------------------------------------------------------------------
+
+# Códigos de verificação que são SENTINELA/convenção do conversor (não lidos do
+# documento): nunca provam que duas notas são distintas.
+_CV_SENTINELAS = {'', 'XXXX-XXXX', 'FATURA', 'TELECOM', 'NFCOM'}
+
+
+def _discriminador_nota(nota) -> Optional[str]:
+    """O que distingue duas notas de mesmo número/emitente: o código de
+    verificação (NFS-e) ou a chave de acesso (NF-e/CT-e OS). None se ausente
+    ou sentinela."""
+    valor = getattr(nota, 'codigo_verificacao', None) or getattr(nota, 'chave_acesso', None)
+    valor = (valor or '').strip()
+    if valor.upper() in _CV_SENTINELAS or not re.search(r'[A-Za-z0-9]', valor):
+        return None
+    return valor
+
+
+def _discriminadores_divergem(a: Optional[str], b: Optional[str]) -> bool:
+    """Os dois legíveis e diferentes além de uma confusão de OCR (O/0, I/1...)
+    — ver `sp_identificador.codigos_verificacao_divergem`."""
+    return _sp_ident.codigos_verificacao_divergem(a, b)
+
 
 def _parse_dmy(data_str: str, hora_str: Optional[str] = None) -> Optional[datetime]:
     try:

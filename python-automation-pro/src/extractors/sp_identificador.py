@@ -118,3 +118,63 @@ def valores_de_outros_campos(texto: str) -> Set[str]:
             if len(digitos) >= 5:
                 achados.add(digitos.lstrip('0'))
     return achados
+
+
+# --- Codigo de verificacao: amarra o anexo IBS/CBS a SUA nota ---------------
+#
+# O anexo repete, logo abaixo do Identificador, a linha
+# "CPF/CNPJ/NIF do Fornecedor | Numero da Nota | Codigo de Verificacao". A chave
+# NAO carrega o codigo de verificacao, e duas notas do mesmo prestador emitidas
+# no mesmo mes passam igualmente na validacao CNPJ+AAMM de `decodificar`: so o
+# codigo de verificacao diz de QUAL nota o anexo e. Achado real (lote Pluxee,
+# 2026-11): o PDF trazia os anexos trocados (pag. 10 = anexo da nota da pag. 11,
+# pag. 12 = anexo da nota da pag. 9) e a nota da pag. 11 herdava o numero da
+# pag. 9 pela "pagina seguinte".
+
+_RE_CV = r'[A-Z0-9]{4}-[A-Z0-9]{4}'
+# Confusoes classicas do OCR em codigo alfanumerico, para comparar leituras.
+_CONFUSOES_OCR = str.maketrans('OQDILSBZG', '000115825')
+
+
+def codigo_verificacao_anexo(texto: str) -> Optional[str]:
+    """Codigo de verificacao impresso na linha de valores logo abaixo do
+    cabecalho "... Numero da Nota  Codigo de Verificacao" do anexo IBS/CBS."""
+    m = re.search(r'N[uú]mero\s+da\s+Nota\s+C[óo]digo\s+de\s+Verifica[çc][ãa]o[^\n]*\n[ \t]*([^\n]*)',
+                  texto or '', re.IGNORECASE)
+    if not m:
+        return None
+    cv = re.search(r'\b(' + _RE_CV + r')\b', m.group(1))
+    return cv.group(1) if cv else None
+
+
+def codigos_verificacao_nota(texto: str) -> Set[str]:
+    """Codigos de verificacao lidos na pagina da nota: o 1o codigo "XXXX-XXXX"
+    em ate 150 caracteres depois de cada rotulo "Codigo de Verificacao" (o
+    cabecalho da NFS-e paulistana imprime o rotulo e o valor em linhas vizinhas,
+    as vezes com o RPS no meio)."""
+    achados: Set[str] = set()
+    for m in re.finditer(r'C[óo]digo\s+de\s+Verifica[çc][ãa]o', texto or '', re.IGNORECASE):
+        cv = re.search(r'\b(' + _RE_CV + r')\b', texto[m.end():m.end() + 150])
+        if cv:
+            achados.add(cv.group(1))
+    return achados
+
+
+def codigos_verificacao_divergem(a: Optional[str], b: Optional[str]) -> bool:
+    """True so quando os DOIS codigos sao legiveis e diferem em 2+ posicoes
+    depois de normalizar as confusoes do OCR (O/0, I/1, S/5...): uma letra
+    trocada pelo OCR nao faz de uma nota outra nota."""
+    if not a or not b:
+        return False
+    na = re.sub(r'[^A-Z0-9]', '', a.upper()).translate(_CONFUSOES_OCR)
+    nb = re.sub(r'[^A-Z0-9]', '', b.upper()).translate(_CONFUSOES_OCR)
+    if len(na) != len(nb):
+        return True
+    return sum(x != y for x, y in zip(na, nb)) >= 2
+
+
+def anexo_e_de_outra_nota(cv_anexo: Optional[str], cvs_nota: Set[str]) -> bool:
+    """O anexo traz um codigo de verificacao legivel que nao bate com NENHUM
+    codigo lido na nota (que tambem precisa ter ao menos um legivel)."""
+    return bool(cv_anexo and cvs_nota) and all(
+        codigos_verificacao_divergem(cv_anexo, cv) for cv in cvs_nota)
