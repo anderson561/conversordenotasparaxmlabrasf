@@ -16279,6 +16279,95 @@ class SPPdfExtractor:
             'valor_liquido_nfse': round(recebido - retencoes, 2),
         }), [aviso]
 
+    # ------------------------------------------------------------------
+    # São Paulo/SP, Pluxee: serviço impresso 0,00 e só o crédito EMV
+    # ------------------------------------------------------------------
+    _CNPJ_PLUXEE = '69034668000156'
+    _PLUXEE_VALOR_DISCRIMINACAO = re.compile(r'^(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$')
+    _PLUXEE_ROTULO_TAXA = r'\bT[Xx]\b|COBRAN[CÇ]A'
+
+    def _aplicar_sp_pluxee_credito_emv(self, prestador, valores: Valores):
+        """Regra de negócio (decisão do usuário, 2026-11-12, nota nº 08937118
+        da PLUXEE BENEFICIOS BRASIL S.A., lote Guarajuba 10/2026): a NFS-e de
+        São Paulo da Pluxee que imprime "VALOR TOTAL DO SERVIÇO = R$ 0,00",
+        grade Base 0,00 / ISS 0,00 e NÃO imprime "VALOR TOTAL RECEBIDO" é só o
+        repasse de crédito de vale-refeição/alimentação — o valor está na
+        discriminação, item "EMV" ("9 ALIMENTAÇÃO EMV 1620.00"). XML:
+        ValorServicos = ValorDeducoes = crédito EMV (o repasse); Base/Alíquota/
+        ISS como impressos; líquido = crédito − retenções.
+
+        Escopo ESTREITO: só `sao_paulo_sp`/`sao_paulo_sp_scan`, só o CNPJ da
+        Pluxee, só com o ValorServicos extraído 0,00. Com "VALOR TOTAL
+        RECEBIDO" impresso, esta regra não age (o recebido tem prioridade).
+        Exige: serviço impresso legível e 0,00 em toda ocorrência; deduções,
+        base e ISS 0,00; todo item "EMV" com valor legível (vários itens: soma
+        — cada um é crédito de um produto, e só soma se TODOS foram lidos); as
+        taxas da discriminação ("TX ...", "... COBRANCA") todas lidas (um valor
+        por rótulo) e todas 0,00. Em qualquer dúvida: 0,00 mantido + aviso com
+        o motivo. Flash e demais prestadores nunca entram aqui.
+
+        Devolve `(valores, avisos)`."""
+        if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
+            return valores, []
+        if re.sub(r'\D', '', getattr(prestador, 'cnpj_cpf', '') or '') != self._CNPJ_PLUXEE:
+            return valores, []
+        if valores.valor_servicos != 0.0:
+            return valores, []
+        t = self.raw_text or ''
+        if re.search(r'VALOR\s+TOTAL\s+RECEBIDO', t, re.IGNORECASE):
+            return valores, []
+
+        def _mantido(motivo: str):
+            return valores, [
+                "Prestador Pluxee: serviço impresso R$ 0,00 sem \"Valor total recebido\" e "
+                f"{motivo} - crédito EMV da discriminação não usado, ValorServicos mantido em 0,00 "
+                "(nada foi inferido); conferir na nota"]
+
+        servicos = {self._parse_valor(v) for v in re.findall(
+            self._SP_SERVICO_IMPRESSO_PATTERN, t, re.IGNORECASE)}
+        if servicos != {0.0}:
+            return _mantido("o VALOR TOTAL DO SERVIÇO impresso não foi lido como 0,00 com segurança")
+        deducoes, base, iss = valores.valor_deducoes, valores.base_calculo, valores.valor_iss
+        if self.layout == LAYOUT_SAO_PAULO:
+            grade = self._sp_grade_valores_por_estrutura(t)
+            if grade is not None:
+                deducoes, base = grade[0], grade[1]
+        if any(abs(x) > 0.005 for x in (deducoes, base, iss)):
+            return _mantido("a grade imprime deduções/base/ISS diferentes de zero")
+
+        m = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DE\s+SERVI[ÇC]OS(.*?)VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O',
+                      t, re.IGNORECASE | re.DOTALL)
+        if not m:
+            return _mantido("a discriminação não foi localizada")
+        linhas = m.group(1).splitlines()
+        emv = [re.search(r'\bEMV\b\s*(\S*)', ln) for ln in linhas]
+        emv_lidos = [x.group(1) for x in emv if x]
+        if not emv_lidos or not all(self._PLUXEE_VALOR_DISCRIMINACAO.match(v) for v in emv_lidos):
+            return _mantido("o crédito EMV da discriminação não foi lido com segurança")
+        taxas_txt = "\n".join(ln for ln, x in zip(linhas, emv)
+                              if not x and not re.search(r'IRRF', ln, re.IGNORECASE))
+        rotulos = re.findall(self._PLUXEE_ROTULO_TAXA, taxas_txt)
+        taxas = re.findall(r'(?<![\d/.,])\d+[.,]\d{2}(?![\d/])', taxas_txt)
+        if not rotulos or len(taxas) != len(rotulos):
+            return _mantido("as taxas da discriminação não foram todas lidas")
+        if any(float(x.replace(',', '.')) != 0.0 for x in taxas):
+            return _mantido("as taxas da discriminação não somam 0,00")
+
+        credito = round(sum(float(v.replace(',', '')) for v in emv_lidos), 2)
+        retencoes = (valores.valor_pis + valores.valor_cofins + valores.valor_inss
+                     + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
+                     + valores.valor_contribuicoes_sociais_retidas
+                     + (valores.valor_iss_retido if valores.iss_retido else 0.0))
+        aviso = (
+            "Serviço impresso R$ 0,00 sem \"Valor total recebido\"; crédito EMV "
+            f"R$ {self._brl(credito)} da discriminação usado como ValorServicos e "
+            "lançado em ValorDeducoes (repasse)")
+        return valores.model_copy(update={
+            'valor_servicos': credito,
+            'valor_deducoes': credito,
+            'valor_liquido_nfse': round(credito - retencoes, 2),
+        }), [aviso]
+
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
@@ -25376,7 +25465,10 @@ class SPPdfExtractor:
         valores, avisos_flash = self._aplicar_flash_valor_recebido(prestador, valores)
         # Depois da regra da Flash (serviço impresso 0,00), que tem precedência.
         valores, avisos_recebido = self._aplicar_sp_valor_total_recebido(valores)
-        avisos_flash = avisos_flash + avisos_recebido
+        # Pluxee com serviço 0,00 e sem "VALOR TOTAL RECEBIDO" (o recebido,
+        # quando impresso, tem prioridade): crédito EMV da discriminação.
+        valores, avisos_emv = self._aplicar_sp_pluxee_credito_emv(prestador, valores)
+        avisos_flash = avisos_flash + avisos_recebido + avisos_emv
 
         # Guarda GERAL (todos os layouts) do teto legal do ISS — LC 116/2003,
         # art. 8º, II: não existe alíquota de ISS acima de 5%, então uma
