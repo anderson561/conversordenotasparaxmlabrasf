@@ -13,9 +13,11 @@ Dois defeitos:
 2. Buraco de regra: a regra do recebido exige serviço > 0 e a do crédito EMV
    não agia com recebido impresso - ValorServicos saía 0,00.
 
-Esperado (decisão do usuário): ValorServicos = ValorDeducoes = 9.867,48
-(recebido, repasse), Base 0,00, Alíquota 2%, ISS 0,00, líquido 9.867,48; o
-crédito EMV da discriminação (9867.48) confere o recebido.
+Esperado (decisão do usuário): ValorServicos = 9.867,48 (recebido),
+ValorDeducoes = 0,00 como impresso (decisão de 2026-11-13: "não há deduções na
+nota fiscal"; até então ia o próprio recebido, como repasse), Base 0,00,
+Alíquota 2%, ISS 0,00, líquido 9.867,48; o crédito EMV da discriminação
+(9867.48) confere o recebido.
 
 `NOTA_PLUXEE_08969996` = retorno REAL e verbatim de
 `pdfminer.high_level.extract_text()` no PDF real; os negativos trocam UM
@@ -33,8 +35,8 @@ PAGINA_1 = NOTA_PLUXEE_08969996.split("\x0c")[0]
 LINHA_EMV = "41 ALIMENTAÇÃO EMV 9867.48"
 RECEBIDO = "VALOR TOTAL RECEBIDO = R$ 9.867,48"
 AVISO_OK = ("Serviço impresso R$ 0,00; Valor total recebido R$ 9.867,48 usado como "
-            "ValorServicos e lançado em ValorDeducoes (repasse) - confere com o crédito "
-            "EMV R$ 9.867,48 da discriminação; conferir")
+            "ValorServicos, sem deduções (ValorDeducoes como impresso na nota, R$ 0,00) - "
+            "confere com o crédito EMV R$ 9.867,48 da discriminação; conferir")
 
 
 def _uma(monkeypatch, tmp_path, texto=NOTA_PLUXEE_08969996):
@@ -75,11 +77,11 @@ def test_grade_sem_os_5_valores_nao_e_lida():
 
 # --- regra aplicada no texto real ----------------------------------------------
 
-def test_real_recebido_vira_valor_servicos_e_deducao(monkeypatch, tmp_path):
+def test_real_recebido_vira_valor_servicos_sem_deducao(monkeypatch, tmp_path):
     nota = _uma(monkeypatch, tmp_path)
     assert nota.numero == "08969996"
     assert nota.prestador.cnpj_cpf == "69034668000156"
-    assert _valores(nota) == (9867.48, 9867.48, 0.0, 0.02, 0.0, 9867.48)
+    assert _valores(nota) == (9867.48, 0.0, 0.0, 0.02, 0.0, 9867.48)
     v = nota.valores
     assert (v.valor_pis, v.valor_cofins, v.valor_inss, v.valor_ir, v.valor_csll,
             v.outras_retencoes, v.iss_retido) == (0.0,) * 6 + (False,)
@@ -89,7 +91,7 @@ def test_real_recebido_vira_valor_servicos_e_deducao(monkeypatch, tmp_path):
 
 def test_real_xml_final(monkeypatch, tmp_path):
     root = ET.fromstring(Abrasf201Transformer().transform(_uma(monkeypatch, tmp_path)))
-    esperado = {"ValorServicos": "9867.48", "ValorDeducoes": "9867.48", "BaseCalculo": "0.00",
+    esperado = {"ValorServicos": "9867.48", "ValorDeducoes": "0.00", "BaseCalculo": "0.00",
                 "Aliquota": "0.02", "ValorIss": "0.00"}
     for secao in (".//ValoresNfse", ".//Servico/Valores"):
         assert {c: root.find(f"{secao}/{c}").text for c in esperado} == esperado
@@ -104,7 +106,7 @@ def test_real_xml_final(monkeypatch, tmp_path):
 
 def test_emv_divergente_usa_recebido_e_avisa(monkeypatch, tmp_path):
     nota = _uma(monkeypatch, tmp_path, _trocar(LINHA_EMV, "41 ALIMENTAÇÃO EMV 9800.00"))
-    assert _valores(nota) == (9867.48, 9867.48, 0.0, 0.02, 0.0, 9867.48)
+    assert _valores(nota) == (9867.48, 0.0, 0.0, 0.02, 0.0, 9867.48)
     avisos = _avisos_pluxee(nota)
     assert len(avisos) == 1 and "DIVERGE do crédito EMV R$ 9.800,00" in avisos[0], avisos
 

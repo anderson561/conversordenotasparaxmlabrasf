@@ -16326,16 +16326,21 @@ class SPPdfExtractor:
     def _brl(valor: float) -> str:
         return f"{valor:,.2f}".replace(',', '#').replace('.', ',').replace('#', '.')
 
-    def _aplicar_sp_valor_total_recebido(self, valores: Valores):
+    def _aplicar_sp_valor_total_recebido(self, prestador, valores: Valores):
         """Regra de negócio (decisão do usuário, 2026-11-12, notas da PLUXEE
         BENEFICIOS BRASIL S.A. no lote PH Gestão 10/2026): a NFS-e de São Paulo
         que imprime "VALOR TOTAL RECEBIDO" MAIOR que o "VALOR TOTAL DO SERVIÇO"
         (ex.: serviço R$ 6,00, recebido R$ 16,00 - os R$ 10,00 a mais são o
         crédito de vale-refeição/alimentação repassado) vai para o XML com:
-        ValorServicos = recebido; ValorDeducoes = recebido - serviço (o
-        repasse); Base de Cálculo/Alíquota/ISS como IMPRESSOS (o ISS incide só
-        sobre o serviço - nada é recalculado sobre o recebido); líquido =
-        recebido - retenções.
+        ValorServicos = recebido; Base de Cálculo/Alíquota/ISS como IMPRESSOS
+        (o ISS incide só sobre o serviço - nada é recalculado sobre o
+        recebido); líquido = recebido - retenções.
+
+        ValorDeducoes: na PLUXEE (CNPJ 69.034.668/0001-56), por decisão do
+        usuário de 2026-11-13 ("não há deduções na nota fiscal"), fica como
+        IMPRESSO na nota (0,00 - a regra só age com deduções impressas
+        zeradas). Nos demais prestadores continua = recebido - serviço (o
+        repasse), comportamento de 2026-11-12, mantido até decisão própria.
 
         Acionada pela presença do campo impresso (não pelo CNPJ), só nos
         layouts São Paulo (digital e escaneado). Só aplica quando a conta
@@ -16403,13 +16408,22 @@ class SPPdfExtractor:
                      + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
                      + valores.valor_contribuicoes_sociais_retidas
                      + (valores.valor_iss_retido if valores.iss_retido else 0.0))
-        aviso = (
-            f"Valor total recebido R$ {self._brl(recebido)} usado como ValorServicos; "
-            f"diferença de R$ {self._brl(diferenca)} para o valor do serviço "
-            f"(R$ {self._brl(servico)}) lançada em ValorDeducoes (repasse)")
+        if self._prestador_e_pluxee(prestador):
+            novo_deducoes = deducoes
+            aviso = (
+                f"Prestador Pluxee: Valor total recebido R$ {self._brl(recebido)} usado como "
+                f"ValorServicos (maior que o valor do serviço, R$ {self._brl(servico)}); "
+                f"sem deduções - ValorDeducoes como impresso na nota (R$ {self._brl(deducoes)}); "
+                "Base de Cálculo/Alíquota/ISS mantidos como impressos; conferir")
+        else:
+            novo_deducoes = diferenca
+            aviso = (
+                f"Valor total recebido R$ {self._brl(recebido)} usado como ValorServicos; "
+                f"diferença de R$ {self._brl(diferenca)} para o valor do serviço "
+                f"(R$ {self._brl(servico)}) lançada em ValorDeducoes (repasse)")
         return valores.model_copy(update={
             'valor_servicos': recebido,
-            'valor_deducoes': diferenca,
+            'valor_deducoes': novo_deducoes,
             'valor_liquido_nfse': round(recebido - retencoes, 2),
         }), [aviso]
 
@@ -16419,6 +16433,9 @@ class SPPdfExtractor:
     _CNPJ_PLUXEE = '69034668000156'
     _PLUXEE_VALOR_DISCRIMINACAO = re.compile(r'^(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$')
     _PLUXEE_ROTULO_TAXA = r'\bT[Xx]\b|COBRAN[CÇ]A'
+
+    def _prestador_e_pluxee(self, prestador) -> bool:
+        return re.sub(r'\D', '', getattr(prestador, 'cnpj_cpf', '') or '') == self._CNPJ_PLUXEE
 
     def _pluxee_ler_discriminacao(self, t: str):
         """Lê da discriminação da Pluxee os itens "EMV" (crédito repassado) e as
@@ -16451,8 +16468,10 @@ class SPPdfExtractor:
         grade Base 0,00 / ISS 0,00 e NÃO imprime "VALOR TOTAL RECEBIDO" é só o
         repasse de crédito de vale-refeição/alimentação — o valor está na
         discriminação, item "EMV" ("9 ALIMENTAÇÃO EMV 1620.00"). XML:
-        ValorServicos = ValorDeducoes = crédito EMV (o repasse); Base/Alíquota/
-        ISS como impressos; líquido = crédito − retenções.
+        ValorServicos = crédito EMV; ValorDeducoes como IMPRESSO na nota (0,00
+        - decisão do usuário de 2026-11-13, "não há deduções na nota fiscal";
+        até então ia o próprio crédito, como repasse); Base/Alíquota/ISS como
+        impressos; líquido = crédito − retenções.
 
         Escopo ESTREITO: só `sao_paulo_sp`/`sao_paulo_sp_scan`, só o CNPJ da
         Pluxee, só com o ValorServicos extraído 0,00. Exige: serviço impresso
@@ -16466,8 +16485,9 @@ class SPPdfExtractor:
         Com "VALOR TOTAL RECEBIDO" impresso (achado real 2026-11-13, nota
         nº 08969996: serviço R$ 0,00, recebido R$ 9.867,48 - a regra geral
         `_aplicar_sp_valor_total_recebido` exige serviço > 0 e não trata) o
-        RECEBIDO é o valor: ValorServicos = ValorDeducoes = recebido, com as
-        mesmas exigências de serviço impresso 0,00 e grade zerada, e um único
+        RECEBIDO é o valor: ValorServicos = recebido (ValorDeducoes como
+        impresso, 0,00), com as mesmas exigências de serviço impresso 0,00
+        e grade zerada, e um único
         recebido legível > 0. O crédito EMV da discriminação serve de
         CONFERÊNCIA (EMV = recebido − taxas): divergente ou ilegível, no
         digital usa o recebido mesmo assim e avisa a divergência; no escaneado
@@ -16476,7 +16496,7 @@ class SPPdfExtractor:
         Devolve `(valores, avisos)`."""
         if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
             return valores, []
-        if re.sub(r'\D', '', getattr(prestador, 'cnpj_cpf', '') or '') != self._CNPJ_PLUXEE:
+        if not self._prestador_e_pluxee(prestador):
             return valores, []
         if valores.valor_servicos != 0.0:
             return valores, []
@@ -16536,11 +16556,12 @@ class SPPdfExtractor:
                     return _mantido(f"o valor recebido R$ {self._brl(recebido)} foi {conferencia}")
             aviso = (
                 "Serviço impresso R$ 0,00; Valor total recebido "
-                f"R$ {self._brl(recebido)} usado como ValorServicos e lançado em "
-                f"ValorDeducoes (repasse) - {conferencia}; conferir")
+                f"R$ {self._brl(recebido)} usado como ValorServicos, sem deduções "
+                f"(ValorDeducoes como impresso na nota, R$ {self._brl(deducoes)}) - "
+                f"{conferencia}; conferir")
             return valores.model_copy(update={
                 'valor_servicos': recebido,
-                'valor_deducoes': recebido,
+                'valor_deducoes': deducoes,
                 'valor_liquido_nfse': round(recebido - retencoes, 2),
             }), [aviso]
 
@@ -16550,11 +16571,11 @@ class SPPdfExtractor:
             return _mantido("as taxas da discriminação não somam 0,00")
         aviso = (
             "Serviço impresso R$ 0,00 sem \"Valor total recebido\"; crédito EMV "
-            f"R$ {self._brl(credito)} da discriminação usado como ValorServicos e "
-            "lançado em ValorDeducoes (repasse)")
+            f"R$ {self._brl(credito)} da discriminação usado como ValorServicos, sem "
+            f"deduções (ValorDeducoes como impresso na nota, R$ {self._brl(deducoes)})")
         return valores.model_copy(update={
             'valor_servicos': credito,
-            'valor_deducoes': credito,
+            'valor_deducoes': deducoes,
             'valor_liquido_nfse': round(credito - retencoes, 2),
         }), [aviso]
 
@@ -25654,7 +25675,7 @@ class SPPdfExtractor:
         valores   = self._extrair_valores()
         valores, avisos_flash = self._aplicar_flash_valor_recebido(prestador, valores)
         # Depois da regra da Flash (serviço impresso 0,00), que tem precedência.
-        valores, avisos_recebido = self._aplicar_sp_valor_total_recebido(valores)
+        valores, avisos_recebido = self._aplicar_sp_valor_total_recebido(prestador, valores)
         # Pluxee com serviço 0,00: o "VALOR TOTAL RECEBIDO", quando impresso
         # (conferido com o crédito EMV da discriminação), senão o próprio EMV.
         valores, avisos_emv = self._aplicar_sp_pluxee_credito_emv(prestador, valores)

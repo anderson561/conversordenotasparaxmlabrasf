@@ -10,11 +10,13 @@ Gestao_SEDE.pdf" (pág. 9 = nota 08980330, pág. 11 = nota 08980332, escaneadas)
     VALOR TOTAL RECEBIDO = R$ 16,00     (R$ 10,00 = crédito de VR/VA repassado)
     Deduções 0,00 | Base 6,00 | Alíquota 2,00% | ISS 0,12
 
-XML: ValorServicos = 16,00 (recebido); ValorDeducoes = 10,00 (recebido -
-serviço, o repasse); Base/Alíquota/ISS como impressos (6,00 / 2% / 0,12);
-ValorLiquidoNfse = recebido - retenções (16,00). Acionada pelo campo impresso,
-não pelo CNPJ. Sem leitura segura ou com a conta incoerente: comportamento
-anterior + aviso.
+XML: ValorServicos = 16,00 (recebido); ValorDeducoes = 0,00 (como impresso -
+decisão do usuário de 2026-11-13: "não há deduções na nota fiscal"; até então
+ia a diferença recebido - serviço); Base/Alíquota/ISS como impressos (6,00 /
+2% / 0,12); ValorLiquidoNfse = recebido - retenções (16,00). Acionada pelo
+campo impresso, não pelo CNPJ: em OUTRO prestador a diferença continua em
+ValorDeducoes (repasse), comportamento de 2026-11-12 mantido. Sem leitura
+segura ou com a conta incoerente: comportamento anterior + aviso.
 
 Textos = OCR REAL das páginas do lote (os mesmos do teste de regressão do lote,
 `test_sao_paulo2_pluxee_lote_pagina_11.py`) e o retorno REAL do pdfminer das
@@ -32,8 +34,12 @@ from tests.test_sao_paulo_flash_valor_recebido import NOTA_FLASH_05710445
 RECEBIDO_16 = "VALOR TOTAL RECEBIDO = R$ 16,00"
 SERVICO_6 = "VALOR TOTAL DO SERVIÇO = R$ 6,00"
 GRADE_PAG11 = "0,00 6,00 2,00% 0,12 0,00"
-AVISO_REGRA = ("Valor total recebido R$ 16,00 usado como ValorServicos; diferença de "
-               "R$ 10,00 para o valor do serviço (R$ 6,00) lançada em ValorDeducoes (repasse)")
+AVISO_REGRA = ("Prestador Pluxee: Valor total recebido R$ 16,00 usado como ValorServicos "
+               "(maior que o valor do serviço, R$ 6,00); sem deduções - ValorDeducoes como "
+               "impresso na nota (R$ 0,00); Base de Cálculo/Alíquota/ISS mantidos como "
+               "impressos; conferir")
+AVISO_OUTRO_PRESTADOR = ("Valor total recebido R$ 16,00 usado como ValorServicos; diferença de "
+                         "R$ 10,00 para o valor do serviço (R$ 6,00) lançada em ValorDeducoes (repasse)")
 
 
 def _parse_ocr(monkeypatch, tmp_path, texto_ocr):
@@ -81,7 +87,7 @@ def test_pag11_recebido_maior_que_servico_vai_para_valor_servicos(monkeypatch, t
     assert nfse.prestador.cnpj_cpf == "69034668000156"
     v = nfse.valores
     assert v.valor_servicos == 16.00
-    assert v.valor_deducoes == 10.00
+    assert v.valor_deducoes == 0.00        # como impressas: a nota não tem deduções
     assert v.base_calculo == 6.00          # como impressa, não recalculada
     assert v.aliquota == pytest.approx(0.02)
     assert v.valor_iss == 0.12             # como impresso, não 2% de 16,00
@@ -93,7 +99,7 @@ def test_pag11_xml_sai_igual_nas_duas_secoes(monkeypatch, tmp_path):
     nfse = _parse_ocr(monkeypatch, tmp_path, PAG11_NOTA_08980332)
     valores_nfse, servico_valores = _secoes_xml(nfse)
     assert valores_nfse == {
-        "ValorServicos": "16.00", "ValorDeducoes": "10.00", "BaseCalculo": "6.00",
+        "ValorServicos": "16.00", "ValorDeducoes": "0.00", "BaseCalculo": "6.00",
         "Aliquota": valores_nfse["Aliquota"], "ValorIss": "0.12", "ValorLiquidoNfse": "16.00"}
     assert float(valores_nfse["Aliquota"]) in (2.0, 0.02)
     assert {k: v for k, v in servico_valores.items() if k != "ValorLiquidoNfse"} == {
@@ -111,7 +117,7 @@ def test_pag9_grade_com_barra_do_ocr_e_lida(monkeypatch, tmp_path):
     nfse = _parse_ocr(monkeypatch, tmp_path, PAG9_NOTA_08980330)
     assert nfse.numero == "08980330"
     v = nfse.valores
-    assert (v.valor_servicos, v.valor_deducoes, v.base_calculo, v.valor_liquido_nfse) == (16.00, 10.00, 6.00, 16.00)
+    assert (v.valor_servicos, v.valor_deducoes, v.base_calculo, v.valor_liquido_nfse) == (16.00, 0.00, 6.00, 16.00)
     assert v.aliquota == pytest.approx(0.02)
     assert v.valor_iss == 0.12
     assert AVISO_REGRA in nfse.avisos
@@ -132,7 +138,7 @@ def test_pag9_grade_sem_barra_continua_lida(monkeypatch, tmp_path):
     v = nfse.valores
     assert (v.base_calculo, v.valor_iss) == (6.00, 0.12)
     assert v.aliquota == pytest.approx(0.02)
-    assert (v.valor_servicos, v.valor_deducoes) == (16.00, 10.00)
+    assert (v.valor_servicos, v.valor_deducoes) == (16.00, 0.00)
 
 
 def test_pag9_barra_entre_todos_os_valores_da_grade(monkeypatch, tmp_path):
@@ -150,7 +156,11 @@ def test_regra_e_disparada_pelo_campo_e_nao_pelo_cnpj(monkeypatch, tmp_path):
              .replace("PLUXEE BENEFICIOS BRASIL S.A.", "OUTRA EMPRESA DE BENEFICIOS LTDA"))
     nfse = _parse_ocr(monkeypatch, tmp_path, texto)
     assert nfse.prestador.cnpj_cpf == "11222333000181"
+    # Fora da Pluxee a regra de 2026-11-12 segue intacta: diferença em ValorDeducoes.
     assert (nfse.valores.valor_servicos, nfse.valores.valor_deducoes) == (16.00, 10.00)
+    assert nfse.valores.valor_liquido_nfse == 16.00
+    assert AVISO_OUTRO_PRESTADOR in nfse.avisos
+    assert not any("Prestador Pluxee" in a for a in nfse.avisos)
 
 
 # --- recebido ausente: inalterado, sem aviso --------------------------------
