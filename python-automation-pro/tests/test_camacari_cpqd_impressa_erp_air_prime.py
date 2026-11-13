@@ -199,3 +199,62 @@ def test_xml_final(xml):
     assert _txt(xml, tom + "/Endereco/Uf") == "BA"
     assert _txt(xml, tom + "/Endereco/Cep") == "40330533"
     assert _txt(xml, tom + "/Contato/Telefone") == "7132441400"
+
+
+# --- NFS-e nº 6287 (mesmo prestador/tomador, mesmo impresso de ERP) ---------
+# Achado no corpus de regressão: `Notas/2026.10.21 - NFS 6287 - AIR PRIME ...pdf`
+# também abortava antes. Serviço de resgate R$ 6.044,32 com retenções federais,
+# alíquota 5,00%, item "Serviço - 1705" (LC 116 17.05, item válido) e prestador
+# COM endereço impresso ("Logradouro: DO FERREIRA Nº:SN" / "Compl.:" vazio).
+# Rodapé ligeiramente diferente: "impressa pelo ERP a partir do XML autorizado
+# pela prefeitura".
+
+MOCK_6287_PDFMINER_CRU = '21/10/2026, 10:28\n\nNOTA FISCAL DE SERVIÇOS ELETRÔNICA - NFS-e 37\n\nNOTA FISCAL DE SERVIÇOS ELETRÔNICA - NFS-e\nRPS Nº 37 Série 1\nCompetência 21/10/2026\n\nNúmero da Nota\n\n6287\n\nData de Emissão\n\n21/10/2026 10:25:06\n\nCódigo de Verificação\n\nL75Z7167H\n\nPRESTADOR DE SERVIÇOS\n\nNome/Razão Social: AIR PRIME EQUIPAMENTOS DE SEGURANCA LTDA - ME\n\nCPF/CNPJ: 09.198.683/0001-08\n\nInscrição Municipal: 0017892001\n\nLogradouro: DO FERREIRA\nCompl.:\n\nCEP: 42800970\n\nNome Fantasia: AIR PRIME\n\nBairro: JARDIM LIMOEIRO\n\nMunicípio: Camaçari\n\nRegime:\n\nNome/Razão Social: DELTALINE SERVICOS LTDA\n\nTOMADOR DE SERVIÇOS\n\nCPF/CNPJ: 01.813.680/0001-25\n\nLogradouro: RUA CAMBORIU\nE-mail:\n\nCEP: 40330533\n\nTelefone: 7132441400\n\nDESCRIÇÃO\n\nInscrição Municipal:\n\nBairro: IAPI\n\nMunicípio: Salvador\n\nDISCRIMINAÇÃO DOS SERVIÇOS\n\nNº:SN\n\nUF: BA\n\nNº:39\n\nUF: BA\n\nSERVICO DE RESGATE CONFORME BM 5034 E PROPOSTA COMERCIAL 11900/2026 -\nCREDITAR ATE 10/11/2026 - BANCO DO BRASIL N AGENCIA: 3884-9 CONTA CORRENTE\n38195-0 - PIX CNPJ 09.198.683/0001-08\n\nQTD\n\n1,0000\n\nVALOR UNIT (R$)\n\nVALOR TOTAL (R$)\n\n6.044,32\n\n6.044,32\n\nRetenções (R$)\n\nTotais (R$)\n\nPIS:\nCOFINS:\nINSS:\nIR:\nCSLL:\nOutras:\nTotal de Retenções:\n\n39,29\n181,33\n664,88\n60,44\n60,44\n0,00\n1.006,38\n\nValor dos Serviços (R$)\nDeduções (-)\nBase de Cálculo (=)\nAlíquota (%)\nValor do ISS (R$)\nValor Líquido da Nota (=)\n\nTipo de tributação: A RECOLHER PELO PRESTADOR\nMunicípio da prestação do serviço: 2905701 - Camaçari\nMunicípio de tributação: 2905701 - Camaçari\nCNAE - 8299-7/99 - OUTRAS ATIVIDADES DE SERVIÇOS PRESTADOS PRINCIPALMENTE ÀS\nEMPRESAS NÃO ESPECIFICADAS ANTERIORMENTE\nServiço - 1705\nCódigo de tributação municipal: 1705 - FORNECIMENTO DE MÃO-DE-OBRA, MESMO EM CARÁTER\nTEMPORÁRIO, INCLUSIVE DE EMPREGADOS OU TRABALHADORES, AVULSOS OU TEMPORÁRIOS,\nCONTRATADOS PELO PRESTADOR DE SERVIÇO.\n\n6.044,32\n0,00\n6.044,32\n5,00\n302,21\n5.037,94\n\nData da prestação do serviço: 21/10/2026\n\nNFS-e impressa pelo ERP a partir do XML autorizado pela prefeitura\n\nData Impressão: 21/10/2026 10:28\n\nblob:https://airprime-equipamento.toolgestao.com.br/6eb98bd1-f8eb-4183-8832-37586d8d8032\n\n1/1\n\n\x0c'
+
+MOCK_6287_RECONSTRUIDO = '21/10/2026, 10:28 NOTA FISCAL DE SERVIÇOS ELETRÔNICA - NFS-e 37\nNúmero da Nota\n6287\nNOTA FISCAL DE SERVIÇOS ELETRÔNICA - NFS-e Data de Emissão\nRPS Nº 37 Série 1 21/10/2026 10:25:06\nCompetência 21/10/2026\nCódigo de Verificação\nL75Z7167H\nPRESTADOR DE SERVIÇOS\nNome/Razão Social: AIR PRIME EQUIPAMENTOS DE SEGURANCA LTDA - ME\nCPF/CNPJ: 09.198.683/0001-08 Inscrição Municipal: 0017892001\nLogradouro: DO FERREIRA Nº:SN\nCompl.: Bairro: JARDIM LIMOEIRO\nCEP: 42800970 Município: Camaçari UF: BA\nNome Fantasia: AIR PRIME Regime:\nTOMADOR DE SERVIÇOS\nNome/Razão Social: DELTALINE SERVICOS LTDA\nCPF/CNPJ: 01.813.680/0001-25 Inscrição Municipal:\nLogradouro: RUA CAMBORIU Nº:39\nE-mail: Bairro: IAPI\nCEP: 40330533 Município: Salvador UF: BA\nTelefone: 7132441400\nDISCRIMINAÇÃO DOS SERVIÇOS\nDESCRIÇÃO QTD VALOR UNIT (R$) VALOR TOTAL (R$)\nSERVICO DE RESGATE CONFORME BM 5034 E PROPOSTA COMERCIAL 11900/2026 - 1,0000 6.044,32 6.044,32\nCREDITAR ATE 10/11/2026 - BANCO DO BRASIL N AGENCIA: 3884-9 CONTA CORRENTE\n38195-0 - PIX CNPJ 09.198.683/0001-08\nRetenções (R$) Totais (R$)\nPIS: 39,29 Valor dos Serviços (R$) 6.044,32\nCOFINS: 181,33 Deduções (-) 0,00\nINSS: 664,88 Base de Cálculo (=) 6.044,32\nIR: 60,44 Alíquota (%) 5,00\nCSLL: 60,44 Valor do ISS (R$) 302,21\nOutras: 0,00 Valor Líquido da Nota (=) 5.037,94\nTotal de Retenções: 1.006,38\nTipo de tributação: A RECOLHER PELO PRESTADOR Data da prestação do serviço: 21/10/2026\nMunicípio da prestação do serviço: 2905701 - Camaçari\nMunicípio de tributação: 2905701 - Camaçari\nCNAE - 8299-7/99 - OUTRAS ATIVIDADES DE SERVIÇOS PRESTADOS PRINCIPALMENTE ÀS\nEMPRESAS NÃO ESPECIFICADAS ANTERIORMENTE\nServiço - 1705\nCódigo de tributação municipal: 1705 - FORNECIMENTO DE MÃO-DE-OBRA, MESMO EM CARÁTER\nTEMPORÁRIO, INCLUSIVE DE EMPREGADOS OU TRABALHADORES, AVULSOS OU TEMPORÁRIOS,\nCONTRATADOS PELO PRESTADOR DE SERVIÇO.\nNFS-e impressa pelo ERP a partir do XML autorizado pela prefeitura Data Impressão: 21/10/2026 10:28\nblob:https://airprime-equipamento.toolgestao.com.br/6eb98bd1-f8eb-4183-8832-37586d8d8032 1/1'
+
+
+@pytest.fixture
+def nfse_6287(monkeypatch, dummy_path):
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text", lambda path: MOCK_6287_PDFMINER_CRU)
+    monkeypatch.setattr(SPPdfExtractor, "_reconstruir_texto_por_coordenadas", lambda self: MOCK_6287_RECONSTRUIDO)
+    notas = SPPdfExtractor(dummy_path).parse_multiple()
+    assert len(notas) == 1
+    return notas[0]
+
+
+def test_6287_detectada(dummy_path):
+    ex = SPPdfExtractor(dummy_path)
+    ex._pagina_veio_de_ocr = False
+    assert ex._detect_layout_page(MOCK_6287_PDFMINER_CRU) == LAYOUT_CAMACARI
+
+
+def test_6287_item_lc116_valido_sem_aviso(nfse_6287):
+    assert nfse_6287.servico_codigo == "1705"
+    assert nfse_6287.codigo_cnae == "8299799"
+    assert not any("LC 116" in a for a in nfse_6287.avisos)
+
+
+def test_6287_prestador_com_endereco_impresso(nfse_6287):
+    p = nfse_6287.prestador
+    assert p.cnpj_cpf == "09198683000108"
+    assert p.endereco.logradouro == "DO FERREIRA"  # sem "Nº:SN Compl.:"
+    assert p.endereco.numero == "S/N"
+    assert p.endereco.bairro == "JARDIM LIMOEIRO"
+    assert p.endereco.cep == "42800970"
+    assert p.endereco.codigo_municipio == "2905701"
+
+
+def test_6287_valores_e_retencoes(nfse_6287):
+    assert nfse_6287.numero == "6287"
+    assert nfse_6287.codigo_verificacao == "L75Z7167H"
+    v = nfse_6287.valores
+    assert v.valor_servicos == 6044.32
+    assert v.base_calculo == 6044.32
+    assert v.aliquota == 0.05
+    assert v.valor_iss == 302.21
+    assert v.iss_retido is False
+    assert (v.valor_pis, v.valor_cofins, v.valor_inss, v.valor_ir, v.valor_csll) == (39.29, 181.33, 664.88, 60.44, 60.44)
+    assert v.valor_liquido_nfse == 5037.94
+    assert nfse_6287.discriminacao.startswith("SERVICO DE RESGATE CONFORME BM 5034")
+    assert nfse_6287.discriminacao.endswith("PIX CNPJ 09.198.683/0001-08")

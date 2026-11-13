@@ -4905,16 +4905,18 @@ class SPPdfExtractor:
                     return m_cod.group(1)
 
         if self.layout == LAYOUT_CAMACARI and self._camacari_impressa_erp():
-            # NFS-e CPqD reimpressa pelo ERP: "Serviço - 9901" + "Código de
-            # tributação municipal: 9901 - LOCAÇÃO DE BENS MÓVEIS". "9901" não
-            # é item da LC 116/2003 (locação de bens móveis, sem incidência de
-            # ISS) -> "0000", a MESMA convenção do "9901" do Camaçari/SISLOC
-            # (`LAYOUT_CAMACARI_SISLOC`), com aviso citando o código impresso
-            # (montado em `parse`). Item CPqD de 6 dígitos ("Serviço: 000706")
-            # continua aceito, caso o ERP o imprima.
-            m = re.search(r'Servi[çc]o\s*[-:]\s*(0\d{5})\b', t)
-            if m:
-                return m.group(1)[-4:]
+            # NFS-e CPqD reimpressa pelo ERP: "Serviço - 1705" / "Serviço -
+            # 9901" + "Código de tributação municipal: <código> - <descrição>".
+            # O código é o item da LC 116/2003 em 4 dígitos (1705 = 17.05,
+            # "FORNECIMENTO DE MÃO-DE-OBRA...", NFS 6287); o CPqD imprime o
+            # mesmo item com zeros à esquerda ("Serviço: 000706"), também
+            # aceito. "9901" ("LOCAÇÃO DE BENS MÓVEIS", NFS 6288) não é item
+            # da LC 116 (grupo > 40) -> "0000", a MESMA convenção do "9901" do
+            # Camaçari/SISLOC (`LAYOUT_CAMACARI_SISLOC`), com aviso citando o
+            # código impresso (montado em `parse`).
+            m = re.search(r'Servi[çc]o\s*[-:]\s*(?:00)?(\d{2})(\d{2})\b', t)
+            if m and 1 <= int(m.group(1)) <= 40:
+                return m.group(1) + m.group(2)
             return "0000"
 
         if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
@@ -8497,15 +8499,21 @@ class SPPdfExtractor:
 
             # NFS-e CPqD de Camaçari reimpressa pelo ERP: "Logradouro: RUA
             # CAMBORIU Nº:39" - o número vem na mesma linha, após o rótulo
-            # "Nº:" (achado real NFS 6288, tomador DELTALINE). Restrito à
-            # variante ERP para não mudar o CPqD digital já validado.
+            # "Nº:" (achado real NFS 6288, tomador DELTALINE); no prestador da
+            # NFS 6287 vem "DO FERREIRA Nº:SN Compl.:" (complemento vazio).
+            # Restrito à variante ERP para não mudar o CPqD digital validado.
             if self.layout == LAYOUT_CAMACARI and self._camacari_impressa_erp() \
                     and end_data.get('logradouro'):
-                m_num_erp = re.match(r'^(.*?\S)\s*\bN\s*[º°o]\s*:\s*(S/?N|\d+[A-Za-z]?)\s*$',
-                                     end_data['logradouro'], re.IGNORECASE)
+                m_num_erp = re.match(
+                    r'^(.*?\S)\s*\bN\s*[º°o]\s*:\s*(S/?N|\d+[A-Za-z]?)'
+                    r'(?:\s+Compl\.?\s*:\s*(.*?))?\s*$',
+                    end_data['logradouro'], re.IGNORECASE | re.DOTALL)
                 if m_num_erp:
                     end_data['logradouro'] = m_num_erp.group(1).strip()
-                    end_data['numero'] = m_num_erp.group(2).upper()
+                    num_erp = m_num_erp.group(2).upper()
+                    end_data['numero'] = 'S/N' if num_erp == 'SN' else num_erp
+                    if m_num_erp.group(3) and m_num_erp.group(3).strip():
+                        end_data['complemento'] = m_num_erp.group(3).strip()
 
         # Rótulo "Bairro" separado (não embutido na linha de Endereço/Logradouro),
         # comum em layouts de grade (ex.: Camaçari) onde cada campo tem sua própria linha.
