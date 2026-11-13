@@ -16010,6 +16010,7 @@ class SPPdfExtractor:
         linhas = [l.strip() for l in bloco.split('\n') if l.strip()]
         razao = municipio = uf = None
         end_linha, idx_end = None, None
+        ufs_inline = []  # "UF: XX" / "Município: X UF: XX" na mesma linha, em ordem
         for i, l in enumerate(linhas):
             m = re.match(r'^Nome\s*/\s*Raz[ãa]o(?:\s+Social)?\s*:\s*(\S.*)$', l, re.IGNORECASE)
             if m and not razao:
@@ -16020,10 +16021,10 @@ class SPPdfExtractor:
             if m and not re.match(r'^UF\b', m.group(1), re.IGNORECASE):
                 municipio = municipio or m.group(1).strip()
                 if m.group(2):
-                    uf = uf or m.group(2).upper()
+                    ufs_inline.append(m.group(2).upper())
             m = re.match(r'^UF\s*:\s*([A-Z]{2})$', l)
             if m:
-                uf = uf or m.group(1)
+                ufs_inline.append(m.group(1))
         endereco = self._sp_endereco_linha_unica(end_linha) if end_linha else None
         if endereco is None:
             return None
@@ -16039,12 +16040,12 @@ class SPPdfExtractor:
                         or self._sp_e_nome_de_municipio(l) or l == municipio
                         or (len(l) == 2 and l in self._SP_UFS))
 
-        if not uf:  # valor sozinho (2 letras maiúsculas) logo após o rótulo "UF:"
-            for i, l in enumerate(linhas):
-                if re.match(r'^UF\s*:?$', l, re.IGNORECASE):
-                    uf = next((c for c in linhas[i + 1:i + 3] if re.match(r'^[A-Z]{2}$', c) and c in self._SP_UFS), None)
-                    if uf:
-                        break
+        ufs_rotulo = []  # valor sozinho (2 letras maiúsculas) logo após o rótulo "UF:"
+        for i, l in enumerate(linhas):
+            if re.match(r'^UF\s*:?$', l, re.IGNORECASE):
+                cand = next((c for c in linhas[i + 1:i + 3] if re.match(r'^[A-Z]{2}$', c) and c in self._SP_UFS), None)
+                if cand:
+                    ufs_rotulo.append(cand)
         if not municipio:  # valor sozinho nas linhas logo após o endereço (pula e-mail)
             for cand in linhas[idx_end + 1:idx_end + 4]:
                 if '@' in cand or self._SP_RE_ROTULO.match(cand):
@@ -16052,6 +16053,19 @@ class SPPdfExtractor:
                 if _texto_simples(cand) and cand != razao:
                     municipio = cand
                 break
+        # UF: a 1ª inline, senão a 1ª após rótulo solto (ordem histórica). Mas o
+        # pdfminer pode deixar no bloco do TOMADOR o "UF: SP" do PRESTADOR
+        # (nota Pluxee nº 08969996: "Município:/UF:/E-mail:" rótulos soltos,
+        # depois "Salvador", "BA" e, mais abaixo, o "UF: SP" do prestador).
+        # Com mais de uma UF candidata no bloco, vale a que bate com o
+        # município lido (quando ele é conhecido); sem essa prova, a ordem
+        # histórica decide.
+        candidatas = ufs_inline + ufs_rotulo
+        if candidatas:
+            uf = candidatas[0]
+            uf_mun = self._sp_uf_do_municipio(municipio) if municipio and len(set(candidatas)) > 1 else None
+            if uf_mun in candidatas:
+                uf = uf_mun
         if not razao:
             razao = next((l for l in linhas if _elegivel_razao(l)), None)
         apos = [l for l in linhas[idx_end + 1:] if _elegivel_razao(l)]
