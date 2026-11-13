@@ -438,6 +438,36 @@ class SPPdfExtractor:
         # do documento inteiro (comportamento histórico).
         self._pagina_veio_de_ocr = None
 
+    _CAMACARI_ERP_MARCA = re.compile(r'NFS-e\s+impressa\s+pelo\s+ERP', re.IGNORECASE)
+    _CAMACARI_ERP_TRIBUTACAO = re.compile(r'Munic[íi]pio\s+de\s+tributa[çc][ãa]o\s*:\s*2905701(?!\d)', re.IGNORECASE)
+    _CAMACARI_ERP_COD_MUNICIPAL = re.compile(r'C[óo]digo\s+de\s+tributa[çc][ãa]o\s+municipal\s*:', re.IGNORECASE)
+
+    def _camacari_impressa_erp(self, texto: Optional[str] = None) -> bool:
+        """NFS-e CPqD de Camaçari/BA reimpressa pelo ERP do PRESTADOR.
+
+        Achado real 2026-11-13 (NFS 6288, AIR PRIME EQUIPAMENTOS DE SEGURANCA
+        LTDA - ME -> DELTALINE SERVICOS LTDA, locação de bens móveis): a nota
+        traz a mesma grade da NFS-e CPqD de Camaçari ("Número da Nota",
+        "PRESTADOR/TOMADOR DE SERVIÇOS", "Nome/Razão Social:", "CPF/CNPJ:",
+        "Retenções (R$)/Totais (R$)", "Tipo de tributação"), mas desenhada pelo
+        ERP ("NFS-e impressa pelo ERP a partir dos dados gravados na nota",
+        rodapé blob:...toolgestao.com.br), SEM "PREFEITURA MUNICIPAL DE
+        CAMAÇARI" (o brasão é imagem) e SEM "CPqD - Gestão Pública" - nenhuma
+        das marcas do `LAYOUT_CAMACARI` casava e o PDF digital saía sem nota
+        ("parece ser baseado em imagem/scan"). Diferenças de impressão em
+        relação ao CPqD: "CNAE - NNNN-N/NN", "Serviço - 9901",
+        "Código de tributação municipal: ...", "Nº:39" colado ao logradouro.
+
+        Exige as TRÊS âncoras (marca do ERP + tributação no IBGE de Camaçari +
+        rótulo do código municipal) para não puxar nota de outro município ou
+        outro impresso de ERP."""
+        t = self.raw_text if texto is None else texto
+        if not t:
+            return False
+        return bool(self._CAMACARI_ERP_MARCA.search(t)
+                    and self._CAMACARI_ERP_TRIBUTACAO.search(t)
+                    and self._CAMACARI_ERP_COD_MUNICIPAL.search(t))
+
     def _pagina_e_escaneada(self) -> bool:
         """A página deste bloco veio de OCR (imagem/scan) ou do texto embutido?
 
@@ -910,7 +940,11 @@ class SPPdfExtractor:
         # notas CPqD digitais/escaneadas, então não há falso positivo com elas).
         if re.search(r'\bAVULSA\b', t, re.IGNORECASE) and re.search(r'CAMA[CÇ]ARI', t, re.IGNORECASE):
             return LAYOUT_CAMACARI_AVULSA
-        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE):
+        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE) \
+                or self._camacari_impressa_erp(t):
+            # Ampliação 2026-11-13: a mesma NFS-e CPqD de Camaçari impressa
+            # pelo ERP do prestador (sem o cabeçalho da Prefeitura nem o
+            # rodapé "CPqD - Gestão Pública") - ver `_camacari_impressa_erp`.
             # Mesmo cabeçalho para o Camaçari digital (texto embutido) e o
             # escaneado (foto/JPG -> OCR). Diferente do SP2, o LAYOUT_CAMACARI
             # já tratava notas escaneadas; por isso o LAYOUT_CAMACARI_2 é um
@@ -1437,7 +1471,11 @@ class SPPdfExtractor:
         # notas CPqD digitais/escaneadas, então não há falso positivo com elas).
         if re.search(r'\bAVULSA\b', t, re.IGNORECASE) and re.search(r'CAMA[CÇ]ARI', t, re.IGNORECASE):
             return LAYOUT_CAMACARI_AVULSA
-        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE):
+        if re.search(r'CPqD\s*[-–]\s*Gest[aã]o\s+P[uú]blica|PREFEITURA\s+MUNICIPAL\s+DE\s+CAMA[CÇ]ARI', t, re.IGNORECASE) \
+                or self._camacari_impressa_erp(t):
+            # Ampliação 2026-11-13: a mesma NFS-e CPqD de Camaçari impressa
+            # pelo ERP do prestador (sem o cabeçalho da Prefeitura nem o
+            # rodapé "CPqD - Gestão Pública") - ver `_camacari_impressa_erp`.
             # Mesmo cabeçalho para o Camaçari digital (texto embutido) e o
             # escaneado (foto/JPG -> OCR). Diferente do SP2, o LAYOUT_CAMACARI
             # já tratava notas escaneadas; por isso o LAYOUT_CAMACARI_2 é um
@@ -4169,7 +4207,15 @@ class SPPdfExtractor:
                 if disc:
                     return disc
 
-        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
+        if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3) or (
+                self.layout == LAYOUT_CAMACARI and self._camacari_impressa_erp()):
+            # Também a NFS-e CPqD reimpressa pelo ERP do prestador (digital,
+            # texto reconstruído por coordenada): mesmo bloco, com a linha de
+            # cabeçalho da tabela e "QTD/VALOR UNIT/VALOR TOTAL" colados ao fim
+            # da 1ª linha da descrição; sem este ramo o genérico levava a nota
+            # inteira (grade de retenções, CNAE, rodapé blob:...) para a
+            # discriminação (achado real NFS 6288, AIR PRIME).
+            #
             # Bloco entre "DISCRIMINAÇÃO DOS SERVIÇOS" e "Retenções (R$)", no OCR
             # de grade ruidoso. As linhas úteis (descrição do serviço + "OPTANTE
             # PELO SIMPLES NACIONAL") vêm misturadas com a linha de cabeçalho da
@@ -4858,6 +4904,21 @@ class SPPdfExtractor:
                 if m_cod:
                     return m_cod.group(1)
 
+        if self.layout == LAYOUT_CAMACARI and self._camacari_impressa_erp():
+            # NFS-e CPqD reimpressa pelo ERP: "Serviço - 1705" / "Serviço -
+            # 9901" + "Código de tributação municipal: <código> - <descrição>".
+            # O código é o item da LC 116/2003 em 4 dígitos (1705 = 17.05,
+            # "FORNECIMENTO DE MÃO-DE-OBRA...", NFS 6287); o CPqD imprime o
+            # mesmo item com zeros à esquerda ("Serviço: 000706"), também
+            # aceito. "9901" ("LOCAÇÃO DE BENS MÓVEIS", NFS 6288) não é item
+            # da LC 116 (grupo > 40) -> "0000", a MESMA convenção do "9901" do
+            # Camaçari/SISLOC (`LAYOUT_CAMACARI_SISLOC`), com aviso citando o
+            # código impresso (montado em `parse`).
+            m = re.search(r'Servi[çc]o\s*[-:]\s*(?:00)?(\d{2})(\d{2})\b', t)
+            if m and 1 <= int(m.group(1)) <= 40:
+                return m.group(1) + m.group(2)
+            return "0000"
+
         if self.layout in (LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3):
             # "Serviço: 000713 - DEDETIZAÇÃO, DESINFECÇÃO, ..." — item da lista
             # em 6 dígitos com zeros à esquerda (000713 = 07.13). Ancoramos em
@@ -5136,6 +5197,14 @@ class SPPdfExtractor:
                 t, re.IGNORECASE)
             if m_cnae:
                 return m_cnae.group(1)[-4:] + m_cnae.group(2) + m_cnae.group(3)
+
+        if self.layout == LAYOUT_CAMACARI and self._camacari_impressa_erp():
+            # NFS-e CPqD reimpressa pelo ERP: "CNAE - 7739-0/99 - ALUGUEL DE
+            # OUTRAS MÁQUINAS..." (subclasse "NNNN-N/NN"). Restrito à variante
+            # ERP: o CPqD digital/escaneado segue sem CNAE, como antes.
+            m_cnae = re.search(r'\bCNAE\s*[-:]\s*(\d{4})\s*-\s*(\d)\s*/\s*(\d{2})\b', t, re.IGNORECASE)
+            if m_cnae:
+                return m_cnae.group(1) + m_cnae.group(2) + m_cnae.group(3)
 
         return None
 
@@ -8427,6 +8496,24 @@ class SPPdfExtractor:
                 end_data['logradouro'], end_data['bairro'] = spl[0].strip(), spl[1].strip()
             elif partes_end:
                 end_data['logradouro'] = partes_end
+
+            # NFS-e CPqD de Camaçari reimpressa pelo ERP: "Logradouro: RUA
+            # CAMBORIU Nº:39" - o número vem na mesma linha, após o rótulo
+            # "Nº:" (achado real NFS 6288, tomador DELTALINE); no prestador da
+            # NFS 6287 vem "DO FERREIRA Nº:SN Compl.:" (complemento vazio).
+            # Restrito à variante ERP para não mudar o CPqD digital validado.
+            if self.layout == LAYOUT_CAMACARI and self._camacari_impressa_erp() \
+                    and end_data.get('logradouro'):
+                m_num_erp = re.match(
+                    r'^(.*?\S)\s*\bN\s*[º°o]\s*:\s*(S/?N|\d+[A-Za-z]?)'
+                    r'(?:\s+Compl\.?\s*:\s*(.*?))?\s*$',
+                    end_data['logradouro'], re.IGNORECASE | re.DOTALL)
+                if m_num_erp:
+                    end_data['logradouro'] = m_num_erp.group(1).strip()
+                    num_erp = m_num_erp.group(2).upper()
+                    end_data['numero'] = 'S/N' if num_erp == 'SN' else num_erp
+                    if m_num_erp.group(3) and m_num_erp.group(3).strip():
+                        end_data['complemento'] = m_num_erp.group(3).strip()
 
         # Rótulo "Bairro" separado (não embutido na linha de Endereço/Logradouro),
         # comum em layouts de grade (ex.: Camaçari) onde cada campo tem sua própria linha.
@@ -25598,6 +25685,17 @@ class SPPdfExtractor:
             avisos.extend(a for a in self._saubara_campos().avisos if a not in avisos)
         if self.layout in _LAYOUTS_NOTA_LOCACAO:
             avisos.extend(a for a in self._nota_loc_campos().avisos if a not in avisos)
+        if self.layout == LAYOUT_CAMACARI and self._camacari_impressa_erp() \
+                and servico_codigo == "0000":
+            m_cod_mun = re.search(
+                r'C[óo]digo\s+de\s+tributa[çc][ãa]o\s+municipal\s*:\s*([^\n]+)',
+                self.raw_text, re.IGNORECASE)
+            impresso = m_cod_mun.group(1).strip() if m_cod_mun else "não impresso"
+            avisos.append(
+                f"Código de tributação municipal impresso ({impresso}) não é item da "
+                "LC 116/2003 - ItemListaServico/CodigoTributacaoMunicipio mantidos como "
+                "\"0000\" (mesma convenção do 9901 de Camaçari/SISLOC); classificar o "
+                "serviço manualmente")
         avisos.extend(avisos_flash)
         avisos.extend(a for a in avisos_boleto if a not in avisos)
         if self.layout == LAYOUT_TELECOM_COMUNICACAO:
