@@ -120,11 +120,25 @@ def test_base_impressa_diferente_de_zero_mantem(monkeypatch, tmp_path):
     _mantido(nota, "base")
 
 
-def test_com_valor_total_recebido_a_regra_emv_nao_age(monkeypatch, tmp_path):
+def test_com_valor_total_recebido_usa_o_recebido_conferido_pelo_emv(monkeypatch, tmp_path):
+    # Desde 2026-11-13 (nota nº 08969996): com recebido impresso, o RECEBIDO é
+    # o valor e o EMV só confere - ver test_sao_paulo_pluxee_recebido_servico_zero.
     texto = _trocar(SERVICO_ZERO, SERVICO_ZERO + "\n\nVALOR TOTAL RECEBIDO = R$ 1.620,00")
     nota = _uma(monkeypatch, tmp_path, [texto])
-    assert nota.valores.valor_servicos == 0.0
-    assert _avisos_emv(nota) == []
+    assert (nota.valores.valor_servicos, nota.valores.valor_deducoes) == (1620.0, 1620.0)
+    assert _avisos_emv(nota) == [
+        "Serviço impresso R$ 0,00; Valor total recebido R$ 1.620,00 usado como ValorServicos "
+        "e lançado em ValorDeducoes (repasse) - confere com o crédito EMV R$ 1.620,00 da "
+        "discriminação; conferir"]
+
+
+def test_escaneado_com_recebido_divergente_do_emv_mantem(monkeypatch, tmp_path):
+    # No scan (OCR) o recebido só vale se o crédito EMV o confirmar.
+    texto = _trocar(SERVICO_ZERO, SERVICO_ZERO + "\n\nVALOR TOTAL RECEBIDO = R$ 7.620,00")
+    nota = _uma(monkeypatch, tmp_path, [texto])
+    assert (nota.valores.valor_servicos, nota.valores.valor_deducoes) == (0.0, 0.0)
+    avisos = _avisos_emv(nota)
+    assert len(avisos) == 1 and "mantido em 0,00" in avisos[0] and "DIVERGE" in avisos[0], avisos
 
 
 def test_outro_prestador_nao_aplica(monkeypatch, tmp_path):
