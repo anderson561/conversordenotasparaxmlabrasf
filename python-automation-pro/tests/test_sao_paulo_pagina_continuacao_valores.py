@@ -35,9 +35,11 @@ PAG35_ANEXO_DA_09125393 = 'IMPOSTO E CONTRIBUIÇÃO SOBRE BENS E SERVIÇOS (IBS 
 PAG36_ANEXO_DA_09125393_FIM = 'de IBS e CBS (R$)\n\n10,00\n\nIBS e CBS (R$)\n\n5,88\n\ndo IBS (%)\n\ndo IBS (%)\n\nIBS (%) IBS (%) (R$)\n0,10% 0,00% 0,00% 0,10% - 0,01\nAlíquota da CBS (%) Redução de Alíquota| Alíquota Efetiva da | Valor Diferido da Valor da CBS (R$)\nda CBS (%) CBS (%) CBS (R$)\n0,90% 0,00% 0,90% 0,00 0,05\n\nVALOR TOTAL COBRADO = R$ 16,00\n\nINFORMAÇÕES ADICIONAIS\n\n(1) Esta NFS-e referencia 1 documento(s) para fins de dedução de base cálculo de CBS e/ou IBS.\n\nPágina 2 de 2\n'
 
 ANEXO_33 = [PAG35_ANEXO_DA_09125393, PAG36_ANEXO_DA_09125393_FIM]
-AVISO_RECEBIDO = ("Valor total recebido R$ 16,00 usado como ValorServicos; diferença de "
-                  "R$ 10,00 para o valor do serviço (R$ 6,00) lançada em ValorDeducoes (repasse)")
-VALORES_ESPERADOS = {"ValorServicos": "16.00", "ValorDeducoes": "10.00", "BaseCalculo": "6.00",
+AVISO_RECEBIDO = ("Prestador Pluxee: Valor total recebido R$ 16,00 usado como ValorServicos "
+                  "(maior que o valor do serviço, R$ 6,00); sem deduções - ValorDeducoes como "
+                  "impresso na nota (R$ 0,00); Base de Cálculo/Alíquota/ISS mantidos como "
+                  "impressos; conferir")
+VALORES_ESPERADOS = {"ValorServicos": "16.00", "ValorDeducoes": "0.00", "BaseCalculo": "6.00",
                      "Aliquota": "0.02", "ValorIss": "0.12"}
 
 

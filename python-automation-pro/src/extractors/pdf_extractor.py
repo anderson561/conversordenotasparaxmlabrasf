@@ -15866,7 +15866,18 @@ class SPPdfExtractor:
         tolerância de arredondamento; com Base ou Alíquota zeradas, ISS zero).
         Devolve `(deducoes, base, aliquota, iss)` ou `None` (nenhuma leitura
         fecha) e o chamador mantém a leitura posicional anterior - nada é
-        inventado."""
+        inventado.
+
+        Segunda tentativa (achado real 2026-11-13, Pluxee nº 08969996): o
+        pdfminer pode despejar os rótulos Base/Alíquota/ISS ANTES do rótulo
+        "Valor Total das Deduções" e jogar o cabeçalho "OUTRAS INFORMAÇÕES" no
+        MEIO dos 5 valores ("Deduções\\n0,00 ... 0,00 2,00% OUTRAS INFORMAÇÕES
+        Crédito 0,00 0,00"). A região a partir do rótulo de Deduções, cortada
+        em "OUTRAS INFORMAÇÕES", fica só com 3 valores. Quando a 1ª leitura
+        falha, relê do 1º rótulo da grade até o texto das "OUTRAS
+        INFORMAÇÕES" ("Esta NFS-e foi emitida") / "Valor Aproximado dos
+        Tributos", exigindo EXATAMENTE os 5 valores da grade - qualquer outra
+        contagem mantém `None`."""
         m_ini = re.search(r'Valor\s+Total\s+das\s+Dedu[çc][õo]es', t, re.IGNORECASE)
         if not m_ini:
             return None
@@ -15874,7 +15885,28 @@ class SPPdfExtractor:
         m_fim = re.search(r'OUTRAS\s+INFORMA[ÇC][ÕO]ES|Esta\s+NFS-e\s+foi\s+emitida', regiao, re.IGNORECASE)
         if m_fim:
             regiao = regiao[:m_fim.start()]
+        leitura = SPPdfExtractor._sp_grade_ler_tokens(
+            re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})(\s*%)?', regiao))
+        if leitura is not None:
+            return leitura
+        rotulos = [m.start() for m in (
+            re.search(p, t, re.IGNORECASE) for p in (
+                r'Valor\s+Total\s+das\s+Dedu[çc][õo]es', r'Base\s+de\s+C[áa]lculo\s*\(R\$\)',
+                r'Al[íi]quota\s*\(%\)', r'Valor\s+do\s+ISS\s*\(R\$\)')) if m]
+        regiao = t[min(rotulos):]
+        m_fim = re.search(r'Esta\s+NFS-e\s+foi\s+emitida|Valor\s+Aproximado\s+dos\s+Tributos',
+                          regiao, re.IGNORECASE)
+        if m_fim:
+            regiao = regiao[:m_fim.start()]
         toks = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})(\s*%)?', regiao)
+        if len(toks) != 5:
+            return None
+        return SPPdfExtractor._sp_grade_ler_tokens(toks)
+
+    @staticmethod
+    def _sp_grade_ler_tokens(toks):
+        """Valida/lê a sequência de valores da grade (ver
+        `_sp_grade_valores_por_estrutura`); `None` quando não fecha."""
         if len(toks) < 4 or not toks[2][1] or toks[0][1] or toks[1][1]:
             return None
         if any(pct for _, pct in toks[3:5]):
@@ -15978,6 +16010,7 @@ class SPPdfExtractor:
         linhas = [l.strip() for l in bloco.split('\n') if l.strip()]
         razao = municipio = uf = None
         end_linha, idx_end = None, None
+        ufs_inline = []  # "UF: XX" / "Município: X UF: XX" na mesma linha, em ordem
         for i, l in enumerate(linhas):
             m = re.match(r'^Nome\s*/\s*Raz[ãa]o(?:\s+Social)?\s*:\s*(\S.*)$', l, re.IGNORECASE)
             if m and not razao:
@@ -15988,10 +16021,10 @@ class SPPdfExtractor:
             if m and not re.match(r'^UF\b', m.group(1), re.IGNORECASE):
                 municipio = municipio or m.group(1).strip()
                 if m.group(2):
-                    uf = uf or m.group(2).upper()
+                    ufs_inline.append(m.group(2).upper())
             m = re.match(r'^UF\s*:\s*([A-Z]{2})$', l)
             if m:
-                uf = uf or m.group(1)
+                ufs_inline.append(m.group(1))
         endereco = self._sp_endereco_linha_unica(end_linha) if end_linha else None
         if endereco is None:
             return None
@@ -16007,12 +16040,12 @@ class SPPdfExtractor:
                         or self._sp_e_nome_de_municipio(l) or l == municipio
                         or (len(l) == 2 and l in self._SP_UFS))
 
-        if not uf:  # valor sozinho (2 letras maiúsculas) logo após o rótulo "UF:"
-            for i, l in enumerate(linhas):
-                if re.match(r'^UF\s*:?$', l, re.IGNORECASE):
-                    uf = next((c for c in linhas[i + 1:i + 3] if re.match(r'^[A-Z]{2}$', c) and c in self._SP_UFS), None)
-                    if uf:
-                        break
+        ufs_rotulo = []  # valor sozinho (2 letras maiúsculas) logo após o rótulo "UF:"
+        for i, l in enumerate(linhas):
+            if re.match(r'^UF\s*:?$', l, re.IGNORECASE):
+                cand = next((c for c in linhas[i + 1:i + 3] if re.match(r'^[A-Z]{2}$', c) and c in self._SP_UFS), None)
+                if cand:
+                    ufs_rotulo.append(cand)
         if not municipio:  # valor sozinho nas linhas logo após o endereço (pula e-mail)
             for cand in linhas[idx_end + 1:idx_end + 4]:
                 if '@' in cand or self._SP_RE_ROTULO.match(cand):
@@ -16020,6 +16053,19 @@ class SPPdfExtractor:
                 if _texto_simples(cand) and cand != razao:
                     municipio = cand
                 break
+        # UF: a 1ª inline, senão a 1ª após rótulo solto (ordem histórica). Mas o
+        # pdfminer pode deixar no bloco do TOMADOR o "UF: SP" do PRESTADOR
+        # (nota Pluxee nº 08969996: "Município:/UF:/E-mail:" rótulos soltos,
+        # depois "Salvador", "BA" e, mais abaixo, o "UF: SP" do prestador).
+        # Com mais de uma UF candidata no bloco, vale a que bate com o
+        # município lido (quando ele é conhecido); sem essa prova, a ordem
+        # histórica decide.
+        candidatas = ufs_inline + ufs_rotulo
+        if candidatas:
+            uf = candidatas[0]
+            uf_mun = self._sp_uf_do_municipio(municipio) if municipio and len(set(candidatas)) > 1 else None
+            if uf_mun in candidatas:
+                uf = uf_mun
         if not razao:
             razao = next((l for l in linhas if _elegivel_razao(l)), None)
         apos = [l for l in linhas[idx_end + 1:] if _elegivel_razao(l)]
@@ -16280,16 +16326,21 @@ class SPPdfExtractor:
     def _brl(valor: float) -> str:
         return f"{valor:,.2f}".replace(',', '#').replace('.', ',').replace('#', '.')
 
-    def _aplicar_sp_valor_total_recebido(self, valores: Valores):
+    def _aplicar_sp_valor_total_recebido(self, prestador, valores: Valores):
         """Regra de negócio (decisão do usuário, 2026-11-12, notas da PLUXEE
         BENEFICIOS BRASIL S.A. no lote PH Gestão 10/2026): a NFS-e de São Paulo
         que imprime "VALOR TOTAL RECEBIDO" MAIOR que o "VALOR TOTAL DO SERVIÇO"
         (ex.: serviço R$ 6,00, recebido R$ 16,00 - os R$ 10,00 a mais são o
         crédito de vale-refeição/alimentação repassado) vai para o XML com:
-        ValorServicos = recebido; ValorDeducoes = recebido - serviço (o
-        repasse); Base de Cálculo/Alíquota/ISS como IMPRESSOS (o ISS incide só
-        sobre o serviço - nada é recalculado sobre o recebido); líquido =
-        recebido - retenções.
+        ValorServicos = recebido; Base de Cálculo/Alíquota/ISS como IMPRESSOS
+        (o ISS incide só sobre o serviço - nada é recalculado sobre o
+        recebido); líquido = recebido - retenções.
+
+        ValorDeducoes: na PLUXEE (CNPJ 69.034.668/0001-56), por decisão do
+        usuário de 2026-11-13 ("não há deduções na nota fiscal"), fica como
+        IMPRESSO na nota (0,00 - a regra só age com deduções impressas
+        zeradas). Nos demais prestadores continua = recebido - serviço (o
+        repasse), comportamento de 2026-11-12, mantido até decisão própria.
 
         Acionada pela presença do campo impresso (não pelo CNPJ), só nos
         layouts São Paulo (digital e escaneado). Só aplica quando a conta
@@ -16298,7 +16349,8 @@ class SPPdfExtractor:
         serviço - deduções == base impressa. Fora disso mantém o comportamento
         anterior e avisa - nunca fabrica valor. Serviço impresso 0,00 fica com
         a regra própria do prestador Flash (`_aplicar_flash_valor_recebido`),
-        que roda antes; esta não age nesse caso.
+        que roda antes, ou com a da Pluxee (`_aplicar_sp_pluxee_credito_emv`),
+        que roda depois; esta não age nesse caso.
 
         Devolve `(valores, avisos)`."""
         if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
@@ -16356,13 +16408,22 @@ class SPPdfExtractor:
                      + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
                      + valores.valor_contribuicoes_sociais_retidas
                      + (valores.valor_iss_retido if valores.iss_retido else 0.0))
-        aviso = (
-            f"Valor total recebido R$ {self._brl(recebido)} usado como ValorServicos; "
-            f"diferença de R$ {self._brl(diferenca)} para o valor do serviço "
-            f"(R$ {self._brl(servico)}) lançada em ValorDeducoes (repasse)")
+        if self._prestador_e_pluxee(prestador):
+            novo_deducoes = deducoes
+            aviso = (
+                f"Prestador Pluxee: Valor total recebido R$ {self._brl(recebido)} usado como "
+                f"ValorServicos (maior que o valor do serviço, R$ {self._brl(servico)}); "
+                f"sem deduções - ValorDeducoes como impresso na nota (R$ {self._brl(deducoes)}); "
+                "Base de Cálculo/Alíquota/ISS mantidos como impressos; conferir")
+        else:
+            novo_deducoes = diferenca
+            aviso = (
+                f"Valor total recebido R$ {self._brl(recebido)} usado como ValorServicos; "
+                f"diferença de R$ {self._brl(diferenca)} para o valor do serviço "
+                f"(R$ {self._brl(servico)}) lançada em ValorDeducoes (repasse)")
         return valores.model_copy(update={
             'valor_servicos': recebido,
-            'valor_deducoes': diferenca,
+            'valor_deducoes': novo_deducoes,
             'valor_liquido_nfse': round(recebido - retencoes, 2),
         }), [aviso]
 
@@ -16373,6 +16434,33 @@ class SPPdfExtractor:
     _PLUXEE_VALOR_DISCRIMINACAO = re.compile(r'^(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}$')
     _PLUXEE_ROTULO_TAXA = r'\bT[Xx]\b|COBRAN[CÇ]A'
 
+    def _prestador_e_pluxee(self, prestador) -> bool:
+        return re.sub(r'\D', '', getattr(prestador, 'cnpj_cpf', '') or '') == self._CNPJ_PLUXEE
+
+    def _pluxee_ler_discriminacao(self, t: str):
+        """Lê da discriminação da Pluxee os itens "EMV" (crédito repassado) e as
+        taxas ("TX ...", "... COBRANCA"). Devolve `(credito, taxas, motivo)`:
+        `credito` = soma de TODOS os itens EMV (só se todos foram lidos),
+        `taxas` = lista dos valores das taxas (um por rótulo); em dúvida,
+        `credito`/`taxas` saem `None` e `motivo` diz o porquê."""
+        m = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DE\s+SERVI[ÇC]OS(.*?)VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O',
+                      t, re.IGNORECASE | re.DOTALL)
+        if not m:
+            return None, None, "a discriminação não foi localizada"
+        linhas = m.group(1).splitlines()
+        emv = [re.search(r'\bEMV\b\s*(\S*)', ln) for ln in linhas]
+        emv_lidos = [x.group(1) for x in emv if x]
+        if not emv_lidos or not all(self._PLUXEE_VALOR_DISCRIMINACAO.match(v) for v in emv_lidos):
+            return None, None, "o crédito EMV da discriminação não foi lido com segurança"
+        credito = round(sum(float(v.replace(',', '')) for v in emv_lidos), 2)
+        taxas_txt = "\n".join(ln for ln, x in zip(linhas, emv)
+                              if not x and not re.search(r'IRRF', ln, re.IGNORECASE))
+        rotulos = re.findall(self._PLUXEE_ROTULO_TAXA, taxas_txt)
+        taxas = re.findall(r'(?<![\d/.,])\d+[.,]\d{2}(?![\d/])', taxas_txt)
+        if not rotulos or len(taxas) != len(rotulos):
+            return credito, None, "as taxas da discriminação não foram todas lidas"
+        return credito, [float(x.replace(',', '.')) for x in taxas], None
+
     def _aplicar_sp_pluxee_credito_emv(self, prestador, valores: Valores):
         """Regra de negócio (decisão do usuário, 2026-11-12, nota nº 08937118
         da PLUXEE BENEFICIOS BRASIL S.A., lote Guarajuba 10/2026): a NFS-e de
@@ -16380,31 +16468,46 @@ class SPPdfExtractor:
         grade Base 0,00 / ISS 0,00 e NÃO imprime "VALOR TOTAL RECEBIDO" é só o
         repasse de crédito de vale-refeição/alimentação — o valor está na
         discriminação, item "EMV" ("9 ALIMENTAÇÃO EMV 1620.00"). XML:
-        ValorServicos = ValorDeducoes = crédito EMV (o repasse); Base/Alíquota/
-        ISS como impressos; líquido = crédito − retenções.
+        ValorServicos = crédito EMV; ValorDeducoes como IMPRESSO na nota (0,00
+        - decisão do usuário de 2026-11-13, "não há deduções na nota fiscal";
+        até então ia o próprio crédito, como repasse); Base/Alíquota/ISS como
+        impressos; líquido = crédito − retenções.
 
         Escopo ESTREITO: só `sao_paulo_sp`/`sao_paulo_sp_scan`, só o CNPJ da
-        Pluxee, só com o ValorServicos extraído 0,00. Com "VALOR TOTAL
-        RECEBIDO" impresso, esta regra não age (o recebido tem prioridade).
-        Exige: serviço impresso legível e 0,00 em toda ocorrência; deduções,
-        base e ISS 0,00; todo item "EMV" com valor legível (vários itens: soma
-        — cada um é crédito de um produto, e só soma se TODOS foram lidos); as
-        taxas da discriminação ("TX ...", "... COBRANCA") todas lidas (um valor
-        por rótulo) e todas 0,00. Em qualquer dúvida: 0,00 mantido + aviso com
-        o motivo. Flash e demais prestadores nunca entram aqui.
+        Pluxee, só com o ValorServicos extraído 0,00. Exige: serviço impresso
+        legível e 0,00 em toda ocorrência; deduções, base e ISS 0,00; todo item
+        "EMV" com valor legível (vários itens: soma — cada um é crédito de um
+        produto, e só soma se TODOS foram lidos); as taxas da discriminação
+        ("TX ...", "... COBRANCA") todas lidas (um valor por rótulo) e todas
+        0,00. Em qualquer dúvida: 0,00 mantido + aviso com o motivo. Flash e
+        demais prestadores nunca entram aqui.
+
+        Com "VALOR TOTAL RECEBIDO" impresso (achado real 2026-11-13, nota
+        nº 08969996: serviço R$ 0,00, recebido R$ 9.867,48 - a regra geral
+        `_aplicar_sp_valor_total_recebido` exige serviço > 0 e não trata) o
+        RECEBIDO é o valor: ValorServicos = recebido (ValorDeducoes como
+        impresso, 0,00), com as mesmas exigências de serviço impresso 0,00
+        e grade zerada, e um único
+        recebido legível > 0. O crédito EMV da discriminação serve de
+        CONFERÊNCIA (EMV = recebido − taxas): divergente ou ilegível, no
+        digital usa o recebido mesmo assim e avisa a divergência; no escaneado
+        (OCR), sem conferência, mantém 0,00 + aviso.
 
         Devolve `(valores, avisos)`."""
         if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
             return valores, []
-        if re.sub(r'\D', '', getattr(prestador, 'cnpj_cpf', '') or '') != self._CNPJ_PLUXEE:
+        if not self._prestador_e_pluxee(prestador):
             return valores, []
         if valores.valor_servicos != 0.0:
             return valores, []
         t = self.raw_text or ''
-        if re.search(r'VALOR\s+TOTAL\s+RECEBIDO', t, re.IGNORECASE):
-            return valores, []
+        com_recebido = bool(re.search(r'VALOR\s+TOTAL\s+RECEBIDO', t, re.IGNORECASE))
 
         def _mantido(motivo: str):
+            if com_recebido:
+                return valores, [
+                    "Prestador Pluxee: serviço impresso R$ 0,00 com \"Valor total recebido\", mas "
+                    f"{motivo} - ValorServicos mantido em 0,00 (nada foi inferido); conferir na nota"]
             return valores, [
                 "Prestador Pluxee: serviço impresso R$ 0,00 sem \"Valor total recebido\" e "
                 f"{motivo} - crédito EMV da discriminação não usado, ValorServicos mantido em 0,00 "
@@ -16422,36 +16525,57 @@ class SPPdfExtractor:
         if any(abs(x) > 0.005 for x in (deducoes, base, iss)):
             return _mantido("a grade imprime deduções/base/ISS diferentes de zero")
 
-        m = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DE\s+SERVI[ÇC]OS(.*?)VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O',
-                      t, re.IGNORECASE | re.DOTALL)
-        if not m:
-            return _mantido("a discriminação não foi localizada")
-        linhas = m.group(1).splitlines()
-        emv = [re.search(r'\bEMV\b\s*(\S*)', ln) for ln in linhas]
-        emv_lidos = [x.group(1) for x in emv if x]
-        if not emv_lidos or not all(self._PLUXEE_VALOR_DISCRIMINACAO.match(v) for v in emv_lidos):
-            return _mantido("o crédito EMV da discriminação não foi lido com segurança")
-        taxas_txt = "\n".join(ln for ln, x in zip(linhas, emv)
-                              if not x and not re.search(r'IRRF', ln, re.IGNORECASE))
-        rotulos = re.findall(self._PLUXEE_ROTULO_TAXA, taxas_txt)
-        taxas = re.findall(r'(?<![\d/.,])\d+[.,]\d{2}(?![\d/])', taxas_txt)
-        if not rotulos or len(taxas) != len(rotulos):
-            return _mantido("as taxas da discriminação não foram todas lidas")
-        if any(float(x.replace(',', '.')) != 0.0 for x in taxas):
-            return _mantido("as taxas da discriminação não somam 0,00")
-
-        credito = round(sum(float(v.replace(',', '')) for v in emv_lidos), 2)
         retencoes = (valores.valor_pis + valores.valor_cofins + valores.valor_inss
                      + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
                      + valores.valor_contribuicoes_sociais_retidas
                      + (valores.valor_iss_retido if valores.iss_retido else 0.0))
+        credito, taxas, motivo = self._pluxee_ler_discriminacao(t)
+
+        if com_recebido:
+            recebidos = {self._parse_valor(v) for v in re.findall(
+                self._SP_RECEBIDO_IMPRESSO_PATTERN, t, re.IGNORECASE)}
+            if len(recebidos) > 1:
+                return _mantido("há leituras divergentes do VALOR TOTAL RECEBIDO (" + ", ".join(
+                    f"R$ {self._brl(v)}" for v in sorted(recebidos)) + ")")
+            if not recebidos or min(recebidos) <= 0.0:
+                return _mantido("o VALOR TOTAL RECEBIDO não foi lido com segurança")
+            recebido = recebidos.pop()
+            if credito is not None and taxas is not None:
+                esperado = round(recebido - sum(taxas), 2)
+                if abs(credito - esperado) <= 0.005:
+                    conferencia = (f"confere com o crédito EMV R$ {self._brl(credito)} "
+                                   "da discriminação")
+                else:
+                    conferencia = (f"DIVERGE do crédito EMV R$ {self._brl(credito)} da "
+                                   f"discriminação (recebido − taxas = R$ {self._brl(esperado)})")
+                    if self.layout == LAYOUT_SAO_PAULO_2:
+                        return _mantido(f"o valor recebido R$ {self._brl(recebido)} {conferencia}")
+            else:
+                conferencia = f"não conferido com a discriminação ({motivo})"
+                if self.layout == LAYOUT_SAO_PAULO_2:
+                    return _mantido(f"o valor recebido R$ {self._brl(recebido)} foi {conferencia}")
+            aviso = (
+                "Serviço impresso R$ 0,00; Valor total recebido "
+                f"R$ {self._brl(recebido)} usado como ValorServicos, sem deduções "
+                f"(ValorDeducoes como impresso na nota, R$ {self._brl(deducoes)}) - "
+                f"{conferencia}; conferir")
+            return valores.model_copy(update={
+                'valor_servicos': recebido,
+                'valor_deducoes': deducoes,
+                'valor_liquido_nfse': round(recebido - retencoes, 2),
+            }), [aviso]
+
+        if credito is None or taxas is None:
+            return _mantido(motivo)
+        if any(x != 0.0 for x in taxas):
+            return _mantido("as taxas da discriminação não somam 0,00")
         aviso = (
             "Serviço impresso R$ 0,00 sem \"Valor total recebido\"; crédito EMV "
-            f"R$ {self._brl(credito)} da discriminação usado como ValorServicos e "
-            "lançado em ValorDeducoes (repasse)")
+            f"R$ {self._brl(credito)} da discriminação usado como ValorServicos, sem "
+            f"deduções (ValorDeducoes como impresso na nota, R$ {self._brl(deducoes)})")
         return valores.model_copy(update={
             'valor_servicos': credito,
-            'valor_deducoes': credito,
+            'valor_deducoes': deducoes,
             'valor_liquido_nfse': round(credito - retencoes, 2),
         }), [aviso]
 
@@ -25551,9 +25675,9 @@ class SPPdfExtractor:
         valores   = self._extrair_valores()
         valores, avisos_flash = self._aplicar_flash_valor_recebido(prestador, valores)
         # Depois da regra da Flash (serviço impresso 0,00), que tem precedência.
-        valores, avisos_recebido = self._aplicar_sp_valor_total_recebido(valores)
-        # Pluxee com serviço 0,00 e sem "VALOR TOTAL RECEBIDO" (o recebido,
-        # quando impresso, tem prioridade): crédito EMV da discriminação.
+        valores, avisos_recebido = self._aplicar_sp_valor_total_recebido(prestador, valores)
+        # Pluxee com serviço 0,00: o "VALOR TOTAL RECEBIDO", quando impresso
+        # (conferido com o crédito EMV da discriminação), senão o próprio EMV.
         valores, avisos_emv = self._aplicar_sp_pluxee_credito_emv(prestador, valores)
         avisos_flash = avisos_flash + avisos_recebido + avisos_emv
 

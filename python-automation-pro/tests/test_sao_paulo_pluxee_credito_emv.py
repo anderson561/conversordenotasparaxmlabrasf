@@ -8,8 +8,10 @@ Decisão do usuário (2026-11-12), nota nº 08937118 (pág. 23 do lote
 "Notas_Fiscais_Recebidas_10.2026_-_Guarajuba_Suites.pdf", escaneada):
 discriminação "9 ALIMENTAÇÃO EMV 1620.00" e "TX ADMIN 0.00 N TX DISPON
 CREDITO 0.00 N GESTAO COBRANCA 0.00"; grade 0,00 / 0,00 / 2,00% / 0,00.
-XML: ValorServicos = ValorDeducoes = 1.620,00 (crédito EMV, repasse);
-Base/Alíquota/ISS como impressos (0,00 / 2% / 0,00); líquido 1.620,00.
+XML: ValorServicos = 1.620,00 (crédito EMV); ValorDeducoes = 0,00, como
+impresso (decisão do usuário de 2026-11-13: "não há deduções na nota fiscal";
+até então ia o próprio crédito, como repasse); Base/Alíquota/ISS como
+impressos (0,00 / 2% / 0,00); líquido 1.620,00.
 
 Textos = OCR REAL (`_ocr_page`) das págs. 23 e 24; os negativos trocam UMA
 linha do texto real (marcada em cada teste).
@@ -29,7 +31,8 @@ SERVICO_ZERO = "VALOR TOTAL DO SERVIÇO = R$ 0,00"
 LINHA_EMV = "9 ALIMENTAÇÃO EMV 1620.00"
 LINHA_TAXAS = "TX ADMIN 0.00 N TX DISPON CREDITO 0.00 N GESTAO COBRANCA 0.00"
 AVISO_EMV = ("Serviço impresso R$ 0,00 sem \"Valor total recebido\"; crédito EMV R$ 1.620,00 "
-             "da discriminação usado como ValorServicos e lançado em ValorDeducoes (repasse)")
+             "da discriminação usado como ValorServicos, sem deduções (ValorDeducoes como "
+             "impresso na nota, R$ 0,00)")
 
 
 def _uma(monkeypatch, tmp_path, paginas):
@@ -61,19 +64,19 @@ def _avisos_emv(nota):
 
 # --- regra aplicada no texto real ---------------------------------------------
 
-def test_pag23_credito_emv_vira_valor_servicos_e_deducao(monkeypatch, tmp_path):
+def test_pag23_credito_emv_vira_valor_servicos_sem_deducao(monkeypatch, tmp_path):
     nota = _uma(monkeypatch, tmp_path, [PAG23_NOTA_08937118, PAG24_ANEXO_DA_08937118])
     assert nota.numero == "08937118"
     v = nota.valores
     assert (v.valor_servicos, v.valor_deducoes, v.base_calculo, v.aliquota, v.valor_iss,
-            v.valor_liquido_nfse) == (1620.0, 1620.0, 0.0, 0.02, 0.0, 1620.0)
+            v.valor_liquido_nfse) == (1620.0, 0.0, 0.0, 0.02, 0.0, 1620.0)
     assert _avisos_emv(nota) == [AVISO_EMV]
     assert not any("extraído como zero" in a for a in nota.avisos)
 
 
 def test_pag23_xml_igual_nas_duas_secoes(monkeypatch, tmp_path):
     nota = _uma(monkeypatch, tmp_path, [PAG23_NOTA_08937118, PAG24_ANEXO_DA_08937118])
-    esperado = {"ValorServicos": "1620.00", "ValorDeducoes": "1620.00", "BaseCalculo": "0.00",
+    esperado = {"ValorServicos": "1620.00", "ValorDeducoes": "0.00", "BaseCalculo": "0.00",
                 "Aliquota": "0.02", "ValorIss": "0.00"}
     assert _xml(nota) == (dict(esperado, ValorLiquidoNfse="1620.00"), esperado)
 
@@ -82,7 +85,7 @@ def test_varios_itens_emv_legiveis_somam(monkeypatch, tmp_path):
     texto = _trocar(LINHA_EMV, LINHA_EMV + "\n1 REFEIÇÃO EMV 10.00")
     nota = _uma(monkeypatch, tmp_path, [texto])
     assert nota.valores.valor_servicos == 1630.0
-    assert nota.valores.valor_deducoes == 1630.0
+    assert nota.valores.valor_deducoes == 0.0
 
 
 # --- casos em que NÃO aplica (mantém 0,00 + aviso) ----------------------------
@@ -120,11 +123,25 @@ def test_base_impressa_diferente_de_zero_mantem(monkeypatch, tmp_path):
     _mantido(nota, "base")
 
 
-def test_com_valor_total_recebido_a_regra_emv_nao_age(monkeypatch, tmp_path):
+def test_com_valor_total_recebido_usa_o_recebido_conferido_pelo_emv(monkeypatch, tmp_path):
+    # Desde 2026-11-13 (nota nº 08969996): com recebido impresso, o RECEBIDO é
+    # o valor e o EMV só confere - ver test_sao_paulo_pluxee_recebido_servico_zero.
     texto = _trocar(SERVICO_ZERO, SERVICO_ZERO + "\n\nVALOR TOTAL RECEBIDO = R$ 1.620,00")
     nota = _uma(monkeypatch, tmp_path, [texto])
-    assert nota.valores.valor_servicos == 0.0
-    assert _avisos_emv(nota) == []
+    assert (nota.valores.valor_servicos, nota.valores.valor_deducoes) == (1620.0, 0.0)
+    assert _avisos_emv(nota) == [
+        "Serviço impresso R$ 0,00; Valor total recebido R$ 1.620,00 usado como ValorServicos, "
+        "sem deduções (ValorDeducoes como impresso na nota, R$ 0,00) - confere com o crédito "
+        "EMV R$ 1.620,00 da discriminação; conferir"]
+
+
+def test_escaneado_com_recebido_divergente_do_emv_mantem(monkeypatch, tmp_path):
+    # No scan (OCR) o recebido só vale se o crédito EMV o confirmar.
+    texto = _trocar(SERVICO_ZERO, SERVICO_ZERO + "\n\nVALOR TOTAL RECEBIDO = R$ 7.620,00")
+    nota = _uma(monkeypatch, tmp_path, [texto])
+    assert (nota.valores.valor_servicos, nota.valores.valor_deducoes) == (0.0, 0.0)
+    avisos = _avisos_emv(nota)
+    assert len(avisos) == 1 and "mantido em 0,00" in avisos[0] and "DIVERGE" in avisos[0], avisos
 
 
 def test_outro_prestador_nao_aplica(monkeypatch, tmp_path):
@@ -146,5 +163,5 @@ def test_flash_com_servico_zero_continua_na_regra_propria(monkeypatch, tmp_path)
 
 def test_controle_pluxee_com_servico_impresso_continua_na_regra_do_recebido(monkeypatch, tmp_path):
     nota = _uma(monkeypatch, tmp_path, [PAG31_NOTA_09125394, PAG32_ANEXO_DA_09125394])
-    assert (nota.valores.valor_servicos, nota.valores.valor_deducoes) == (16.0, 10.0)
+    assert (nota.valores.valor_servicos, nota.valores.valor_deducoes) == (16.0, 0.0)
     assert _avisos_emv(nota) == []
