@@ -2,6 +2,7 @@
 import os
 import pytest
 from src.extractors.pdf_extractor import SPPdfExtractor, LAYOUT_BARUERI
+from src.transformers.abrasf_transformer import Abrasf201Transformer
 
 # Texto REAL extraído (`extract_text`, pdfminer, PDF digital sem OCR) da NFS-e
 # nº 0380578 — ALELO INSTITUIÇAO DE PAGAMENTO S.A. -> CLINICA PNEUMOLOGICA
@@ -149,6 +150,239 @@ def test_extract_barueri_nfse_0380578(monkeypatch):
         assert v.valor_liquido_nfse == pytest.approx(2.70)
 
         assert any("430,00" in a and "repasse" in a.lower() for a in nfse.avisos)
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
+# ---------------------------------------------------------------------------
+# Barueri/SP ESCANEADA (PDF imagem, sem camada de texto -> OCR do pipeline).
+# Texto REAL produzido por `_extract_via_ocr` (Tesseract, zoom 3x) da NFS-e nº
+# 0000088 — IGOR GUERRA ARQUITETURA EIRELI -> NAUTICA INDUSTRIA E COMERCIO DE
+# MOVEIS E SERVIÇOS LTDA, R$13.290,00, prestador do Simples Nacional.
+# Preservado verbatim. O OCR lê a página por LINHA (rótulo e valor lado a
+# lado), não por coluna como o pdfminer da versão digital — e traz ruídos
+# típicos: "pata Emissão" (Data), "PISIPASEP", "CS" (CSLL), "ur" (UF), "sP",
+# "grassconsultoriaQgmail.com" (@ lido como Q) e o código de autenticidade do
+# rodapé com espaços espúrios ("2 3X.9325.3289.1 094899-S").
+# ---------------------------------------------------------------------------
+OCR_TEXT_0000088 = """E A ta isa Batrtica ds Serviços PREFEITURA MUNICIPAL DE BARUERI
+
+BAR |] É R | SECRETARIA DE FINANÇAS
+
+NOTA FISCAL ELETRONICA DE SERVICOS - NFE pata Emissão ora Emissão NOTA FISCAL ELETRÔNICA DE
+
+ini . No . 24/02/2026 10:18 SERVICOS E FATURA
+A autenticidade desta Nota Fiscal Eletrônica de Serviços Eis Anencade Ea =
+poderá ser confirmada na página da Prefeitura de Barueri o
+
+. 0000088
+RR Ran nad 213X.9325.3289.1094899-S TONS SUCH —EGRES
+
+<http:/Awww.barueri.sp.gov.br/nfe>
+
+Prestador de Serviços IGOR GUERRA ARQUITETURA EIRELI
+AVENIDA ANDROMEDA , 885 - SALA 0921 - BRASCAN CENTURY OF
+GREEN VALLEY / ALPHAVILLE
+CEP 06473-000 - BARUERI - SP
+
+CNPJ/CPF 27.124.679/0001-87 Inscrição Municipal 4.AB321-5
+Telefone e-mail
+
+Nome Tomador de Serviços CPF/CNPJ
+
+NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVIÇOS LTDA 16.699.869/0002-97
+
+Endereço Complemento
+
+RUA GABRIEL MONTEIRO DA SILVA, 1480
+
+CEP
+01442-001
+
+Bairro Cidade ur
+
+JARDIM AMERICA SÃO PAULO sP
+
+E-mail
+grassconsultoriaQgmail.com
+
+Qtde Descrição do Serviço Código Serviço Alíquota | Valor Unitário Valor Total
+1 Decoração. 071101220 2,00 13.290,00 13.290,00
+DISCRIMINAÇÃO DOS SERVIÇOS E INFORMAÇÕES RELEVANTES
+REFERENTE AOS SERVIÇOS PRESTADOS
+DADOS BANCARIOS
+IGOR GUERRA ARQUITETURA
+BANCO C6 S.A (336)
+AGENCIA 0001
+CONTA 40785313-8
+CNPJ 27.124.679/0001-87
+PIX CNPJ 27.124.679/0001-87
+VALORES DE REPASSE A TERCEIROS Observações
+R$ 0,00 ISSQN devido a: BARUERI-SP
+IRRF PISIPASEP COFINS CS Documento emitido por ME ou EP optante pelo
+SIMPLES NACIONAL ou MEI. Não gera direito a
+0,00 0,00 0,00 0,00 crédito Fiscal de ICMS, de ISS e de IPI
+VALOR TOTAL DA NOTA 13.290,00
+Fatura Nº Valor da Fatura R$ Forma Pagamento
+
+Valor por Extenso
+
+ei . . Código Autenticidade
+A autenticidade desta Nota Fiscal Eletrônica de Serviços poderá ser confirmada
+
+na página da Prefeitura de Barueri na Internet, no Endereço: 2 3X.9325.3289.1 094899-S
+
+hitp:/Awww barueri. sp.gov.brinte
+
+RECEBEMOS DA EMPRESA IGOR GUERRA ARQUITETURA EIRELI OS SERVIÇOS CONSTANTES DESTA | | Número da Nota Série da Nota
+NOTA FISCAL ELETRÔNICA DE SERVIÇOS 0000088
+
+Local Data Assinatura
+
+"""
+
+
+def _parse_barueri_ocr(monkeypatch, texto, dummy_path):
+    """Simula o caminho real de um PDF sem texto: pdfminer devolve vazio, o
+    pipeline cai no OCR global (`from_ocr = True`)."""
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+    monkeypatch.setattr("src.extractors.pdf_extractor.extract_text", lambda path: "")
+    monkeypatch.setattr(SPPdfExtractor, "_extract_via_ocr", lambda self: texto)
+    try:
+        extractor = SPPdfExtractor(dummy_path)
+        nfse_list = extractor.parse_multiple()
+        assert extractor.from_ocr is True
+        return nfse_list
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
+def test_detect_layout_barueri_escaneada():
+    dummy_path = "tests/dummy_barueri_scan_detect.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+    try:
+        ex = SPPdfExtractor(dummy_path)
+        ex.raw_text = OCR_TEXT_0000088
+        ex.from_ocr = True
+        assert ex._detect_layout() == LAYOUT_BARUERI
+    finally:
+        if os.path.exists(dummy_path):
+            os.remove(dummy_path)
+
+
+def test_extract_barueri_escaneada_nf_0000088(monkeypatch):
+    """Antes: tudo menos número/data caía em fallback (prestador/tomador "Não
+    Identificado" CNPJ 000..., ValorServicos 0,00, item 03115, discriminação
+    genérica, código de autenticidade XXXX-XXXX)."""
+    nfse_list = _parse_barueri_ocr(monkeypatch, OCR_TEXT_0000088, "tests/dummy_barueri_scan_88.pdf")
+    assert len(nfse_list) == 1
+    nfse = nfse_list[0]
+
+    assert nfse.numero == "0000088"
+    assert nfse.codigo_verificacao == "213X.9325.3289.1094899-S"
+    assert nfse.data_emissao.strftime("%d/%m/%Y %H:%M") == "24/02/2026 10:18"
+    assert (nfse.competencia.year, nfse.competencia.month) == (2026, 2)
+    # "071101220" (código municipal de Barueri) -> item 7.11 da LC 116.
+    assert nfse.servico_codigo == "0711"
+    assert nfse.discriminacao.startswith("Decoração. - REFERENTE AOS SERVIÇOS PRESTADOS")
+    assert "PIX CNPJ 27.124.679/0001-87" in nfse.discriminacao
+    assert "VALORES DE REPASSE" not in nfse.discriminacao
+    assert nfse.optante_simples_nacional is True
+
+    p = nfse.prestador
+    assert p.cnpj_cpf == "27124679000187"
+    assert p.razao_social == "IGOR GUERRA ARQUITETURA EIRELI"
+    assert p.inscricao_municipal == "4.AB321-5"
+    assert p.endereco.logradouro == "AVENIDA ANDROMEDA"
+    assert p.endereco.numero == "885"
+    assert p.endereco.complemento == "SALA 0921 - BRASCAN CENTURY OF"
+    assert p.endereco.bairro == "ALPHAVILLE"
+    assert p.endereco.municipio == "BARUERI"
+    assert p.endereco.uf == "SP"
+    assert p.endereco.cep == "06473000"
+    assert p.endereco.codigo_municipio == "3505708"
+
+    t = nfse.tomador
+    assert t.cnpj_cpf == "16699869000297"
+    assert t.razao_social == "NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVIÇOS LTDA"
+    assert t.endereco.logradouro == "RUA GABRIEL MONTEIRO DA SILVA"
+    assert t.endereco.numero == "1480"
+    assert t.endereco.complemento is None
+    assert t.endereco.cep == "01442001"
+    assert t.endereco.bairro == "JARDIM AMERICA"
+    assert t.endereco.municipio == "SÃO PAULO"
+    assert t.endereco.uf == "SP"
+    assert t.endereco.codigo_municipio == "3550308"
+    assert t.email == "grassconsultoria@gmail.com"
+
+    v = nfse.valores
+    assert v.valor_servicos == pytest.approx(13290.00)
+    assert v.base_calculo == pytest.approx(13290.00)
+    assert v.aliquota == pytest.approx(0.02)
+    # Simples Nacional: ISS não destacado na nota -> 0,00, nunca Base x Alíquota.
+    assert v.valor_iss == pytest.approx(0.0)
+    assert v.iss_retido is False
+    assert (v.valor_ir, v.valor_pis, v.valor_cofins, v.valor_csll) == (0.0, 0.0, 0.0, 0.0)
+    assert v.valor_liquido_nfse == pytest.approx(13290.00)
+
+    assert any("Simples Nacional" in a and "ValorIss" in a for a in nfse.avisos)
+    assert not any("repasse" in a.lower() for a in nfse.avisos)
+    assert not any("ilegível" in a for a in nfse.avisos)
+
+    xml = Abrasf201Transformer().transform(nfse)
+    for trecho in ("<ItemListaServico>0711</ItemListaServico>",
+                   "<CodigoTributacaoMunicipio>0711</CodigoTributacaoMunicipio>",
+                   "<CodigoCnae>0000000</CodigoCnae>",
+                   "<MunicipioIncidencia>3505708</MunicipioIncidencia>",
+                   "<IssRetido>2</IssRetido>",
+                   "<OptanteSimplesNacional>1</OptanteSimplesNacional>",
+                   "<Competencia>2026-02-01</Competencia>"):
+        assert trecho in xml
+
+
+def test_barueri_escaneada_sem_valor_confiavel_nao_fabrica(monkeypatch):
+    """Guarda: grade do item corrompida (código com 8 dígitos) E repasse a
+    terceiros > 0 -> o "VALOR TOTAL DA NOTA" não pode virar ValorServicos (na
+    digital ele inclui o repasse); CNPJ do tomador com dígito verificador
+    errado -> sentinela, nunca o número lido."""
+    texto = (OCR_TEXT_0000088
+             .replace("1 Decoração. 071101220 2,00 13.290,00 13.290,00",
+                      "1 Decoração. 07110122 2,00 13.290,00 13.290,00")
+             .replace("R$ 0,00 ISSQN devido a", "R$ 430,00 ISSQN devido a")
+             .replace("16.699.869/0002-97", "16.699.869/0002-98"))
+    nfse = _parse_barueri_ocr(monkeypatch, texto, "tests/dummy_barueri_scan_guarda.pdf")[0]
+
+    assert nfse.valores.valor_servicos == pytest.approx(0.0)
+    assert nfse.valores.aliquota == pytest.approx(0.0)
+    assert nfse.servico_codigo != "0711"
+    assert nfse.tomador.cnpj_cpf.startswith("00000000000")
+    assert nfse.prestador.cnpj_cpf == "27124679000187"
+    assert any("ilegível" in a for a in nfse.avisos)
+    assert any("430,00" in a and "repasse" in a.lower() for a in nfse.avisos)
+
+
+def test_barueri_parser_escaneado_so_roda_com_ocr():
+    """Guarda do ramo digital: sem `from_ocr`, o texto linha-a-linha do OCR
+    não é interpretado pelos parsers da versão escaneada (o ramo digital,
+    nota ALELO 0380578, continua sendo o único caminho para PDFs com texto)."""
+    dummy_path = "tests/dummy_barueri_scan_gate.pdf"
+    os.makedirs("tests", exist_ok=True)
+    with open(dummy_path, "wb") as f:
+        f.write(b"%PDF-1.4")
+    try:
+        ex = SPPdfExtractor(dummy_path)
+        ex.raw_text = OCR_TEXT_0000088
+        ex.from_ocr = False
+        ex.layout = ex._detect_layout()
+        assert ex._barueri_escaneada() is False
+        ex.from_ocr = True
+        assert ex._barueri_escaneada() is True
     finally:
         if os.path.exists(dummy_path):
             os.remove(dummy_path)
