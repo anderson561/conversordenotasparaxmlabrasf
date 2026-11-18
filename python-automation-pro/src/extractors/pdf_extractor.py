@@ -3898,6 +3898,58 @@ class SPPdfExtractor:
             return _localiza.montar_discriminacao(itens, valores)
         return None
 
+    _SP_DISC_LINHA_ESTRUTURAL = re.compile(
+        r'^(?:-+|INTERMEDI[ÁA]RIO\s+DE\s+SERVI[ÇC]OS|TOMADOR\s+DE\s+SERVI[ÇC]OS|'
+        r'PRESTADOR\s+DE\s+SERVI[ÇC]OS|DISCRIMINA[ÇC][ÃA]O\s+DE\s+SERVI[ÇC]OS|'
+        r'(?:CPF\s*/\s*CNPJ|Nome\s*/\s*Raz[ãa]o(?:\s+Social)?|Inscri[çc][ãa]o\s+Municipal|'
+        r'Endere[çc]o|Munic[íi]pio|UF|E-?mail)\s*:?(?:\s*-+)?)$', re.IGNORECASE)
+
+    def _sp_discriminacao_digital(self, t: str) -> Optional[str]:
+        """Quadro "DISCRIMINAÇÃO DE SERVIÇOS" da NFS-e de São Paulo DIGITAL.
+
+        O quadro termina no "VALOR TOTAL DO SERVIÇO = R$ ..." impresso logo
+        abaixo dele: o bloco de valores/retenções (VALOR TOTAL RECEBIDO,
+        Contribuição Previdenciária, IRRF...) nunca entra - antes o corte era
+        só em "Código do Serviço" e tudo isso vazava (notas VR nº 102003139 e
+        Pluxee nº 08969996, achado 2026-11-18).
+
+        O pdfminer pode tirar linhas do lugar: na VR nº 102003139 a 1ª linha
+        do quadro ("Total de Crédito VR Multi ...") sai ANTES do cabeçalho e o
+        cabeçalho "INTERMEDIÁRIO DE SERVIÇOS" sai DENTRO do quadro. Linhas de
+        texto entre o último campo do intermediário ("----"/rótulos) e o
+        cabeçalho voltam para o início; cabeçalhos/rótulos/placeholders de
+        seção saem do texto. Devolve `None` sem o cabeçalho ou sem o "VALOR
+        TOTAL DO SERVIÇO" depois dele (o genérico decide, como antes)."""
+        m_ini = re.search(r'DISCRIMINA[ÇC][ÃA]O\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE)
+        if not m_ini:
+            return None
+        m_fim = re.search(r'VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O', t[m_ini.end():], re.IGNORECASE)
+        if not m_fim:
+            return None
+        corpo = t[m_ini.end(): m_ini.end() + m_fim.start()].split('\n')
+        deslocadas = []
+        m_interm = list(re.finditer(r'INTERMEDI[ÁA]RIO\s+DE\s+SERVI[ÇC]OS', t, re.IGNORECASE))
+        if m_interm and any(m.start() > m_ini.end() for m in m_interm):
+            # Cabeçalho do intermediário DENTRO do quadro: o pdfminer embaralhou
+            # a ordem. Recupera as linhas de texto que ficaram entre os campos
+            # vazios do intermediário ("----") e o cabeçalho da discriminação.
+            antes = [ln.strip() for ln in t[:m_ini.start()].split('\n')]
+            while antes and not antes[-1]:
+                antes.pop()
+            bloco = []
+            for ln in reversed(antes):
+                if not ln:
+                    continue
+                if self._SP_DISC_LINHA_ESTRUTURAL.match(ln):
+                    if re.match(r'^-+$', ln):
+                        deslocadas = list(reversed(bloco))
+                    break
+                bloco.append(ln)
+        linhas = [ln.strip() for ln in deslocadas + corpo]
+        linhas = [ln for ln in linhas if ln and not self._SP_DISC_LINHA_ESTRUTURAL.match(ln)]
+        disc = re.sub(r'\s+', ' ', ' '.join(linhas)).strip()
+        return disc or None
+
     def _extrair_discriminacao(self) -> str:
         if self.layout in _LAYOUTS_NOTA_LOCACAO:
             return self._nota_loc_campos().discriminacao
@@ -4232,7 +4284,13 @@ class SPPdfExtractor:
                     ln = ln.strip().lstrip('|').strip()
                     if not ln:
                         continue
-                    if re.search(r'Inscri[çc][ãa]o\s+Municipal|Valor\s+Bruto|REF\.?\s*A\s*LEI|PERC\.|VALOR\s+(?:PIS|COFINS)|^R\$|12\.?741', ln, re.IGNORECASE):
+                    # "Trib aprox. Lei nº 12.741/12: R$... Federal, ..." é texto
+                    # IMPRESSO dentro do quadro (notas VR, 2026-11-18) - fica,
+                    # como no digital; o filtro "12.741" é para o detalhamento
+                    # PIS/COFINS da Lei 12.741 vazado de outra coluna.
+                    if not re.match(r'Trib\.?\s*aprox', ln, re.IGNORECASE) and re.search(
+                            r'Inscri[çc][ãa]o\s+Municipal|Valor\s+Bruto|REF\.?\s*A\s*LEI|PERC\.|VALOR\s+(?:PIS|COFINS)|^R\$|12\.?741',
+                            ln, re.IGNORECASE):
                         continue
                     linhas.append(ln)
                 disc = ' '.join(linhas).strip()
@@ -4640,6 +4698,11 @@ class SPPdfExtractor:
                 res = " | ".join(items)
                 res = re.sub(r'\s+', ' ', res)
                 return res
+
+        if self.layout == LAYOUT_SAO_PAULO:
+            disc = self._sp_discriminacao_digital(t)
+            if disc:
+                return disc
 
         # Label common to multiple layouts but very specific in its start/end in Rio
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
@@ -7558,6 +7621,19 @@ class SPPdfExtractor:
         if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) and is_intermediario and m_bloco and \
                 re.search(r'CPF\s*/\s*CNPJ\s*:?\s*(?:-{2,}|[‐-―]+)', m_bloco.group(0), re.IGNORECASE):
             return None
+        # Idem quando o pdfminer despeja o "CPF/CNPJ: ----" do intermediário
+        # ANTES do cabeçalho "INTERMEDIÁRIO DE SERVIÇOS" (nota VR nº 102003139,
+        # 2026-11-18): o bloco a partir do cabeçalho só tem o texto da
+        # discriminação ("Vencimento em ...") e o genérico fabricava um
+        # intermediário com CNPJ sentinela e razão "Vencimento em". No layout
+        # São Paulo, sem nenhum CPF/CNPJ com dígito verificador VÁLIDO no
+        # bloco, não há intermediário.
+        if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2) and is_intermediario and m_bloco:
+            docs_validos = [
+                d for d in (re.sub(r'\D', '', x) for x in re.findall(r'\d[\d.,/\-]{9,19}\d', m_bloco.group(0)))
+                if len(d) in (11, 14) and not d.startswith('00000000000') and self._validate_cnpj_cpf(d)]
+            if not docs_validos:
+                return None
 
         # Barreiras/BA escaneado: o cabeçalho de seção "TOMADOR" às vezes é
         # comido inteiro pelo OCR (achado real, PDF "NF VERIFICACAO" 08/2026:
@@ -16231,17 +16307,24 @@ class SPPdfExtractor:
         'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split())
 
     @classmethod
-    def _sp_endereco_linha_unica(cls, linha: str):
+    def _sp_endereco_linha_unica(cls, linha: str, exigir_cep: bool = True):
         """Quebra "<logradouro> <número>[, <complemento>] - <bairro> - CEP: NNNNN-NNN"
         (endereço impresso em UMA linha na NFS-e de São Paulo) em
         `(logradouro, numero, complemento, bairro, cep)`. `None` quando a linha
-        não tem esse formato (sem CEP, sem bairro...) - nada é adivinhado."""
+        não tem esse formato (sem CEP, sem bairro...) - nada é adivinhado.
+
+        `exigir_cep=False`: aceita a linha SEM "CEP:" (o tomador de fora de SP
+        pode sair sem CEP impresso - nota VR nº 102003139, 2026-11-18); o CEP
+        volta `None` (não lido) e o resto do formato continua exigido."""
         linha = re.sub(r'^\s*Endere[çc]o\s*:?\s*', '', linha.strip(), flags=re.IGNORECASE)
         m_cep = cls._SP_RE_CEP_ENDERECO.search(linha)
-        if not m_cep:
+        if m_cep:
+            cep = m_cep.group(1) + m_cep.group(2)
+            resto = linha[:m_cep.start()].rstrip(' -')
+        elif exigir_cep or re.search(r'\bCEP\b', linha, re.IGNORECASE):
             return None
-        cep = m_cep.group(1) + m_cep.group(2)
-        resto = linha[:m_cep.start()].rstrip(' -')
+        else:
+            cep, resto = None, linha.rstrip(' -')
         segs = [x.strip() for x in resto.split(' - ') if x.strip()]
         if len(segs) < 2:
             return None
@@ -16326,6 +16409,18 @@ class SPPdfExtractor:
             if m:
                 ufs_inline.append(m.group(1))
         endereco = self._sp_endereco_linha_unica(end_linha) if end_linha else None
+        if end_linha is None:
+            # Sem linha com "CEP:" (tomador sem CEP impresso - nota VR nº
+            # 102003139, 2026-11-18): só vale a linha LOGO APÓS o CPF/CNPJ
+            # formatado do bloco, no formato "<logradouro> <número>[, ...] -
+            # <bairro>" e com o número lido (nunca S/N adivinhado).
+            for i in range(1, len(linhas)):
+                if not re.fullmatch(self._SP_RE_DOC.pattern, linhas[i - 1]):
+                    continue
+                cand = self._sp_endereco_linha_unica(linhas[i], exigir_cep=False)
+                if cand is not None and cand[1] != 'S/N' and ':' not in linhas[i]:
+                    end_linha, idx_end, endereco = linhas[i], i, cand
+                break
         if endereco is None:
             return None
 
@@ -16370,7 +16465,7 @@ class SPPdfExtractor:
             razao = next((l for l in linhas if _elegivel_razao(l)), None)
         apos = [l for l in linhas[idx_end + 1:] if _elegivel_razao(l)]
         return {'razao': razao, 'endereco': endereco, 'municipio': municipio, 'uf': uf,
-                'texto_apos_endereco': apos}
+                'texto_apos_endereco': apos, 'linha_endereco': end_linha}
 
     def _docs_do_boleto(self, t: str) -> dict:
         """CPF/CNPJ que o BOLETO anexo à nota associa EXPLICITAMENTE a cada
@@ -16462,6 +16557,32 @@ class SPPdfExtractor:
                  + " - mantido como extraído da nota; conferir")
         return prestador, tomador, [aviso]
 
+    @staticmethod
+    def _sp_numero_repetido(ent):
+        """NFS-e de São Paulo que imprime o número do endereço DUAS vezes
+        ("AV DOS BANDEIRANTES 460 460 - BROOKLIN PAULISTA - CEP: 04553-900",
+        prestador VR BENEFICIOS, 2026-11-18): o escaneado saía logradouro "AV
+        DOS BANDEIRANTES 460 460" / número S/N e o digital "AV DOS BANDEIRANTES
+        460" / 460. Número repetido IDÊNTICO no fim do logradouro = um número
+        só: logradouro sem ele, número = ele. Números diferentes ("... 460
+        470") ou um número já lido diferente do repetido: nada muda."""
+        if ent is None or ent.endereco is None:
+            return ent
+        end = ent.endereco
+        log = re.sub(r'\s+', ' ', end.logradouro or '').strip()
+        num = re.sub(r'\s+', '', end.numero or '').upper()
+        sem_numero = num in ('', 'S/N', 'SN')
+        m = re.match(r'^(.*[A-Za-zÀ-ÿ].*?)\s+(\d+[A-Za-z]?)\s+\2$', log)
+        if m and (sem_numero or num == m.group(2).upper()):
+            novo_log, novo_num = m.group(1).strip(), m.group(2).upper()
+        else:
+            m = re.match(r'^(.*[A-Za-zÀ-ÿ].*?)\s+(\d+[A-Za-z]?)$', log)
+            if not (m and not sem_numero and m.group(2).upper() == num and ' ' in m.group(1).strip()):
+                return ent
+            novo_log, novo_num = m.group(1).strip(), num
+        return ent.model_copy(update={'endereco': end.model_copy(
+            update={'logradouro': novo_log, 'numero': novo_num})})
+
     def _sp_refinar_entidades(self, prestador, tomador):
         """NFS-e de São Paulo digital cujo pdfminer entrega os blocos de
         Prestador/Tomador com a ordem de rótulos/valores deslocada e o endereço
@@ -16493,9 +16614,14 @@ class SPPdfExtractor:
         lido_p = self._sp_ler_bloco_entidade(t[m_p.end():m_t.start()])
         lido_t = self._sp_ler_bloco_entidade(t[m_t.end():fim_tom])
 
-        def _razao_suspeita(razao: str) -> bool:
+        def _razao_suspeita(razao: str, linha_endereco: Optional[str] = None) -> bool:
+            # Também a razão que é a própria linha de endereço do bloco (nota VR
+            # nº 102003139: o genérico pegou "AVENIDA TANCREDO NEVES 148, ..."
+            # como razão social do tomador).
             return (not razao or bool(re.search(r'N[ãa]o\s+Identificad', razao, re.IGNORECASE))
-                    or self._sp_e_nome_de_municipio(razao))
+                    or self._sp_e_nome_de_municipio(razao)
+                    or (bool(linha_endereco) and re.sub(r'\s+', ' ', razao).strip()
+                        == re.sub(r'\s+', ' ', linha_endereco).strip()))
 
         def _refinar(ent, lido, razao_deslocada=None):
             if ent is None or lido is None:
@@ -16505,7 +16631,9 @@ class SPPdfExtractor:
             if (end.logradouro or '').strip().lower() in ('', 'não informado', 'nao informado'):
                 logradouro, numero, complemento, bairro, cep = lido['endereco']
                 upd.update(logradouro=logradouro, numero=numero, complemento=complemento,
-                           bairro=bairro, cep=cep)
+                           bairro=bairro)
+                if cep:  # sem CEP impresso fica o que o genérico tinha
+                    upd['cep'] = cep
             mun = lido['municipio']
             uf = lido['uf'] if lido['uf'] in self._SP_UFS else (self._sp_uf_do_municipio(mun) if mun else None)
             if mun and uf:
@@ -16515,9 +16643,9 @@ class SPPdfExtractor:
                     upd.update(municipio=mun, uf=uf, codigo_municipio=_ibge_resolver.extract_and_validate(
                         mun, uf, city_hint=mun))
             novo = ent.model_copy(update={'endereco': end.model_copy(update=upd)} if upd else {})
-            if _razao_suspeita(ent.razao_social):
+            if _razao_suspeita(ent.razao_social, lido.get('linha_endereco')):
                 cand = lido['razao'] or razao_deslocada
-                if cand and not _razao_suspeita(cand):
+                if cand and not _razao_suspeita(cand, lido.get('linha_endereco')):
                     novo = novo.model_copy(update={'razao_social': cand})
             return novo
 
@@ -25963,6 +26091,9 @@ class SPPdfExtractor:
         tomador   = self._extrair_entidade("Tomador")
         intermediario = self._extrair_entidade("Intermediario")
         prestador, tomador = self._sp_refinar_entidades(prestador, tomador)
+        if self.layout in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
+            prestador = self._sp_numero_repetido(prestador)
+            tomador = self._sp_numero_repetido(tomador)
         # Guarda geral: CPF/CNPJ de prestador/tomador trocados contradizem o
         # boleto anexo (Beneficiário/Pagador) — corrige ou avisa, nunca calado.
         prestador, tomador, avisos_boleto = self._conferir_papeis_pelo_boleto(prestador, tomador)

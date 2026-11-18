@@ -102,16 +102,23 @@ def test_cartorio_razao_do_tomador_deslocada_para_antes_do_cabecalho(monkeypatch
         "R SILVIA", "110", "ANDAR 6", "BELA VISTA", "SP", "3550308")
 
 
-def test_sem_cep_no_endereco_preserva_o_comportamento_atual(monkeypatch):
-    # sem o âncora "- CEP: NNNNN-NNN" nada é refinado: continua "Não informado"
-    # (o CEP vem de outro campo do extrator genérico), sem endereço inventado.
+def test_sem_cep_no_endereco_so_le_a_linha_logo_apos_o_cnpj(monkeypatch):
+    # Sem o âncora "- CEP: NNNNN-NNN": desde 2026-11-18 (nota VR nº 102003139,
+    # tomador de Salvador sem CEP impresso) vale também a linha "<logradouro>
+    # <número>[, ...] - <bairro>" LOGO APÓS o CPF/CNPJ formatado do bloco, com o
+    # número lido. Aqui só o tomador tem essa estrutura (a linha do prestador
+    # não vem depois do CNPJ dele): o prestador continua "Não informado", e o
+    # CEP nunca é inventado.
     texto = (NOTA_FLASH_05710445
              .replace(" - CEP: 05425-000", "").replace(" - CEP: 41830-540", ""))
     nfse = _parse(monkeypatch, texto)
+    p = nfse.prestador.endereco
+    assert (p.logradouro, p.numero, p.bairro) == ("Não informado", "S/N", "Não informado")
+    t = nfse.tomador.endereco
+    assert (t.logradouro, t.numero, t.complemento, t.bairro) == (
+        "R T R TERRITORIO DO AMAPA", "146", "Casa 2", "PITUBA")
     for ent in (nfse.prestador, nfse.tomador):
-        assert ent.endereco.logradouro == "Não informado"
-        assert ent.endereco.numero == "S/N"
-        assert ent.endereco.bairro == "Não informado"
+        assert set(ent.endereco.cep.replace("-", "")) == {"0"}
 
 
 def test_municipio_fora_da_tabela_usa_fallback_com_aviso(monkeypatch):
@@ -212,7 +219,10 @@ def test_discriminacao_nao_comeca_com_o_resto_do_cabecalho(monkeypatch):
     d = _parse(monkeypatch, NOTA_FLASH_05710445).discriminacao
     assert d.startswith("Valor Total - R$ 1.113,00 Compra de Créditos na Plataforma Flash - R$ 1.113,00")
     assert not d.startswith("DE SERVIÇOS")
-    assert d.rstrip().endswith("0 - PIS/COFINS/CSLL Não Retidos.")
+    # O quadro termina no "VALOR TOTAL DO SERVIÇO" (2026-11-18): o bloco de
+    # valores/retenções impresso abaixo dele não entra mais na discriminação.
+    assert d.rstrip().endswith("Local da prestação de serviços: São Paulo - SP")
+    assert "VALOR TOTAL DO SERVIÇO" not in d and "Não Retidos" not in d
 
 
 def test_discriminacao_cartorio(monkeypatch):
