@@ -16628,29 +16628,35 @@ class SPPdfExtractor:
 
     def _aplicar_sp_valor_total_recebido(self, prestador, valores: Valores):
         """Regra de negócio (decisão do usuário, 2026-11-12, notas da PLUXEE
-        BENEFICIOS BRASIL S.A. no lote PH Gestão 10/2026): a NFS-e de São Paulo
-        que imprime "VALOR TOTAL RECEBIDO" MAIOR que o "VALOR TOTAL DO SERVIÇO"
+        BENEFICIOS BRASIL S.A. no lote PH Gestão 10/2026; AMPLIADA em
+        2026-11-18 para QUALQUER prestador, notas da VR BENEFICIOS E SERVICOS
+        DE PROCESSAMENTO nº 101217349 e 102003139): a NFS-e de São Paulo que
+        imprime "VALOR TOTAL RECEBIDO" MAIOR que o "VALOR TOTAL DO SERVIÇO"
         (ex.: serviço R$ 6,00, recebido R$ 16,00 - os R$ 10,00 a mais são o
-        crédito de vale-refeição/alimentação repassado) vai para o XML com:
-        ValorServicos = recebido; Base de Cálculo/Alíquota/ISS como IMPRESSOS
-        (o ISS incide só sobre o serviço - nada é recalculado sobre o
-        recebido); líquido = recebido - retenções.
-
-        ValorDeducoes: na PLUXEE (CNPJ 69.034.668/0001-56), por decisão do
-        usuário de 2026-11-13 ("não há deduções na nota fiscal"), fica como
-        IMPRESSO na nota (0,00 - a regra só age com deduções impressas
-        zeradas). Nos demais prestadores continua = recebido - serviço (o
-        repasse), comportamento de 2026-11-12, mantido até decisão própria.
+        crédito de vale-refeição/alimentação repassado) ou serviço R$ 0,00 com
+        recebido > 0 (ex.: VR, serviço R$ 0,00, recebido R$ 2.300,00) vai para
+        o XML com: ValorServicos = recebido; ValorDeducoes como IMPRESSO na
+        nota ("não há deduções na nota fiscal" - decisão do usuário de
+        2026-11-13; até 2026-11-18 os prestadores que não a Pluxee recebiam a
+        diferença recebido - serviço em ValorDeducoes, mapeamento extinto);
+        Base de Cálculo/Alíquota/ISS como IMPRESSOS (o ISS incide só sobre o
+        serviço - nada é recalculado sobre o recebido); líquido = recebido -
+        retenções.
 
         Acionada pela presença do campo impresso (não pelo CNPJ), só nos
         layouts São Paulo (digital e escaneado). Só aplica quando a conta
-        fecha: serviço lido == ValorServicos extraído, um único valor recebido
-        legível (todas as ocorrências iguais), deduções impressas zeradas e
-        serviço - deduções == base impressa. Fora disso mantém o comportamento
-        anterior e avisa - nunca fabrica valor. Serviço impresso 0,00 fica com
-        a regra própria do prestador Flash (`_aplicar_flash_valor_recebido`),
-        que roda antes, ou com a da Pluxee (`_aplicar_sp_pluxee_credito_emv`),
-        que roda depois; esta não age nesse caso.
+        fecha: serviço lido == ValorServicos extraído (no caso zero, 0,00 em
+        toda ocorrência impressa), um único valor recebido legível (todas as
+        ocorrências iguais), deduções impressas zeradas e serviço - deduções
+        == base impressa. No escaneado com serviço 0,00 (o valor inteiro sai de
+        uma única leitura OCR) o recebido ainda precisa aparecer como "R$ X"
+        em outro ponto do texto (a discriminação). Fora disso mantém o
+        comportamento anterior e avisa - nunca fabrica valor.
+
+        Serviço impresso 0,00 de Flash e Pluxee fica com as regras próprias
+        (`_aplicar_flash_valor_recebido`, que roda antes, e
+        `_aplicar_sp_pluxee_credito_emv`, que roda depois e confere o recebido
+        com o crédito EMV); esta não age nesses dois casos.
 
         Devolve `(valores, avisos)`."""
         if self.layout not in (LAYOUT_SAO_PAULO, LAYOUT_SAO_PAULO_2):
@@ -16659,7 +16665,11 @@ class SPPdfExtractor:
         if not re.search(r'VALOR\s+TOTAL\s+RECEBIDO', t, re.IGNORECASE):
             return valores, []
         servico = valores.valor_servicos
-        if servico <= 0.0:
+        if servico < 0.0:
+            return valores, []
+        servico_zero = servico == 0.0
+        if servico_zero and (self._prestador_e_flash(prestador)
+                             or self._prestador_e_pluxee(prestador)):
             return valores, []
 
         def _mantido(motivo: str) -> list:
@@ -16675,6 +16685,8 @@ class SPPdfExtractor:
                           f"R$ {self._brl(v)}" for v in sorted(recebidos)) + ")")
             return valores, _mantido(motivo)
         recebido = recebidos.pop()
+        if recebido <= 0.0:
+            return valores, (_mantido("o valor recebido é R$ 0,00") if servico_zero else [])
         if abs(recebido - servico) <= 0.005:
             # Recebido igual ao serviço é o caso comum: nada a fazer, sem aviso.
             return valores, []
@@ -16696,34 +16708,41 @@ class SPPdfExtractor:
                 deducoes, base = grade[0], grade[1]
         if abs(deducoes) > 0.005:
             return valores, _mantido(
-                f"a nota já imprime deduções (R$ {self._brl(deducoes)}) e a "
-                "diferença recebido - serviço não pode ser lançada nelas")
+                f"a nota já imprime deduções (R$ {self._brl(deducoes)}) e o valor "
+                "recebido não pode ser conciliado com elas")
         if abs(servico - deducoes - base) > 0.005:
             return valores, _mantido(
                 f"serviço - deduções (R$ {self._brl(servico - deducoes)}) não "
                 f"confere com a base de cálculo impressa (R$ {self._brl(base)})")
+        if servico_zero and self.layout == LAYOUT_SAO_PAULO_2:
+            fora_do_campo = re.sub(self._SP_RECEBIDO_IMPRESSO_PATTERN, ' ', t, flags=re.IGNORECASE)
+            confirmacoes = {self._parse_valor(v) for v in re.findall(
+                r'R\s*\$\s*' + self._SP_VALOR_BRL, fora_do_campo)}
+            if not any(abs(v - recebido) <= 0.005 for v in confirmacoes):
+                return valores, _mantido(
+                    f"o valor recebido R$ {self._brl(recebido)} lido por OCR não foi "
+                    "confirmado por outro valor \"R$\" impresso na nota (discriminação)")
 
-        diferenca = round(recebido - servico, 2)
         retencoes = (valores.valor_pis + valores.valor_cofins + valores.valor_inss
                      + valores.valor_ir + valores.valor_csll + valores.outras_retencoes
                      + valores.valor_contribuicoes_sociais_retidas
                      + (valores.valor_iss_retido if valores.iss_retido else 0.0))
-        if self._prestador_e_pluxee(prestador):
-            novo_deducoes = deducoes
+        prefixo = "Prestador Pluxee: " if self._prestador_e_pluxee(prestador) else ""
+        if servico_zero:
             aviso = (
-                f"Prestador Pluxee: Valor total recebido R$ {self._brl(recebido)} usado como "
+                f"Serviço impresso R$ 0,00; Valor total recebido R$ {self._brl(recebido)} "
+                "usado como ValorServicos; sem deduções - ValorDeducoes como impresso na "
+                f"nota (R$ {self._brl(deducoes)}); Base de Cálculo/Alíquota/ISS mantidos "
+                "como impressos; conferir")
+        else:
+            aviso = (
+                f"{prefixo}Valor total recebido R$ {self._brl(recebido)} usado como "
                 f"ValorServicos (maior que o valor do serviço, R$ {self._brl(servico)}); "
                 f"sem deduções - ValorDeducoes como impresso na nota (R$ {self._brl(deducoes)}); "
                 "Base de Cálculo/Alíquota/ISS mantidos como impressos; conferir")
-        else:
-            novo_deducoes = diferenca
-            aviso = (
-                f"Valor total recebido R$ {self._brl(recebido)} usado como ValorServicos; "
-                f"diferença de R$ {self._brl(diferenca)} para o valor do serviço "
-                f"(R$ {self._brl(servico)}) lançada em ValorDeducoes (repasse)")
         return valores.model_copy(update={
             'valor_servicos': recebido,
-            'valor_deducoes': novo_deducoes,
+            'valor_deducoes': deducoes,
             'valor_liquido_nfse': round(recebido - retencoes, 2),
         }), [aviso]
 

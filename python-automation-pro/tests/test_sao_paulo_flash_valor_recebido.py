@@ -128,19 +128,26 @@ def test_flash_servico_maior_que_zero_nao_usa_o_recebido(monkeypatch):
     assert not _tem_aviso_recebido(nfse)
 
 
-# --- (c) outro prestador de SP com serviço 0,00 e recebido > 0: inalterado ---
+# --- (c) outro prestador de SP com serviço 0,00 e recebido > 0 ---------------
+# Até 2026-11-18 ficava em 0,00 (a regra era só da Flash). Decisão do usuário
+# de 2026-11-18 (notas da VR BENEFICIOS): a regra GERAL do recebido
+# (`_aplicar_sp_valor_total_recebido`) passa a valer para qualquer prestador -
+# o recebido vira ValorServicos, com o aviso da regra geral (não o da Flash).
 
-def test_outro_prestador_sp_com_servico_zero_nao_muda(monkeypatch):
+def test_outro_prestador_sp_com_servico_zero_usa_a_regra_geral(monkeypatch):
     texto = (NOTA_FLASH_05710445
              .replace(FLASH_CNPJ_FMT, "11.222.333/0001-81")
              .replace(FLASH_RAZAO, "OUTRA EMPRESA DE BENEFICIOS LTDA"))
     assert "FLASH TECNOLOGIA" not in texto.split("TOMADOR DE SERVIÇOS")[0]
     nfse = _um(_parse(monkeypatch, texto))
     assert nfse.prestador.cnpj_cpf == "11222333000181"
-    assert nfse.valores.valor_servicos == 0.0
-    assert nfse.valores.valor_liquido_nfse == 0.0
+    assert nfse.valores.valor_servicos == 1113.0
+    assert nfse.valores.valor_deducoes == 0.0
+    assert nfse.valores.valor_liquido_nfse == 1113.0
     assert not _tem_aviso_recebido(nfse)
-    assert "Valor dos serviços extraído como zero" in nfse.avisos
+    assert any(a.startswith("Serviço impresso R$ 0,00; Valor total recebido R$ 1.113,00")
+               for a in nfse.avisos)
+    assert "Valor dos serviços extraído como zero" not in nfse.avisos
 
 
 # --- (d) Flash sem VALOR TOTAL RECEBIDO legível: 0,00 + aviso -----------------

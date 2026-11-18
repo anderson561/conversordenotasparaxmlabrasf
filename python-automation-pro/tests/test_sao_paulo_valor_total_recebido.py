@@ -14,8 +14,9 @@ XML: ValorServicos = 16,00 (recebido); ValorDeducoes = 0,00 (como impresso -
 decisão do usuário de 2026-11-13: "não há deduções na nota fiscal"; até então
 ia a diferença recebido - serviço); Base/Alíquota/ISS como impressos (6,00 /
 2% / 0,12); ValorLiquidoNfse = recebido - retenções (16,00). Acionada pelo
-campo impresso, não pelo CNPJ: em OUTRO prestador a diferença continua em
-ValorDeducoes (repasse), comportamento de 2026-11-12 mantido. Sem leitura
+campo impresso, não pelo CNPJ: desde 2026-11-18 (notas da VR BENEFICIOS) o
+OUTRO prestador também fica com as deduções como impressas (o mapeamento
+"diferença em ValorDeducoes (repasse)" de 2026-11-12 foi extinto). Sem leitura
 segura ou com a conta incoerente: comportamento anterior + aviso.
 
 Textos = OCR REAL das páginas do lote (os mesmos do teste de regressão do lote,
@@ -38,8 +39,7 @@ AVISO_REGRA = ("Prestador Pluxee: Valor total recebido R$ 16,00 usado como Valor
                "(maior que o valor do serviço, R$ 6,00); sem deduções - ValorDeducoes como "
                "impresso na nota (R$ 0,00); Base de Cálculo/Alíquota/ISS mantidos como "
                "impressos; conferir")
-AVISO_OUTRO_PRESTADOR = ("Valor total recebido R$ 16,00 usado como ValorServicos; diferença de "
-                         "R$ 10,00 para o valor do serviço (R$ 6,00) lançada em ValorDeducoes (repasse)")
+AVISO_OUTRO_PRESTADOR = AVISO_REGRA.replace("Prestador Pluxee: ", "")
 
 
 def _parse_ocr(monkeypatch, tmp_path, texto_ocr):
@@ -156,8 +156,10 @@ def test_regra_e_disparada_pelo_campo_e_nao_pelo_cnpj(monkeypatch, tmp_path):
              .replace("PLUXEE BENEFICIOS BRASIL S.A.", "OUTRA EMPRESA DE BENEFICIOS LTDA"))
     nfse = _parse_ocr(monkeypatch, tmp_path, texto)
     assert nfse.prestador.cnpj_cpf == "11222333000181"
-    # Fora da Pluxee a regra de 2026-11-12 segue intacta: diferença em ValorDeducoes.
-    assert (nfse.valores.valor_servicos, nfse.valores.valor_deducoes) == (16.00, 10.00)
+    # Desde 2026-11-18 (decisão do usuário, notas da VR BENEFICIOS) também fora
+    # da Pluxee: deduções como impressas (0,00) - a diferença não vai mais para
+    # ValorDeducoes (mapeamento "repasse" de 2026-11-12 extinto).
+    assert (nfse.valores.valor_servicos, nfse.valores.valor_deducoes) == (16.00, 0.00)
     assert nfse.valores.valor_liquido_nfse == 16.00
     assert AVISO_OUTRO_PRESTADOR in nfse.avisos
     assert not any("Prestador Pluxee" in a for a in nfse.avisos)
