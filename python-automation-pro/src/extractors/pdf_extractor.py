@@ -2260,6 +2260,14 @@ class SPPdfExtractor:
             if m_data:
                 res = _parse_dmy(m_data.group(1), m_hora.group(1) if m_hora else None)
                 if res: return res
+            if self._barueri_escaneada():
+                # OCR lê a caixa por LINHA: "pata Emissão ora Emissão ..." /
+                # "ini . No . 24/02/2026 10:18 SERVICOS E FATURA" (rótulos
+                # corrompidos, data e hora lado a lado na linha de baixo).
+                m = re.search(r'Emiss[ãa]o[\s\S]{0,200}?\b(\d{2}/\d{2}/\d{4})[ \t]+(\d{2}:\d{2})\b', t, re.IGNORECASE)
+                if m:
+                    res = _parse_dmy(m.group(1), m.group(2))
+                    if res: return res
 
         if self.layout == LAYOUT_VINHEDO:
             # "Data de Emissão\n28/JUL/2026 - 14:24:50" — único layout com mês
@@ -3046,6 +3054,13 @@ class SPPdfExtractor:
             # RPS que originou a nota, valor diferente).
             m = re.search(r'N[uú]mero\s+da\s+Nota\s*\n+\s*(\d+)', t, re.IGNORECASE)
             if m: return m.group(1).strip()
+            if self._barueri_escaneada():
+                # Canhoto do rodapé, lido por LINHA: "... | Número da Nota
+                # Série da Nota" / "NOTA FISCAL ELETRÔNICA DE SERVIÇOS 0000088"
+                # — o número (7 dígitos) fecha a linha de baixo. Na caixa do
+                # cabeçalho o rótulo some no OCR (". 0000088").
+                m = re.search(r'N[uú]mero\s+da\s+Nota[^\n]*\n[^\n]*?\b(\d{7})[ \t]*$', t, re.IGNORECASE | re.MULTILINE)
+                if m: return m.group(1)
 
         if self.layout == LAYOUT_SP_SKYTEF:
             # "Numero da NFS-e:\n902735" — rótulo distinto de "Número RPS"
@@ -4060,6 +4075,23 @@ class SPPdfExtractor:
                         disc, re.IGNORECASE):
                     return disc
 
+        if self._barueri_escaneada():
+            # Versão escaneada (ver `_barueri_escaneada`): descrição da grade
+            # do item ("Decoração.") + o texto livre do quadro
+            # "DISCRIMINAÇÃO DOS SERVIÇOS E INFORMAÇÕES RELEVANTES" até
+            # "VALORES DE REPASSE A TERCEIROS" (na nota 0000088 é texto do
+            # prestador — referência e dados bancários —, não o resumo de
+            # valores da Alelo).
+            grade = self._barueri_scan_grade_item()
+            m_disc = re.search(
+                r'DISCRIMINA[ÇC][ÃA]O\s+DOS\s+SERVI[ÇC]OS[^\n]*\n(.*?)\n\s*VALORES\s+DE\s+REPASSE',
+                t, re.IGNORECASE | re.DOTALL)
+            partes = [grade['descricao']] if grade and grade['descricao'] else []
+            if m_disc and m_disc.group(1).strip():
+                partes.append(re.sub(r'\s+', ' ', m_disc.group(1)).strip())
+            if partes:
+                return ' - '.join(partes)
+
         if self.layout == LAYOUT_BARUERI:
             # A grade do item tem 5 rótulos dumped juntos (Descrição do
             # Serviço/Código Serviço/Alíquota/Valor Unitário/Valor Total),
@@ -4688,6 +4720,13 @@ class SPPdfExtractor:
                 if len(valores_grid) >= 2:
                     m_cod = re.search(r'(\d{4})', valores_grid[1])
                     if m_cod: return m_cod.group(1)
+            if self._barueri_escaneada():
+                # Mesmo critério na versão escaneada: "071101220" -> "0711"
+                # (item 7.11 da LC 116, decoração e jardinagem), só quando
+                # o grupo (2 primeiros dígitos) existe na lista (01-40).
+                grade = self._barueri_scan_grade_item()
+                if grade and 1 <= int(grade['codigo'][:2]) <= 40:
+                    return grade['codigo'][:4]
 
         if self.layout == LAYOUT_VINHEDO:
             # "Código do Serviço: Ativ. Serviço: 7.19 - Acompanhamento..." —
@@ -5263,6 +5302,14 @@ class SPPdfExtractor:
                 candidato = m.group(1).strip()
                 if re.match(r'^[A-Z0-9][A-Z0-9.\-]{6,}$', candidato, re.IGNORECASE) and re.search(r'\d', candidato):
                     return candidato.upper()
+            if self._barueri_escaneada():
+                # No OCR os rótulos se separam dos valores (o do cabeçalho sai
+                # no meio de ruído, o do rodapé com espaços espúrios: "2
+                # 3X.9325.3289.1 094899-S"). Aceita só a 1ª ocorrência com o
+                # formato completo XXXX.NNNN.NNNN.NNNNNNN-X; sem ela, fica o
+                # sentinela (e o aviso de código não encontrado).
+                m = re.search(self._BARUERI_CODIGO_AUTENTICIDADE_RE, t)
+                if m: return m.group(1)
 
         if self.layout in (LAYOUT_SANTOS, LAYOUT_VINHEDO, LAYOUT_SP_SKYTEF, LAYOUT_SP_CAIXA_CARTOES):
             # "Código de Verificação\nAKBT3QZT1" (Santos) / "Código de
@@ -6099,6 +6146,8 @@ class SPPdfExtractor:
         if self.layout == LAYOUT_BARUERI:
             if is_intermediario:
                 return None
+            if self._barueri_escaneada():
+                return self._extrair_entidade_barueri_scan(is_prestador)
             return self._extrair_entidade_barueri(is_prestador)
 
         if self.layout == LAYOUT_BIOCONTROL:
@@ -10797,6 +10846,257 @@ class SPPdfExtractor:
 
         mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
 
+        return Entidade(
+            cnpj_cpf=cnpj_cpf,
+            inscricao_municipal=inscricao_municipal,
+            razao_social=razao_social,
+            endereco=Endereco(
+                logradouro=logradouro,
+                numero=numero,
+                complemento=complemento,
+                bairro=bairro,
+                codigo_municipio=mun_cod,
+                municipio=municipio,
+                uf=uf,
+                cep=cep,
+            ),
+            email=email,
+        )
+
+    # ------------------------------------------------------------------
+    # Barueri/SP ESCANEADO (PDF imagem -> OCR). Mesmo template e mesmo
+    # LAYOUT_BARUERI da versão digital, mas o Tesseract lê a página LINHA A
+    # LINHA (rótulo e valor na MESMA linha, colunas lado a lado), enquanto o
+    # pdfminer da versão digital entrega cada rótulo com o valor na linha de
+    # baixo. Achado real: nota nº 0000088, IGOR GUERRA ARQUITETURA EIRELI ->
+    # NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVIÇOS LTDA (R$13.290,00,
+    # Simples Nacional) — com só os parsers da versão digital, tudo exceto
+    # número/data caía em fallback (prestador/tomador "Não Identificado",
+    # ValorServicos 0,00, item 03115). Os ramos digitais ficam intactos: os
+    # helpers abaixo só rodam quando a página veio do OCR (`from_ocr`).
+    # ------------------------------------------------------------------
+    def _barueri_escaneada(self) -> bool:
+        return self.layout == LAYOUT_BARUERI and bool(getattr(self, 'from_ocr', False))
+
+    # "213X.9325.3289.1094899-S" (mesmo formato do digital,
+    # "153Z.3080.1301.6770899-S").
+    _BARUERI_CODIGO_AUTENTICIDADE_RE = r'\b([0-9A-Z]{4}\.\d{4}\.\d{4}\.\d{7}-[0-9A-Z])\b'
+
+    def _barueri_scan_grade_item(self) -> Optional[dict]:
+        """Linha de valores da grade do item, logo abaixo da linha de rótulos
+        "Qtde Descrição do Serviço Código Serviço Alíquota | Valor Unitário
+        Valor Total": "1 Decoração. 071101220 2,00 13.290,00 13.290,00".
+        Âncoras numéricas estritas (código de 9 dígitos, alíquota d,dd e os
+        2 valores monetários no fim da linha) — linha corrompida devolve
+        None e os chamadores ficam no sentinela + aviso."""
+        m = re.search(
+            r'Qtde[^\n]*Valor\s+Total[^\n]*\n\s*'
+            r'(\d+(?:,\d+)?)\s+(.+?)\s+(\d{9})\s*\|?\s+(\d{1,2},\d{2})\s*\|?\s+'
+            r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*\|?\s+(\d{1,3}(?:\.\d{3})*,\d{2})[ \t]*$',
+            self.raw_text, re.IGNORECASE | re.MULTILINE)
+        if not m:
+            return None
+        return {
+            'descricao': m.group(2).strip(' |'),
+            'codigo': m.group(3),
+            'aliquota': self._parse_valor(m.group(4)),
+            'valor_unitario': self._parse_valor(m.group(5)),
+            'valor_total': self._parse_valor(m.group(6)),
+        }
+
+    def _barueri_scan_repasse(self) -> Optional[float]:
+        """"VALORES DE REPASSE A TERCEIROS Observações" / "R$ 0,00 ISSQN
+        devido a: ..." — no OCR o valor fica na linha de baixo, à esquerda
+        da observação."""
+        m = re.search(r'VALORES\s+DE\s+REPASSE\s+A\s+TERCEIROS[^\n]*\n\s*R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})',
+                      self.raw_text, re.IGNORECASE)
+        return self._parse_valor(m.group(1)) if m else None
+
+    def _extrair_valores_barueri_scan(self) -> Valores:
+        """Valores da versão escaneada. Mesma regra da digital:
+        ValorServicos/BaseCalculo = "Valor Total" da grade do item (nunca o
+        total da nota, que inclui o repasse a terceiros); ValorIss 0,00 (não
+        impresso — nunca derivado de Base × Alíquota)."""
+        t = self.raw_text
+        avisos = self.__dict__.setdefault('_barueri_avisos', [])
+        grade = self._barueri_scan_grade_item()
+        repasse = self._barueri_scan_repasse()
+        m_total = re.search(r'VALOR\s+TOTAL\s+DA\s+NOTA\s+(\d{1,3}(?:\.\d{3})*,\d{2})', t, re.IGNORECASE)
+        total_nota = self._parse_valor(m_total.group(1)) if m_total else None
+
+        valor_servicos, aliquota = 0.0, 0.0
+        if grade:
+            valor_servicos = grade['valor_total']
+            aliquota = grade['aliquota'] / 100
+            if total_nota is not None and repasse is not None \
+                    and abs(total_nota - repasse - valor_servicos) > 0.01:
+                avisos.append(
+                    f"\"Valor Total\" da grade do item (R$ {valor_servicos:.2f}) não fecha com o "
+                    f"\"VALOR TOTAL DA NOTA\" (R$ {total_nota:.2f}) menos o repasse a terceiros "
+                    f"(R$ {repasse:.2f}) - mantido o valor da grade; confira na nota")
+        elif total_nota is not None and repasse == 0.0:
+            # Repasse lido como R$ 0,00: o total da nota é o próprio valor do
+            # serviço (na digital o total só difere da tarifa pelo repasse).
+            valor_servicos = total_nota
+            avisos.append(
+                "Grade do item (Código Serviço/Alíquota/Valor Total) ilegível no scan - "
+                "ValorServicos tirado do \"VALOR TOTAL DA NOTA\" (repasse a terceiros R$ 0,00) "
+                "e Alíquota mantida em 0,00; confira na nota")
+        else:
+            avisos.append(
+                "Grade do item ilegível no scan e \"VALOR TOTAL DA NOTA\"/repasse a terceiros "
+                "não confirmados - ValorServicos/Alíquota mantidos em 0,00; confira na nota")
+
+        # "IRRF PISIPASEP COFINS CS Documento emitido por ME ou EP optante
+        # pelo" / "SIMPLES NACIONAL ou MEI. Não gera direito a" / "0,00 0,00
+        # 0,00 0,00 crédito Fiscal..." — o texto do Simples (coluna da
+        # direita) se intercala entre os rótulos e os 4 valores.
+        m_ret = re.search(
+            r'IRRF\s+PIS\S*\s+COFINS\s+CS\S*[^\n]*\n(?:[^\n]*\n){0,3}?\s*'
+            r'(\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})\s+'
+            r'(\d{1,3}(?:\.\d{3})*,\d{2})\s+(\d{1,3}(?:\.\d{3})*,\d{2})',
+            t, re.IGNORECASE)
+        if m_ret:
+            valor_ir, valor_pis, valor_cofins, valor_csll = (
+                self._parse_valor(m_ret.group(i)) for i in range(1, 5))
+        else:
+            valor_ir = valor_pis = valor_cofins = valor_csll = 0.0
+            avisos.append(
+                "Grade de retenções federais (IRRF/PIS/COFINS/CSLL) ilegível no scan - "
+                "mantidas em 0,00; confira na nota")
+
+        return Valores(
+            valor_servicos=valor_servicos,
+            valor_deducoes=0.0,
+            valor_pis=valor_pis,
+            valor_cofins=valor_cofins,
+            valor_inss=0.0,
+            valor_ir=valor_ir,
+            valor_csll=valor_csll,
+            valor_iss=0.0,
+            base_calculo=valor_servicos,
+            aliquota=aliquota,
+            valor_liquido_nfse=valor_servicos - valor_ir - valor_pis - valor_cofins - valor_csll,
+        )
+
+    @staticmethod
+    def _barueri_linha_apos_rotulo(bloco: str, rotulo_re: str) -> Optional[str]:
+        """1ª linha não vazia DEPOIS da linha que contém o rótulo (no OCR os
+        rótulos de uma faixa da grade saem juntos numa linha e os valores na
+        linha não vazia seguinte)."""
+        m = re.search(rotulo_re + r'[^\n]*\n', bloco, re.IGNORECASE)
+        if not m:
+            return None
+        return next((l.strip() for l in bloco[m.end():].split('\n') if l.strip()), None)
+
+    @staticmethod
+    def _barueri_separar_bairro_cidade(texto: str, uf: str):
+        """"JARDIM AMERICA SÃO PAULO" -> ("JARDIM AMERICA", "SÃO PAULO"): no
+        OCR as células Bairro e Cidade saem na mesma linha, sem separador. A
+        cidade é o MAIOR sufixo que é um município conhecido da própria UF
+        (tabela do `IBGEResolver`); sem casamento nada é adivinhado — a linha
+        toda fica como município (o resolver avisa se cair na capital) e o
+        bairro como "Não informado"."""
+        palavras = texto.split()
+        prefixo_uf = IBGEResolver.UF_PREFIXES.get(uf, '')
+        conhecidas = {_normaliza_nome(k) for k, v in IBGEResolver.KNOWN_CITIES.items()
+                      if prefixo_uf and str(v).startswith(prefixo_uf)}
+        if IBGEResolver.CAPITAL_NAMES_BY_UF.get(uf):
+            conhecidas.add(IBGEResolver.CAPITAL_NAMES_BY_UF[uf])
+        for i in range(len(palavras)):
+            cidade = ' '.join(palavras[i:])
+            if _normaliza_nome(cidade) in conhecidas:
+                return (' '.join(palavras[:i]) or "Não informado"), cidade
+        return "Não informado", texto
+
+    def _extrair_entidade_barueri_scan(self, is_prestador: bool) -> Entidade:
+        """Prestador/tomador da NFS-e de Barueri ESCANEADA (ver
+        `_barueri_escaneada`). CNPJ/CPF só é aceito com dígito verificador
+        válido; senão fica o sentinela (o `parse()` avisa)."""
+        t = self.raw_text
+        logradouro, numero, bairro, complemento = "Não informado", "S/N", "Não informado", None
+        municipio, cep, uf = "Não informado", "00000000", "SP"
+        email = None
+        inscricao_municipal = None
+        cnpj_cpf = "00000000000000"
+
+        def _doc_valido(bruto: str) -> Optional[str]:
+            d = re.sub(r'\D', '', bruto or '')
+            return d if len(d) in (11, 14) and self._validate_cnpj_cpf(d) else None
+
+        def _endereco(linha: str):
+            # "AVENIDA ANDROMEDA , 885 - SALA 0921 - BRASCAN CENTURY OF"
+            m = re.match(r'^(.*?)\s*,\s*(\d+)\s*-?\s*(.*)$', linha)
+            if m:
+                return m.group(1).strip(), m.group(2), (m.group(3).strip() or None)
+            return linha, "S/N", None
+
+        if is_prestador:
+            razao_social = "Prestador Não Identificado"
+            # Razão social na MESMA linha do rótulo ("Prestador de Serviços
+            # IGOR GUERRA ARQUITETURA EIRELI"), depois 1-2 linhas de endereço,
+            # a linha "CEP ... - <cidade> - <UF>" e só então CNPJ/IM.
+            m_bloco = re.search(r'Prestador\s+de\s+Servi[çc]os[ \t]*(.*?)\n\s*Nome\s+Tomador',
+                                t, re.IGNORECASE | re.DOTALL)
+            bloco = m_bloco.group(1) if m_bloco else ''
+            linhas = [l.strip() for l in bloco.split('\n') if l.strip()]
+            i_cep = next((i for i, l in enumerate(linhas) if re.match(r'CEP\b', l, re.IGNORECASE)), None)
+            if i_cep:
+                razao_social = self._limpar_borda_ocr_razao(linhas[0]) or razao_social
+                enderecos = linhas[1:i_cep]
+                if enderecos:
+                    logradouro, numero, complemento = _endereco(enderecos[0])
+                if len(enderecos) >= 2:
+                    # Mesma convenção da versão digital: o trecho depois da
+                    # última "/" ("GREEN VALLEY / ALPHAVILLE" -> "ALPHAVILLE").
+                    bairro = enderecos[-1].split('/')[-1].strip() or enderecos[-1]
+                m_cep = re.search(r'CEP\s*(\d{5}-?\d{3})\s*-\s*(.+?)\s*-\s*([A-Z]{2})\b',
+                                  linhas[i_cep], re.IGNORECASE)
+                if m_cep:
+                    cep = re.sub(r'\D', '', m_cep.group(1))
+                    municipio = m_cep.group(2).strip()
+                    uf = m_cep.group(3).upper()
+            m_doc = re.search(r'CNPJ\s*/\s*CPF\s*:?\s*(\d[\d.\s/\-]{9,20}\d)', bloco, re.IGNORECASE)
+            cnpj_cpf = (_doc_valido(m_doc.group(1)) if m_doc else None) or cnpj_cpf
+            m_im = re.search(r'Inscri[çc][ãa]o\s+Municipal\s*:?[ \t]+(\d[0-9A-Z.\-]*[0-9A-Z])',
+                             bloco, re.IGNORECASE)
+            if m_im:
+                inscricao_municipal = m_im.group(1)
+        else:
+            razao_social = "Tomador Não Identificado"
+            # "Nome Tomador de Serviços CPF/CNPJ" / "<razão> <cnpj>" /
+            # "Endereço Complemento" / "<logradouro>, <nº>" / "CEP" /
+            # "<cep>" / "Bairro Cidade UF" / "<bairro> <cidade> <uf>" /
+            # "E-mail" / "<e-mail>".
+            m_bloco = re.search(
+                r'Nome\s+Tomador\s+de\s+Servi[çc]os[^\n]*\n(.*?)(?=\n\s*Qtde\b|DISCRIMINA[ÇC][ÃA]O|\Z)',
+                t, re.IGNORECASE | re.DOTALL)
+            bloco = m_bloco.group(1) if m_bloco else ''
+            primeira = next((l.strip() for l in bloco.split('\n') if l.strip()), '')
+            m_rz = re.match(
+                r'^(.*?)\s*(\d{2}\.?\d{3}\.?\d{3}\s*/\s*\d{4}\s*-?\s*\d{2}|\d{3}\.?\d{3}\.?\d{3}\s*-\s*\d{2})\s*$',
+                primeira)
+            if m_rz:
+                razao_social = self._limpar_borda_ocr_razao(m_rz.group(1)) or razao_social
+                cnpj_cpf = _doc_valido(m_rz.group(2)) or cnpj_cpf
+            linha_end = self._barueri_linha_apos_rotulo(bloco, r'Endere[çc]o')
+            if linha_end and not re.match(r'CEP\b', linha_end, re.IGNORECASE):
+                logradouro, numero, complemento = _endereco(linha_end)
+            m_cep = re.search(r'CEP\s*:?\s*(\d{5}-?\d{3}|\d{2}\.\d{3}-\d{3})\b', bloco, re.IGNORECASE)
+            if m_cep:
+                cep = re.sub(r'\D', '', m_cep.group(1))
+            m_bcu = re.match(r'^(.+?)\s+([A-Za-z]{2})$',
+                             self._barueri_linha_apos_rotulo(bloco, r'Bairro\s+Cidade') or '')
+            if m_bcu and m_bcu.group(2).upper() in IBGEResolver.UF_PREFIXES:
+                uf = m_bcu.group(2).upper()
+                bairro, municipio = self._barueri_separar_bairro_cidade(m_bcu.group(1).strip(), uf)
+            m_email = re.search(r'E-?\s*mail\s*:?\s*\n?\s*(\S+)', bloco, re.IGNORECASE)
+            if m_email:
+                candidato = self._corrigir_arroba_ocr(m_email.group(1).strip())
+                if re.match(r'^[\w.+-]+@[\w-]+(?:\.[\w-]+)+$', candidato):
+                    email = candidato
+
+        mun_cod = _ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio)
         return Entidade(
             cnpj_cpf=cnpj_cpf,
             inscricao_municipal=inscricao_municipal,
@@ -16860,6 +17160,9 @@ class SPPdfExtractor:
                 aliquota=aliquota,
                 valor_liquido_nfse=valor_liquido,
             )
+
+        if self._barueri_escaneada():
+            return self._extrair_valores_barueri_scan()
 
         if self.layout == LAYOUT_BARUERI:
             # "TOTAL DE TARIFA = R$ 2,74" no resumo bate com o "Valor Total"
@@ -25582,6 +25885,7 @@ class SPPdfExtractor:
         self._feira_nac_avisos: List[str] = []
         self._salvador_bc_aliq_iss_divergente = None
         self._reforma_avisos: List[str] = []
+        self._barueri_avisos: List[str] = []
         self._localiza_avisos: List[str] = []
         self._saubara_cache = None
         self._nota_loc_cache = None
@@ -25954,6 +26258,23 @@ class SPPdfExtractor:
                     "cobrada pelo prestador é considerada valor tributável; "
                     "confira se esse repasse precisa de tratamento contábil à parte"
                 )
+            if self._barueri_escaneada():
+                repasse_scan = self._barueri_scan_repasse()
+                if repasse_scan:
+                    avisos.append(
+                        f"Nota inclui R$ {repasse_scan:.2f} de repasse a terceiros ".replace('.', ',') +
+                        "que NÃO entrou no Valor dos Serviços/Valor Líquido do XML - apenas o "
+                        "valor do item é considerado valor tributável; confira se esse repasse "
+                        "precisa de tratamento contábil à parte")
+                avisos.extend(a for a in self._barueri_avisos if a not in avisos)
+            if optante_simples and valores is not None and not valores.valor_iss:
+                # Mesma decisão de Santos/SP e da DANFSe GissOnline: ISS do
+                # Simples Nacional não é destacado na nota (recolhido no DAS)
+                # e nunca é derivado de Base × Alíquota.
+                avisos.append(
+                    "Prestador optante do Simples Nacional: ISS não destacado na nota "
+                    "(recolhido no DAS) - ValorIss mantido em 0,00, não derivado de "
+                    "Base de Cálculo x Alíquota")
         if getattr(self, '_camacari_retencoes_nao_conferem', False):
             avisos.append(
                 "Retenções federais (PIS/COFINS/INSS/IR/CSLL) impressas na grade "
