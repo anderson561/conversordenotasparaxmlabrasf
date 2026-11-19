@@ -142,11 +142,17 @@ def test_deducoes_impressas_mantem(monkeypatch, tmp_path):
     _mantido(_uma(monkeypatch, tmp_path, texto), "deduções/base/ISS", deducoes=5.0)
 
 
-def test_outro_prestador_nao_aplica(monkeypatch, tmp_path):
+def test_outro_prestador_usa_a_regra_geral_sem_conferencia_emv(monkeypatch, tmp_path):
+    """Fora da Pluxee a regra própria (com conferência pelo crédito EMV) não
+    age; desde 2026-11-18 (decisão do usuário, notas da VR BENEFICIOS) a regra
+    GERAL do recebido vale para qualquer prestador: ValorServicos = recebido,
+    deduções como impressas (0,00), sem menção a Pluxee nem ao EMV."""
     texto = NOTA_PLUXEE_08969996.replace("69.034.668/0001-56", "11.222.333/0001-81")
     nota = _uma(monkeypatch, tmp_path, texto)
-    assert nota.valores.valor_servicos == 0.0
-    assert not any("Pluxee" in a or "Valor total recebido R$" in a for a in nota.avisos)
+    assert _valores(nota) == (9867.48, 0.0, 0.0, 0.02, 0.0, 9867.48)
+    assert not any("Pluxee" in a or "EMV" in a for a in nota.avisos)
+    assert any(a.startswith("Serviço impresso R$ 0,00; Valor total recebido R$ 9.867,48 usado")
+               for a in nota.avisos)
 
 
 def test_flash_real_continua_na_regra_propria(monkeypatch, tmp_path):
