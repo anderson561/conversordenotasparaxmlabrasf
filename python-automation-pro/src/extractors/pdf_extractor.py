@@ -33,6 +33,7 @@ from . import fatura_locacao_periodo as _fat_per
 from . import fatura_locacao_equipamentos as _fat_loc
 from . import localiza_fatura as _localiza
 from . import danfe_produto_texto as _danfe_txt
+from . import ribeirao_pires_texto as _rp
 from datetime import datetime
 import logging
 
@@ -1090,6 +1091,16 @@ class SPPdfExtractor:
         # incondicional), tolerando os garbles já vistos em nota real
         # ("Exigibilidade de 155" com "ISS" lido como "155"). Barreiras
         # compartilha o mesmo template, mas é checada ANTES deste ponto.
+        # Ribeirão Pires/SP pelo CABEÇALHO da prefeitura ANTES da rede de
+        # segurança do Simões Filho logo abaixo: a NFS-e de Ribeirão Pires
+        # (modelo Ginfes com "Detalhamento de Valores (R$)") imprime "Série
+        # RPS" e o tomador STAUMMAQ fica em Simões Filho/BA — achado real
+        # 2026-11-19, notas nº 20831 e 22716 (AMBAR INOVACOES SPE LTDA),
+        # sequestradas para LAYOUT_SIMOES_FILHO (Numero 72 = número do
+        # endereço do prestador, valores zerados, tomador não identificado).
+        # O fallback solto por "Ribeirão Pires" abaixo continua valendo.
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+RIBEIR[AÃ]O\s+PIRES', t, re.IGNORECASE):
+            return LAYOUT_RIBEIRAO_PIRES
         if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE) and re.search(
                 r'S[eé]rie?\s+RPS|N[uú]mero\s+RPS|Exigibilidade\s+de\s+(?:ISS|1?55)'
                 r'|SERVI[ÇC]O\s+NACIONAL|DESCONTO\s+INCONDICIONAL',
@@ -1619,6 +1630,16 @@ class SPPdfExtractor:
         # incondicional), tolerando os garbles já vistos em nota real
         # ("Exigibilidade de 155" com "ISS" lido como "155"). Barreiras
         # compartilha o mesmo template, mas é checada ANTES deste ponto.
+        # Ribeirão Pires/SP pelo CABEÇALHO da prefeitura ANTES da rede de
+        # segurança do Simões Filho logo abaixo: a NFS-e de Ribeirão Pires
+        # (modelo Ginfes com "Detalhamento de Valores (R$)") imprime "Série
+        # RPS" e o tomador STAUMMAQ fica em Simões Filho/BA — achado real
+        # 2026-11-19, notas nº 20831 e 22716 (AMBAR INOVACOES SPE LTDA),
+        # sequestradas para LAYOUT_SIMOES_FILHO (Numero 72 = número do
+        # endereço do prestador, valores zerados, tomador não identificado).
+        # O fallback solto por "Ribeirão Pires" abaixo continua valendo.
+        if re.search(r'PREFEITURA\s+MUNICIPAL\s+DE\s+RIBEIR[AÃ]O\s+PIRES', t, re.IGNORECASE):
+            return LAYOUT_RIBEIRAO_PIRES
         if re.search(r'Sim[oõ]es Filho', t, re.IGNORECASE) and re.search(
                 r'S[eé]rie?\s+RPS|N[uú]mero\s+RPS|Exigibilidade\s+de\s+(?:ISS|1?55)'
                 r'|SERVI[ÇC]O\s+NACIONAL|DESCONTO\s+INCONDICIONAL',
@@ -1775,6 +1796,12 @@ class SPPdfExtractor:
         t = self.raw_text
         layout = self.layout or LAYOUT_GENERICO
         result: Optional[datetime] = None
+
+        _rp_campos = self._ribeirao_pires_campos() if layout == LAYOUT_RIBEIRAO_PIRES else None
+        if _rp_campos is not None and _rp_campos.competencia:
+            # Campo "Competência MM/AAAA" impresso (Ribeirão Pires/Ginfes).
+            mes, ano = _rp_campos.competencia.split('/')
+            return datetime(int(ano), int(mes), 1)
 
         if layout in _LAYOUTS_NOTA_LOCACAO:
             # A nota de locação não imprime competência (o "PERÍODO" da
@@ -2951,6 +2978,160 @@ class SPPdfExtractor:
         self._saubara_cache = (self.raw_text, campos)
         return campos
 
+    # ------------------------------------------------------------------
+    # LAYOUT_RIBEIRAO_PIRES — modelo Ginfes com IBS/CBS (ver
+    # ribeirao_pires_texto.py)
+    # ------------------------------------------------------------------
+
+    def _ribeirao_pires_campos(self) -> Optional['_rp.CamposRP']:
+        """Campos da NFS-e de Ribeirão Pires/SP no modelo Ginfes ("Prestador
+        de Serviço" / "Detalhamento de Valores (R$)" com IBS/CBS), lidos UMA
+        vez do texto reconstruído por coordenada. None fora deste layout, em
+        página escaneada ou quando o texto não é deste modelo — aí cada
+        `_extrair_*` segue o caminho antigo do layout (só o número da nota).
+        Achado real 2026-11-19, notas nº 20831 e 22716 (AMBAR INOVACOES SPE
+        LTDA -> STAUMMAQ)."""
+        if self.layout != LAYOUT_RIBEIRAO_PIRES:
+            return None
+        cache = getattr(self, '_rp_cache', None)
+        if cache is not None and cache[0] == self.raw_text:
+            return cache[1]
+        campos = None
+        if not self._pagina_e_escaneada():
+            campos = _rp.ler_campos(self._reconstruir_texto_por_coordenadas())
+        self._rp_cache = (self.raw_text, campos)
+        return campos
+
+    def _rp_aviso(self, msg: str) -> None:
+        avisos = self.__dict__.setdefault('_rp_avisos', [])
+        if msg not in avisos:
+            avisos.append(msg)
+
+    def _entidade_ribeirao_pires(self, ent: '_rp.EntidadeRP', is_prestador: bool) -> Entidade:
+        papel = "prestador" if is_prestador else "tomador"
+        cnpj = ent.cnpj_cpf or "00000000000000"
+        if ent.cnpj_cpf and not self._validate_cnpj_cpf(ent.cnpj_cpf):
+            self._rp_aviso(f"CPF/CNPJ do {papel} ({ent.cnpj_cpf}) não confere no dígito "
+                           "verificador - confira na nota")
+        # UF do prestador ausente: a própria prefeitura emissora é de SP.
+        uf = ent.uf or ("SP" if is_prestador else _ibge_resolver.default_uf)
+        municipio = ent.municipio or "Não informado"
+        return Entidade(
+            cnpj_cpf=cnpj,
+            inscricao_municipal=ent.inscricao_municipal or None,
+            razao_social=ent.razao_social or (
+                "Prestador Não Identificado" if is_prestador else "Tomador Não Identificado"),
+            endereco=Endereco(
+                logradouro=ent.logradouro or "Não informado",
+                numero=ent.numero or "S/N",
+                complemento=ent.complemento or None,
+                bairro=ent.bairro or "Não informado",
+                codigo_municipio=_ibge_resolver.extract_and_validate(municipio, uf, city_hint=municipio),
+                municipio=municipio,
+                uf=uf,
+                cep=ent.cep or "00000000",
+            ),
+            email=ent.email or None,
+            telefone=ent.telefone or None,
+        )
+
+    def _valores_ribeirao_pires(self, campos: '_rp.CamposRP') -> Valores:
+        """Grade "Detalhamento de Valores (R$)" + "Tributos Federais (R$)".
+
+        - PIS/COFINS de tipo "Apuração Própria" (e a linha "PIS/COFINS -
+          Apuração Própria" do detalhamento) são débito PRÓPRIO do prestador,
+          não retenção: NÃO entram em ValorPis/ValorCofins (mesma convenção do
+          Santos/Ginfes e do "PIS/COFINS - Débito Apuração Própria" da DANFSe
+          v2.0). Só entram se o tipo impresso for de retenção ("Retido").
+        - INSS/IR/CSLL da grade federal entram como impressos.
+        - IBS/CBS não têm tag no ABRASF 2.01: descartados.
+        - ISSQN é o IMPRESSO (nunca Base x Alíquota); divergências e valores
+          ausentes viram aviso, nunca correção silenciosa."""
+        v = campos.valores
+        tf = campos.tributos_federais
+
+        def _br(x: float) -> str:
+            return f"{x:,.2f}".replace(',', '#').replace('.', ',').replace('#', '.')
+
+        serv = v.get('servico')
+        if serv is None:
+            self._rp_aviso("\"Valor do Serviço\" não lido na grade \"Detalhamento de Valores\" "
+                           "- mantido zerado; confira na nota")
+            serv = 0.0
+        retidos = {}
+        for nome in ('PIS', 'COFINS'):
+            valor, tipo = tf.get(nome, (0.0, ''))
+            if re.search(r'Retid', tipo, re.IGNORECASE):
+                retidos[nome] = valor
+            elif valor and not re.search(r'Apura[çc][ãa]o\s+Pr[óo]pria', tipo, re.IGNORECASE):
+                self._rp_aviso(f"{nome} R$ {_br(valor)} com tipo não reconhecido (\"{tipo}\") - "
+                               "não lançado como retenção; confira na nota")
+        pis = retidos.get('PIS', 0.0)
+        cofins = retidos.get('COFINS', 0.0)
+        inss = tf.get('INSS', 0.0)
+        ir = tf.get('IR', 0.0)
+        csll = tf.get('CSLL', 0.0)
+        ret_fed = v.get('retencoes_federais')
+        if ret_fed is not None and abs(ret_fed - (pis + cofins + inss + ir + csll)) > 0.02:
+            self._rp_aviso(f"\"Retenções Federais\" impressas (R$ {_br(ret_fed)}) não fecham com a "
+                           f"soma dos tributos federais retidos lidos (R$ {_br(pis + cofins + inss + ir + csll)}) "
+                           "- confira na nota")
+        outras = v.get('outras_retencoes', 0.0)
+        contrib = v.get('contribuicoes_sociais_retidas', 0.0)
+        if contrib and (pis or cofins or csll):
+            self._rp_aviso(f"\"Contribuições Sociais - Retidas\" (R$ {_br(contrib)}) impressas junto "
+                           "de PIS/COFINS/CSLL retidos itemizados - não somadas para não duplicar; "
+                           "confira na nota")
+            contrib = 0.0
+        base = v.get('base_calculo')
+        aliquota = v.get('aliquota')
+        iss = v.get('issqn')
+        if iss is None:
+            if campos.simples_nacional is not True:
+                self._rp_aviso("\"ISSQN\" em branco na nota - ValorIss mantido 0,00 (não "
+                               "calculado de Base x Alíquota); confira na nota")
+            iss = 0.0
+        elif base is not None and aliquota is not None and abs(base * aliquota / 100 - iss) > 0.02:
+            self._rp_aviso(f"ISSQN impresso (R$ {_br(iss)}) não fecha com Base x Alíquota "
+                           f"(R$ {_br(base)} x {_br(aliquota)}%) - mantido o impresso; confira na nota")
+        iss_retido = campos.iss_retido
+        if iss_retido is None:
+            self._rp_aviso("Caixa \"ISSQN a Reter\" ilegível - ISS tratado como NÃO retido; "
+                           "confira na nota")
+            iss_retido = False
+        desc_inc = v.get('desconto_incondicionado', 0.0)
+        desc_cond = v.get('desconto_condicionado', 0.0)
+        liquido = v.get('liquido')
+        if liquido is None:
+            self._rp_aviso("\"Valor Líquido\" não lido - usado o Valor do Serviço; confira na nota")
+            liquido = serv
+        else:
+            esperado = (serv - desc_inc - desc_cond - (ret_fed if ret_fed is not None else 0.0)
+                        - outras - contrib - (iss if iss_retido else 0.0))
+            if abs(esperado - liquido) > 0.02:
+                self._rp_aviso(f"Valor Líquido impresso (R$ {_br(liquido)}) não fecha com serviço - "
+                               f"descontos - retenções (R$ {_br(esperado)}) - mantido o impresso; "
+                               "confira na nota")
+        return Valores(
+            valor_servicos=serv,
+            valor_deducoes=v.get('deducoes', 0.0),
+            valor_pis=pis,
+            valor_cofins=cofins,
+            valor_inss=inss,
+            valor_ir=ir,
+            valor_csll=csll,
+            outras_retencoes=outras,
+            valor_contribuicoes_sociais_retidas=contrib,
+            base_calculo=serv if base is None else base,
+            aliquota=(aliquota or 0.0) / 100,
+            valor_iss=iss,
+            iss_retido=iss_retido,
+            valor_iss_retido=iss if iss_retido else 0.0,
+            valor_liquido_nfse=liquido,
+            desconto_incondicionado=desc_inc,
+            desconto_condicionado=desc_cond,
+        )
+
     def _nota_loc_campos(self) -> '_nota_loc.NotaLocacao':
         """Campos dos impressos de locação de `_LAYOUTS_NOTA_LOCACAO` (NOTA DE
         LOCAÇÃO, NOTA DÉBITO/FATURA, FATURA DE LOCAÇÃO com PERÍODO DE REFERÊNCIA e
@@ -3951,6 +4132,9 @@ class SPPdfExtractor:
         return disc or None
 
     def _extrair_discriminacao(self) -> str:
+        _rp_campos = self._ribeirao_pires_campos()
+        if _rp_campos is not None and _rp_campos.discriminacao:
+            return _rp_campos.discriminacao
         if self.layout in _LAYOUTS_NOTA_LOCACAO:
             return self._nota_loc_campos().discriminacao
         if self.layout in _LAYOUTS_SAUBARA:
@@ -4739,6 +4923,11 @@ class SPPdfExtractor:
 
     def _extrair_codigo_servico(self) -> str:
         t = self.raw_text
+        _rp_campos = self._ribeirao_pires_campos()
+        if _rp_campos is not None and _rp_campos.item_lc116:
+            # "Atividade Econômica: 17.22 / 8.1722 - ..." -> "1722" (o código
+            # após a barra é a atividade municipal, não item nem CNAE).
+            return _rp_campos.item_lc116
         if self.layout in _LAYOUTS_NOTA_LOCACAO:
             # Locação de bem móvel: mesmo item "0601" da família de faturas de
             # locação (Localiza/ARMAC/genérica) - ver `_nota_loc.ITEM_LOCACAO`.
@@ -6061,6 +6250,14 @@ class SPPdfExtractor:
         t = self.raw_text
         is_prestador = (tipo.lower() == 'prestador')
         is_intermediario = (tipo.lower() == 'intermediario')
+
+        _rp_campos = self._ribeirao_pires_campos()
+        if _rp_campos is not None:
+            # Ribeirão Pires/Ginfes: sem bloco de intermediário.
+            if is_intermediario:
+                return None
+            return self._entidade_ribeirao_pires(
+                _rp_campos.prestador if is_prestador else _rp_campos.tomador, is_prestador)
 
         if self.layout in _LAYOUTS_NOTA_LOCACAO:
             # Emitente (locador) = prestador; DESTINATÁRIO = tomador; sem intermediário.
@@ -17029,6 +17226,10 @@ class SPPdfExtractor:
     def _extrair_valores(self) -> Valores:
         t = self.raw_text
 
+        _rp_campos = self._ribeirao_pires_campos()
+        if _rp_campos is not None:
+            return self._valores_ribeirao_pires(_rp_campos)
+
         if self.layout in _LAYOUTS_NOTA_LOCACAO:
             return self._nota_loc_campos().valores
 
@@ -26035,6 +26236,8 @@ class SPPdfExtractor:
         self._barueri_avisos: List[str] = []
         self._localiza_avisos: List[str] = []
         self._saubara_cache = None
+        self._rp_cache = None
+        self._rp_avisos: List[str] = []
         self._nota_loc_cache = None
         self._sem_parar_fonte_valor = ''
         self._sem_parar_divergencia = None
@@ -26216,6 +26419,10 @@ class SPPdfExtractor:
             # diz se é ME/EPP ou MEI, e o "REGIME ESPECIAL DE TRIBUTAÇÃO DO
             # ISSQN" impresso é "0-Nenhum": só o optante, sem presumir regime.
             optante_simples = True
+        elif self._ribeirao_pires_campos() is not None:
+            # Ribeirão Pires/Ginfes: caixa "Simples Nacional ( ) Sim (X) Não"
+            # lida na MESMA linha do rótulo (texto por coordenada).
+            optante_simples = self._ribeirao_pires_campos().simples_nacional is True
         elif self.layout == LAYOUT_SANTOS:
             # Santos/SP (Ginfes): grade "labels dumped, depois values dumped"
             # ("Identificação Prestação de Serviços") — "Simples Nacional" (o
@@ -26505,6 +26712,8 @@ class SPPdfExtractor:
                 avisos.append(_aviso_mun)
 
         municipio_incidencia_override = self._extrair_municipio_incidencia_override()
+        if self._ribeirao_pires_campos() is not None:
+            avisos.extend(a for a in self.__dict__.get('_rp_avisos', []) if a not in avisos)
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             # Avisos levantados pela própria leitura da incidência (acima).
             avisos.extend(a for a in self.__dict__.get('_reforma_avisos', []) if a not in avisos)
@@ -28768,6 +28977,15 @@ class SPPdfExtractor:
         Serviço: Fora do Município" + linha de texto livre "OBRA: ...,
         <CIDADE>/<UF>" (achado real, nota nº 65, obra em Camaçari/BA)."""
         t = self.raw_text
+        _rp_campos = self._ribeirao_pires_campos()
+        if _rp_campos is not None:
+            # Campo próprio "Munícipio Incidência <MUNICÍPIO> - <UF>". Sem ele,
+            # vale o padrão do transformer (município do prestador).
+            if not _rp_campos.municipio_incidencia:
+                return None
+            return _ibge_resolver.extract_and_validate(
+                _rp_campos.municipio_incidencia, _rp_campos.uf_incidencia,
+                city_hint=_rp_campos.municipio_incidencia)
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             # DANFSe v2.0: o município de incidência do ISSQN é um campo
             # PRÓPRIO da nota ("Município / Sigla UF / País de Incidência do
