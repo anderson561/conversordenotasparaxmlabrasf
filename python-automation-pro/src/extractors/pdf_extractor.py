@@ -35,6 +35,7 @@ from . import localiza_fatura as _localiza
 from . import danfe_produto_texto as _danfe_txt
 from . import ribeirao_pires_texto as _rp
 from . import natal_nfse as _natal
+from . import eldorado_do_sul_nfse as _eldorado
 from datetime import datetime
 import logging
 
@@ -221,6 +222,7 @@ LAYOUT_FATURA_LOCACAO_EQUIPAMENTOS = 'fatura_locacao_equipamentos'  # Impresso "
 # extração via `_nota_loc_campos` (mesmo `NotaLocacao`, parsers distintos -
 # o extrator é escolhido por layout em `_nota_loc_campos`).
 _LAYOUTS_NOTA_LOCACAO = (LAYOUT_NOTA_LOCACAO, LAYOUT_NOTA_DEBITO_LOCACAO, LAYOUT_FATURA_LOCACAO_PERIODO, LAYOUT_FATURA_LOCACAO_EQUIPAMENTOS)
+LAYOUT_ELDORADO_DO_SUL = 'eldorado_do_sul_rs'  # Município de Eldorado do Sul/RS, portal municipal govbr.cloud ("nfseeldoradodosul.govbr.cloud/nfse.portal"), título "Nota Fiscal de Serviços Eletrônica (DANFSE)" - NÃO é a DANFSe Nacional nem NF-e. Achado real 2026-11-19: DELL_NF2955797.pdf (DELL COMPUTADORES DO BRASIL LTDA -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVICOS LTDA, nota 202600002955797, R$ 151,52, ISS 2% não retido), PDF SEM camada de texto (OCR). Antes: LAYOUT_GENERICO -> "Layout não reconhecido" -> nenhum XML. Nota montada inteira por `eldorado_do_sul_nfse.py` (texto de página inteira + recortes dedicados do cabeçalho/emissão/CNPJ e e-mail do tomador; número e código verificador conferidos com o texto do código de barras = número + código + CNPJ do prestador)
 
 # Marcas do template da PRÓPRIA Prefeitura de Lauro de Freitas/BA (cabeçalho
 # "MUNICIPIO DE LAURO DE FREITAS / Secretaria da Fazenda / Coordenação
@@ -756,6 +758,10 @@ class SPPdfExtractor:
         # `natal_nfse.eh_natal` e LAYOUT_NATAL.
         if _natal.eh_natal(t):
             return LAYOUT_NATAL
+        # Eldorado do Sul/RS (portal govbr.cloud, título "(DANFSE)"): gate
+        # estreito em `eldorado_do_sul_nfse.eh_template` - ver LAYOUT_ELDORADO_DO_SUL.
+        if _eldorado.eh_template(t):
+            return LAYOUT_ELDORADO_DO_SUL
         # Impresso "NOTA DE LOCAÇÃO" (locação de bem móvel, não é NFS-e) logo
         # depois de Saubara e antes de qualquer fallback municipal/de cidade
         # solta: o texto cita "SIMOES FILHO"/"Município" do destinatário e o
@@ -1328,6 +1334,10 @@ class SPPdfExtractor:
         # `natal_nfse.eh_natal` e LAYOUT_NATAL.
         if _natal.eh_natal(t):
             return LAYOUT_NATAL
+        # Eldorado do Sul/RS (portal govbr.cloud, título "(DANFSE)"): gate
+        # estreito em `eldorado_do_sul_nfse.eh_template` - ver LAYOUT_ELDORADO_DO_SUL.
+        if _eldorado.eh_template(t):
+            return LAYOUT_ELDORADO_DO_SUL
         # Impresso "NOTA DE LOCAÇÃO" (locação de bem móvel, não é NFS-e) logo
         # depois de Saubara e antes de qualquer fallback municipal/de cidade
         # solta: o texto cita "SIMOES FILHO"/"Município" do destinatário e o
@@ -26286,6 +26296,57 @@ class SPPdfExtractor:
         print(f"[*] PDF '{self.pdf_path}' sem texto detectado. Iniciando extração via OCR (Tesseract)...")
         return "\n\x0c\n".join(self._ocr_page(i) for i in range(n_pages))
 
+    def _parse_eldorado_do_sul(self) -> Nfse:
+        """NFS-e de Eldorado do Sul/RS (LAYOUT_ELDORADO_DO_SUL). Recortes de
+        OCR dedicados só quando a página veio de OCR; campos, conferências e
+        avisos vêm de `eldorado_do_sul_nfse.extrair`."""
+        recortes = {}
+        if self._pagina_e_escaneada():
+            recortes = _eldorado.ler_recortes(self.pdf_path, (getattr(self, '_pagina_hint', None) or 1) - 1)
+        nota = _eldorado.extrair(
+            self.raw_text, recortes,
+            lambda nome, uf: _ibge_resolver.extract_and_validate(nome, uf, city_hint=nome))
+        avisos = list(nota.avisos)
+        self._data_emissao_fallback = nota.data_emissao_fallback
+        # "Tributado no Município" diferente do município do prestador vira
+        # o município de incidência do XML.
+        override = None
+        if nota.municipio_tributacao:
+            nome, uf = nota.municipio_tributacao
+            cod = _ibge_resolver.extract_and_validate(nome, uf, city_hint=nome)
+            if cod != nota.prestador.endereco.codigo_municipio:
+                override = cod
+                aviso = _ibge_resolver.aviso_fallback_capital(nome, uf, cod, 'incidência')
+                if aviso and aviso not in avisos:
+                    avisos.append(aviso)
+        for papel, ent in (('prestador', nota.prestador), ('tomador', nota.tomador)):
+            end = ent.endereco
+            aviso = _ibge_resolver.aviso_fallback_capital(end.municipio, end.uf, end.codigo_municipio, papel)
+            if aviso and aviso not in avisos:
+                avisos.append(aviso)
+        if re.search(self.NOTA_CANCELADA_PATTERN, self.raw_text, re.IGNORECASE | re.MULTILINE):
+            avisos.append(
+                "Documento traz indicação de CANCELAMENTO/desistência do "
+                "serviço (marca \"CANCELADA\" e/ou \"Motivo: ...\" impressos "
+                "na própria nota) - valores extraídos normalmente da nota, "
+                "mas confira se ela deve mesmo ser escriturada antes de "
+                "importar no sistema contábil"
+            )
+        return Nfse(
+            numero=nota.numero,
+            codigo_verificacao=nota.codigo_verificacao,
+            data_emissao=nota.data_emissao,
+            competencia=nota.competencia,
+            prestador=nota.prestador,
+            tomador=nota.tomador,
+            intermediario=None,
+            discriminacao=nota.discriminacao,
+            servico_codigo=nota.servico_codigo,
+            valores=nota.valores,
+            avisos=avisos,
+            municipio_incidencia_override=override,
+        )
+
     def parse(self) -> Optional[Union[Nfse, NfeProduto, CteOS]]:
         if not self.raw_text: self.extract_raw_text()
 
@@ -26323,6 +26384,11 @@ class SPPdfExtractor:
             # OU NF-e de produto - retorna um `CteOS`. Ver
             # LAYOUT_DACTE_OS/`_parse_dacte_os`.
             return self._parse_dacte_os()
+
+        if self.layout == LAYOUT_ELDORADO_DO_SUL:
+            # Nota montada inteira pelo módulo próprio (ver
+            # eldorado_do_sul_nfse.py / LAYOUT_ELDORADO_DO_SUL).
+            return self._parse_eldorado_do_sul()
 
         if self.layout in (LAYOUT_CAMACARI_SISLOC, LAYOUT_GOIANIA) or (
             self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2, LAYOUT_CAMACARI_3)
