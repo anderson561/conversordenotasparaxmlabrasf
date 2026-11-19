@@ -140,6 +140,10 @@ class IBGEResolver:
         # Feira de Santana/BA (já cadastrada acima) - as duas entidades
         # cairiam no MESMO código por motivos diferentes.
         "RIBEIRAO PRETO": "3543402", "RIBEIRÃO PRETO": "3543402",
+        # Ribeirão Pires/SP - prestador e município de incidência do
+        # LAYOUT_RIBEIRAO_PIRES (notas nº 20831/22716, AMBAR INOVACOES SPE LTDA,
+        # 2026-11-19). Sem esta entrada caía no fallback da capital (São Paulo).
+        "RIBEIRAO PIRES": "3543303", "RIBEIRÃO PIRES": "3543303",
         # Dias d'Ávila/BA - município do tomador da nota SETE CONNECT
         # (LAYOUT_NFCOM_SETE_CONNECT, nota nº 18770, achado real 2026-09-17).
         # Sem esta entrada caía no fallback silencioso de Salvador/BA.
