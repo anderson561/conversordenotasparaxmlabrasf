@@ -34,6 +34,7 @@ from . import fatura_locacao_equipamentos as _fat_loc
 from . import localiza_fatura as _localiza
 from . import danfe_produto_texto as _danfe_txt
 from . import ribeirao_pires_texto as _rp
+from . import natal_nfse as _natal
 from datetime import datetime
 import logging
 
@@ -163,6 +164,13 @@ LAYOUT_CAMPINAS  = 'campinas_sp'      # Campinas/SP - "NFSe Campinas" (Secretari
 # Pessoa/PB) -> NAUTICA INDUSTRIA E COMERCIO DE MOVEIS E SERVIÇOS - EIRELI
 # (Salvador/BA).
 LAYOUT_JOAO_PESSOA = 'joao_pessoa_pb'
+# Prefeitura Municipal do Natal/RN, "Nota Natalense" (NFS-e da Secretaria Municipal
+# de Finanças). Achado real 2026-11-19: nota nº 0000000015, PRISCILA FARIAS
+# CARVALHO VALIAS -> NAUTICA, R$ 20.857,95, PDF ESCANEADO (sem camada de texto,
+# OCR); sem layout próprio caía em LAYOUT_GENERICO e era descartada (nenhum XML).
+# Parsing completo em `natal_nfse.py` (`_parse_natal`); detecção estreita pelo
+# cabeçalho da prefeitura no topo (`natal_nfse.eh_natal`).
+LAYOUT_NATAL = 'natal_rn'
 LAYOUT_LAURO_FREITAS = 'lauro_de_freitas_ba' # Lauro de Freitas/BA
 LAYOUT_SULSEG_COBRANCA = 'sulseg_cobranca'  # SUL&SEG - Nota de Cobrança de Locação (não sujeita a ISS)
 LAYOUT_PASSWORD_ENOTAS = 'password_enotas'  # NFS-e eNotas Gateway (Lauro de Freitas/BA) - nome do layout mantido por retrocompatibilidade, mas cobre MÚLTIPLOS emitentes na mesma plataforma: PASSWORD Sistemas Eletronicos (CNPJ 04.021.023/0001-33) e INFOMIX Soluções em Tecnologia (CNPJ 29.869.622/0001-32) - cada um detectado pelo próprio CNPJ, nunca pela marca genérica "eNotas", para não colidir com futuros emitentes do mesmo provedor. Extração de entidades/valores é genérica o bastante para servir ambos sem ramos dedicados, exceto 2 diferenças pontuais na estrutura de texto (código do serviço com nº de dígitos variável após a barra; rótulos "NOME/RAZÃO SOCIAL"+"E-MAIL" do tomador podem vir despejados juntos antes dos 2 valores)
@@ -744,6 +752,10 @@ class SPPdfExtractor:
         _var_saubara = _saubara.variante(t)
         if _var_saubara:
             return LAYOUT_SAUBARA if _var_saubara == _saubara.VARIANTE_1 else LAYOUT_SAUBARA_2
+        # Natal/RN ("Nota Natalense"): cabeçalho da prefeitura no topo - ver
+        # `natal_nfse.eh_natal` e LAYOUT_NATAL.
+        if _natal.eh_natal(t):
+            return LAYOUT_NATAL
         # Impresso "NOTA DE LOCAÇÃO" (locação de bem móvel, não é NFS-e) logo
         # depois de Saubara e antes de qualquer fallback municipal/de cidade
         # solta: o texto cita "SIMOES FILHO"/"Município" do destinatário e o
@@ -1312,6 +1324,10 @@ class SPPdfExtractor:
         _var_saubara = _saubara.variante(t)
         if _var_saubara:
             return LAYOUT_SAUBARA if _var_saubara == _saubara.VARIANTE_1 else LAYOUT_SAUBARA_2
+        # Natal/RN ("Nota Natalense"): cabeçalho da prefeitura no topo - ver
+        # `natal_nfse.eh_natal` e LAYOUT_NATAL.
+        if _natal.eh_natal(t):
+            return LAYOUT_NATAL
         # Impresso "NOTA DE LOCAÇÃO" (locação de bem móvel, não é NFS-e) logo
         # depois de Saubara e antes de qualquer fallback municipal/de cidade
         # solta: o texto cita "SIMOES FILHO"/"Município" do destinatário e o
@@ -3130,6 +3146,55 @@ class SPPdfExtractor:
             valor_liquido_nfse=liquido,
             desconto_incondicionado=desc_inc,
             desconto_condicionado=desc_cond,
+        )
+
+    # ------------------------------------------------------------------
+    # LAYOUT_NATAL — "Nota Natalense" (ver natal_nfse.py)
+    # ------------------------------------------------------------------
+
+    def _parse_natal(self) -> Nfse:
+        """NFS-e da Prefeitura do Natal/RN. Campos lidos por
+        `natal_nfse.extrair`; aqui só o que depende do PDF: na página
+        escaneada, a linha de endereço do prestador é relida por recorte
+        (`natal_nfse.reler_linha_endereco`) e só substitui a leitura da página
+        quando difere apenas em espaços. Mantém as guardas gerais do `parse()`
+        (nota cancelada, município fora da tabela IBGE)."""
+        import os
+        texto = self.raw_text
+        if getattr(self, 'from_ocr', False) and self.pdf_path and os.path.exists(self.pdf_path):
+            linha = _natal.linha_endereco_prestador(texto)
+            if linha:
+                try:
+                    relida = _natal.reler_linha_endereco(self.pdf_path, (getattr(self, '_pagina_hint', None) or 1) - 1)
+                except Exception as e:  # OCR indisponível: segue com a leitura da página
+                    logger.warning("Natal: releitura do endereço do prestador falhou: %s", e)
+                    relida = None
+                texto = _natal.aplicar_releitura_endereco(texto, linha, relida)
+        nota = _natal.extrair(texto, _ibge_resolver, self._validate_cnpj_cpf)
+        avisos = list(nota.avisos)
+        if re.search(self.NOTA_CANCELADA_PATTERN, texto, re.IGNORECASE | re.MULTILINE):
+            avisos.append(
+                "Documento traz indicação de CANCELAMENTO/desistência do serviço - valores "
+                "extraídos normalmente da nota, mas confira se ela deve mesmo ser escriturada "
+                "antes de importar no sistema contábil")
+        for papel, ent in (('prestador', nota.prestador), ('tomador', nota.tomador)):
+            end = ent.endereco
+            aviso = _ibge_resolver.aviso_fallback_capital(end.municipio, end.uf, end.codigo_municipio, papel)
+            if aviso and aviso not in avisos:
+                avisos.append(aviso)
+        return Nfse(
+            numero=nota.numero,
+            codigo_verificacao=nota.codigo_verificacao,
+            data_emissao=nota.data_emissao,
+            competencia=nota.competencia,
+            prestador=nota.prestador,
+            tomador=nota.tomador,
+            discriminacao=nota.discriminacao,
+            servico_codigo=nota.codigo_servico,
+            valores=nota.valores,
+            optante_simples_nacional=nota.optante_simples,
+            regime_especial_tributacao=nota.regime_especial,
+            avisos=avisos,
         )
 
     def _nota_loc_campos(self) -> '_nota_loc.NotaLocacao':
@@ -26247,6 +26312,11 @@ class SPPdfExtractor:
             # de qualquer NFS-e - retorna um `NfeProduto`, não um `Nfse`. Ver
             # LAYOUT_DANFE_PRODUTO/`_parse_danfe_produto`.
             return self._parse_danfe_produto()
+
+        if self.layout == LAYOUT_NATAL:
+            # NFS-e de Natal/RN: parsing completo em `natal_nfse.py`, sem passar
+            # pelos `_extrair_*` genéricos - ver `_parse_natal`.
+            return self._parse_natal()
 
         if self.layout == LAYOUT_DACTE_OS:
             # CT-e OS (Modelo 67), estruturalmente distinto de qualquer NFS-e
