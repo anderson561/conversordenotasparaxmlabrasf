@@ -36,6 +36,7 @@ from . import danfe_produto_texto as _danfe_txt
 from . import ribeirao_pires_texto as _rp
 from . import natal_nfse as _natal
 from . import eldorado_do_sul_nfse as _eldorado
+from . import danfse_rotulos_imagem as _danfse_rot
 from datetime import datetime
 import logging
 
@@ -564,6 +565,131 @@ class SPPdfExtractor:
             if ord(c) > 0x024F and not (0x2000 <= ord(c) <= 0x20CF)
         )
         return estranhos / len(nao_brancos) > 0.10
+
+    # Rótulos da DANFSe v1.0 que TODA nota do padrão nacional imprime (mesmo
+    # com tomador/intermediário "NÃO IDENTIFICADO"). Nenhum deles aparecer
+    # na camada de texto = rótulos fora do texto (desenhados como curvas).
+    _DANFSE_ROTULOS_V1 = (
+        r'DANFSe', r'Documento\s+Auxiliar\s+da\s+NFS', r'Chave\s+de\s+Acesso\s+da\s+NFS',
+        r'N[uú]mero\s+da\s+NFS', r'Compet[eê]ncia\s+da\s+NFS', r'EMITENTE\s+DA\s+NFS',
+        r'Nome\s*/\s*Nome\s+Empresarial', r'Valor\s+do\s+Servi[cç]o',
+        r'Valor\s+L[ií]quido', r'TRIBUTA[ÇC][ÃA]O\s+MUNICIPAL',
+        # Rótulos "<campo> :" de outros modelos de NFS-e que também citam a
+        # chave nacional (achado na regressão: Salvador/BA "NOTA FISCAL SP
+        # EMPREENDIMENTO (AVENA)" tem "Endereço :", "Razão Social :" e a
+        # frase do portal nacional, mas NENHUM rótulo da DANFSe v1.0).
+        r'Raz[ãa]o\s+Social', r'Endere[çc]o\s*:', r'CNPJ\s*/\s*CPF\s*:',
+    )
+
+    @classmethod
+    def _danfse_texto_sem_rotulos(cls, texto: str) -> bool:
+        """DANFSe v1.0 DIGITAL cuja camada de texto traz SÓ os valores, sem
+        nenhum rótulo — os rótulos (em negrito) foram desenhados como curvas
+        pelo gerador do PDF e só existem na imagem.
+
+        Achado real 2026-11-19 (Nova pasta/05-Mai-2026_NF_48_RAIMUNDA.pdf,
+        DANFSe v1.0 emitida pela Prefeitura de São Paulo, RAIMUNDA REGIS
+        ALMEIDA DE SOUZA (MEI) -> NAUTICA, R$ 2.950,00): a nota caía no
+        LAYOUT_NACIONAL pelo fallback "chave de acesso" da frase do QR Code,
+        mas sem rótulo nenhum o parser lia ValorServicos 0,00, a razão social
+        do prestador E do tomador = o telefone, endereços "Não informado" e um
+        `<Intermediario>` lixo. Os rótulos estão visíveis na imagem, então o
+        OCR da página devolve o texto completo que o parser DANFSe já lê.
+
+        Critério GENÉRICO, pela estrutura do texto e não pelo emissor: marca
+        exclusiva da DANFSe nacional (frase do QR Code "portal nacional da
+        NFS-e" ou a chave de acesso de 50 dígitos sozinha na linha) E nenhum
+        dos rótulos fixos da v1.0 (`_DANFSE_ROTULOS_V1`). Uma DANFSe digital
+        normal tem todos eles; as outras patologias (texto colado sem
+        espaços, camada não latina) têm gates próprios."""
+        t = texto or ''
+        if len(t.strip()) < 200:
+            return False
+        marca = re.search(r'portal\s+nacional\s+da\s+NFS-?e', t, re.IGNORECASE) \
+            or re.search(r'^\s*\d{50}\s*$', t, re.MULTILINE)
+        if not marca:
+            return False
+        return not any(re.search(r, t, re.IGNORECASE) for r in cls._DANFSE_ROTULOS_V1)
+
+    # Linha de valores da grade "Endereço | Município | CEP" da DANFSe v1.0 em
+    # texto por linha: "<endereço> <Cidade> - <UF> [<CEP>]". O endereço vem em
+    # CAIXA ALTA e a cidade em Title Case: a cidade é a sequência final de
+    # palavras capitalizadas (ou conectivos "de/da/do/dos/das/e") antes do
+    # " - UF". CEP com 8 dígitos (pontuado ou não) ou 7 (zero à esquerda
+    # omitido pelo emissor).
+    _RE_DANFSE_V1_LINHA_ENDERECO = re.compile(
+        r'^(?P<end>.*?\S)\s+'
+        r'(?P<mun>[A-ZÀ-Ý][a-zà-ÿ\'’]+(?:\s+(?:[A-ZÀ-Ý][a-zà-ÿ\'’]+|d[aeo]s?|e))*)'
+        r'\s*[-–]\s*(?P<uf>[A-Z]{2})'
+        r'(?:\s+(?P<cep>\d{2}\.?\d{3}-?\d{3}|\d{7}))?\s*$')
+    # Rótulos que abrem a linha SEGUINTE à de valores do endereço (fim da
+    # quebra de linha do endereço longo).
+    _RE_DANFSE_V1_PROXIMA_SECAO = re.compile(
+        r'Simples\s+Nacional|Nome\s*/|SERVI[ÇC]O\s+PRESTADO|TOMADOR|INTERMEDI|EMITENTE|'
+        r'Regime|Inscri|CNPJ|Telefone|E-?mail', re.IGNORECASE)
+
+    def _danfse_v1_endereco_em_linha(self, bloco: str, end_data: dict, tipo: str) -> None:
+        """Endereço da DANFSe v1.0 em texto POR LINHA (rótulos "Endereço
+        Município CEP" numa linha, valores na seguinte).
+
+        O genérico procura "Endereço: <valor>" e, aqui, só encontrava o
+        rótulo vizinho "Município" logo depois — logradouro/número/bairro
+        ficavam "Não informado" e o CEP vazio, e um CEP de 7 dígitos ainda
+        derrubava o município (caía no fallback da capital). Achado real
+        2026-11-19 (NF 48 RAIMUNDA/São Paulo, texto montado por
+        `danfse_rotulos_imagem`); vale também para as DANFSe v1.0
+        escaneadas, que chegam no mesmo formato.
+
+        Formato nacional do endereço: "<logradouro>, <número>[,
+        <complemento>...], <bairro>". Só preenche o que ainda está no
+        sentinela — nunca sobrescreve um campo já extraído — e não adivinha:
+        sem número reconhecível, o endereço inteiro fica no logradouro.
+        CEP impresso com 7 dígitos é completado com o zero à esquerda (todo
+        CEP tem 8 dígitos; o emissor gravou-o como número) e gera aviso."""
+        m_rot = re.search(
+            r'Endere[çc]o\W{0,3}[ \t]+Munic[íi]pio\W{0,3}[ \t]+CEP[ \t]*\n[ \t]*([^\n]+)(?:\n[ \t]*([^\n]*))?',
+            bloco, re.IGNORECASE)
+        if not m_rot:
+            return
+        m = self._RE_DANFSE_V1_LINHA_ENDERECO.match(m_rot.group(1).strip())
+        if not m:
+            return
+        endereco = m.group('end').strip(' ,')
+        continuacao = (m_rot.group(2) or '').strip()
+        if continuacao and len(continuacao) <= 60 and not re.search(r'\d{5}', continuacao) \
+                and not self._RE_DANFSE_V1_PROXIMA_SECAO.search(continuacao):
+            endereco = f'{endereco} {continuacao}'
+        # Ruído solto do OCR nas pontas ("VILAS DO ATLANTICO =", achado na
+        # regressão, "nfs 03.11.pdf" pág. 3); ")" fica ("GUARAJUBA (MONTE GORDO)").
+        endereco = re.sub(r'(?:\s+[=|_~*:;.,\-—]+)+$', '', endereco).strip(' ,')
+
+        if end_data.get('municipio') in (None, '', 'Não informado'):
+            end_data['municipio'] = m.group('mun').strip()
+            end_data['uf'] = m.group('uf')
+
+        cep = re.sub(r'\D', '', m.group('cep') or '')
+        if cep and len(re.sub(r'\D', '', end_data.get('cep') or '').strip('0')) == 0:
+            if len(cep) == 7:
+                self.__dict__.setdefault('_danfse_v1_avisos', []).append(
+                    f"CEP do {tipo.lower()} impresso com 7 dígitos ({cep}) - completado com o "
+                    f"zero à esquerda ({cep.zfill(8)}); confira")
+                cep = cep.zfill(8)
+            end_data['cep'] = cep
+
+        # Logradouro sem letra nem dígito ("?" — ruído do OCR entre os
+        # rótulos "Endereço ? Município") conta como não extraído.
+        if end_data.get('logradouro') not in (None, '', 'Não informado') \
+                and re.search(r'\w', end_data['logradouro']):
+            return
+        segs = [s.strip() for s in endereco.split(',') if s.strip()]
+        if len(segs) >= 3 and re.fullmatch(r'\d+[A-Za-z]?|S/?N', segs[1], re.IGNORECASE):
+            end_data['logradouro'] = segs[0]
+            end_data['numero'] = 'S/N' if re.fullmatch(r'S/?N', segs[1], re.IGNORECASE) else segs[1]
+            end_data['bairro'] = segs[-1]
+            if len(segs) > 3:
+                end_data['complemento'] = ', '.join(segs[2:-1])
+        elif endereco:
+            end_data['logradouro'] = endereco
 
     def _reconstruir_texto_por_coordenadas(self) -> str:
         """Reconstrói o texto de uma página a partir da posição real de cada
@@ -4963,6 +5089,27 @@ class SPPdfExtractor:
             if disc:
                 return disc
 
+        if self.layout == LAYOUT_NACIONAL:
+            # DANFSe v1.0: "Descrição do Serviço" (célula de largura total) e o
+            # texto livre nas linhas seguintes, até a seção "TRIBUTAÇÃO
+            # MUNICIPAL". A v1.0 não tem rótulo "Discriminação", então o
+            # genérico abaixo caía sempre no texto padrão (achado real
+            # 2026-11-19, NF 48 RAIMUNDA/São Paulo: "SERVIÇO DE FRETE").
+            m_desc = re.search(
+                r'Descri[çc][ãa]o\s+do\s+Servi[çc]o[ \t.:]*\n(.*?)\n[ \t]*TRIBUTA[ÇC][ÃA]O\s+MUNICIPAL',
+                t, re.IGNORECASE | re.DOTALL)
+            if m_desc:
+                desc = re.sub(r'\s+', ' ', m_desc.group(1)).strip()
+                # Rótulo de outra célula no meio = texto embaralhado por
+                # coluna (OCR de scan): melhor o texto padrão que uma
+                # discriminação misturada (Várzea Grande nº 175).
+                vazou_rotulo = re.search(
+                    r'C[óo]digo\s+de\s+Tributa|Local\s+da\s+Presta|Pa[íi]s\s+da\s+Presta|'
+                    r'Valor\s+do\s+Servi|Munic[íi]pio|Telefone|Inscri[çc][ãa]o|\bCEP\b',
+                    desc, re.IGNORECASE)
+                if re.search(r'[A-Za-zÀ-ú]{3}', desc) and not vazou_rotulo:
+                    return desc
+
         # Label common to multiple layouts but very specific in its start/end in Rio
         def relax(p): return "".join([re.escape(c) + r"\s*" for c in p]) if p else p
         
@@ -6359,6 +6506,16 @@ class SPPdfExtractor:
 
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             return self._extrair_entidade_nacional_reforma(is_prestador, is_intermediario)
+
+        if self.layout == LAYOUT_NACIONAL and is_intermediario and re.search(
+                r'INTERMEDI[ÁA]RIO\s+DO\s+SERVI[ÇC]O\s+N[ÃA]O\s+IDENTIFICADO', t, re.IGNORECASE):
+            # DANFSe v1.0: a própria nota imprime a tarja "INTERMEDIÁRIO DO
+            # SERVIÇO NÃO IDENTIFICADO NA NFS-e" — não há intermediário. Sem
+            # isto o genérico casava a tarja e fabricava um `<Intermediario>`
+            # com CNPJ sentinela e razão "NÃO IDENTIFICADO NA NFS-e" (achado
+            # real 2026-11-19, NF 48 RAIMUNDA/São Paulo; o mesmo nascia nas
+            # DANFSe v1.0 escaneadas em linha).
+            return None
 
         if self.layout == LAYOUT_FEIRA_NFSE_NACIONAL:
             if is_intermediario:
@@ -9151,6 +9308,9 @@ class SPPdfExtractor:
                     # pare de ocupar o campo de outro componente.
                     end_data['complemento'] = ', '.join(resto) if resto else None
                     end_data['bairro'] = 'Não informado'
+
+        if self.layout == LAYOUT_NACIONAL:
+            self._danfse_v1_endereco_em_linha(bloco, end_data, tipo)
 
         if self.layout == LAYOUT_NACIONAL and (
                 not end_data.get('municipio') or end_data.get('municipio') in ('Não informado', '')):
@@ -26359,6 +26519,7 @@ class SPPdfExtractor:
         self._feira_nac_avisos: List[str] = []
         self._salvador_bc_aliq_iss_divergente = None
         self._reforma_avisos: List[str] = []
+        self._danfse_v1_avisos: List[str] = []
         self._barueri_avisos: List[str] = []
         self._localiza_avisos: List[str] = []
         self._saubara_cache = None
@@ -26850,6 +27011,8 @@ class SPPdfExtractor:
         municipio_incidencia_override = self._extrair_municipio_incidencia_override()
         if self._ribeirao_pires_campos() is not None:
             avisos.extend(a for a in self.__dict__.get('_rp_avisos', []) if a not in avisos)
+        if self.layout == LAYOUT_NACIONAL:
+            avisos.extend(a for a in self.__dict__.get('_danfse_v1_avisos', []) if a not in avisos)
         if self.layout == LAYOUT_NACIONAL_REFORMA:
             # Avisos levantados pela própria leitura da incidência (acima).
             avisos.extend(a for a in self.__dict__.get('_reforma_avisos', []) if a not in avisos)
@@ -29359,6 +29522,26 @@ class SPPdfExtractor:
             if not precisa_ocr and self._camada_texto_ilegivel(pages[idx]):
                 precisa_ocr = True
                 motivo = "camada de texto ilegível (OCR de terceiros em alfabeto não latino)"
+
+            # AUSÊNCIA DE RÓTULOS: DANFSe v1.0 digital cuja camada de texto
+            # traz só os VALORES (rótulos desenhados como curvas) — ver
+            # `_danfse_texto_sem_rotulos` (São Paulo, NF 48 RAIMUNDA). Os
+            # rótulos vêm do OCR e os valores continuam DIGITAIS, juntados
+            # pela posição na página (`danfse_rotulos_imagem`). A página não
+            # entra em `paginas_via_ocr`: nenhum valor dela vem do OCR. Se a
+            # mescla falhar (sem Tesseract etc.), cai no OCR puro da página.
+            # Só quando o texto já é roteado para a DANFSe v1.0: uma página
+            # que casa layout municipal próprio segue pelo caminho de antes.
+            if not precisa_ocr and self._danfse_texto_sem_rotulos(pages[idx]) \
+                    and self._detect_layout_page(pages[idx]) == LAYOUT_NACIONAL:
+                mesclado = _danfse_rot.ler_pagina(self.pdf_path, idx)
+                if mesclado and not self._danfse_texto_sem_rotulos(mesclado):
+                    print(f"[*] Página {idx + 1}: DANFSe sem rótulos na camada de texto — "
+                          "rótulos lidos da imagem, valores mantidos da camada digital.")
+                    pages[idx] = mesclado
+                else:
+                    precisa_ocr = True
+                    motivo = "DANFSe com camada de texto sem rótulos (só valores)"
 
             if precisa_ocr:
                 if eh_patologia_sem_espacos:
