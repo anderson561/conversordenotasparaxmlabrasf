@@ -218,6 +218,13 @@ class IBGEResolver:
         # (servicodados.ibge.gov.br/api/v1/localidades/municipios/3507605 ->
         # "Bragança Paulista", UF SP).
         "BRAGANCA PAULISTA": "3507605", "BRAGANÇA PAULISTA": "3507605",
+        # Eldorado do Sul/RS - sede do LAYOUT_ELDORADO_DO_SUL (NFS-e do portal
+        # nfseeldoradodosul.govbr.cloud; achado real 2026-11-19, nota
+        # 202600002955797, DELL COMPUTADORES DO BRASIL LTDA). Sem esta entrada
+        # caía no fallback da capital da UF (Porto Alegre, 4314902). Código
+        # 4306767 conferido na API oficial do IBGE (servicodados.ibge.gov.br/
+        # api/v1/localidades/municipios/4306767 -> "Eldorado do Sul", UF RS).
+        "ELDORADO DO SUL": "4306767",
     }
 
     def __init__(self, default_uf: str = "BA", default_code: str = "2927408"):
