@@ -39,20 +39,31 @@ RAZAO_POLUIDA = (
 LINHA_ENDERECO_LIDA = 'Rua Doutor Altino Teixeira 1660 - PORTO SECO PIRAJA - Salvador - CEP: 41233-010 - BA'
 
 
-@pytest.fixture
-def nfse(monkeypatch):
+# Leituras REAIS da célula da IM do prestador (`_ocr_recut_im_prestador_
+# salvador`, zoom 3/4/6/8 com variantes binarizadas), na ordem em que saíram.
+LEITURAS_IM = 'SSA_IM_PRESTADOR_LEITURAS: 00.646.776/001-57;00.646.775/001-57;00.646.775/001-57;00.646.776/001-67;00.646.776/001-57;00.646.776/001-57;00.646.776/001-57;00.646.775/001-57;00.646.776/001-67;00.646.776/001-67;00.646.776/001-67;00.646.776/001-57;00.646.775/001-57;00.648.776/001-57;00.646.776/001-57;00.646.776/001-57;00.648.776/001-57;00.646.776/001-57'
+MOCK_OCR_SEM_LEITURAS_IM = MOCK_OCR
+MOCK_OCR = MOCK_OCR.replace('SSA_DIGITO_5_LIDO_6\n', 'SSA_DIGITO_5_LIDO_6\n' + LEITURAS_IM + '\n')
+
+
+def _parse(monkeypatch, texto):
     dummy_path = "tests/dummy_salvador_metrofile_9925.pdf"
     with open(dummy_path, "wb") as f:
         f.write(b"%PDF-1.4")
     monkeypatch.setattr("src.extractors.pdf_extractor.extract_text", lambda path: "")
-    monkeypatch.setattr(SPPdfExtractor, "_extract_via_ocr", lambda self: MOCK_OCR)
+    monkeypatch.setattr(SPPdfExtractor, "_extract_via_ocr", lambda self: texto)
     try:
         notas = SPPdfExtractor(dummy_path).parse_multiple()
         assert len(notas) == 1
-        yield notas[0]
+        return notas[0]
     finally:
         if os.path.exists(dummy_path):
             os.remove(dummy_path)
+
+
+@pytest.fixture
+def nfse(monkeypatch):
+    return _parse(monkeypatch, MOCK_OCR)
 
 
 def test_cabecalho(nfse):
@@ -72,13 +83,40 @@ def test_prestador(nfse):
     assert e.codigo_municipio == "2927408"
 
 
-def test_prestador_im_sem_dv_vira_sentinela_com_aviso(nfse):
-    # IM impressa sem dígito verificador, lida num scan que troca 5 por 6:
-    # nunca um valor plausível porém possivelmente errado (antes "00646").
-    assert nfse.prestador.inscricao_municipal is None
-    assert any('Inscrição Municipal do prestador omitida' in a and '00.646.776/001-57' in a
-               for a in nfse.avisos)
+def test_prestador_im_por_maioria_das_leituras_com_aviso(nfse):
+    # Decisão do usuário (2026-11-24): formato NN.NNN.NNN/NNN-NN é o padrão
+    # de Salvador -> IM = leitura MAJORITÁRIA nesse formato (9 de 19: as 18
+    # do recorte + a da página inteira), nunca um valor fixo, com aviso.
+    assert nfse.prestador.inscricao_municipal == "0064677600157"
+    assert any('IM lida em scan com troca 5/6' in a and '00.646.776/001-57' in a
+               and 'maioria de 9 em 19 leituras' in a for a in nfse.avisos)
+    assert not any('Inscrição Municipal do prestador omitida' in a for a in nfse.avisos)
     assert any('CNPJ corrigido' in a for a in nfse.avisos)
+
+
+def test_prestador_im_sem_maioria_continua_omitida(monkeypatch):
+    # Só a leitura da página inteira (1 voto): sem maioria -> sentinela.
+    n = _parse(monkeypatch, MOCK_OCR_SEM_LEITURAS_IM)
+    assert n.prestador.inscricao_municipal is None
+    assert any('Inscrição Municipal do prestador omitida' in a and '00.646.776/001-57' in a
+               for a in n.avisos)
+
+
+def test_discriminacao_trecho_legivel_com_aviso(nfse):
+    # Rótulo da caixa e 1ª linha ilegíveis: grava o trecho legível como lido.
+    assert nfse.discriminacao == "Numero de memorial de servico 2623581 vencimento 10/08/2026"
+    assert any('1ª linha ilegível' in a for a in nfse.avisos)
+
+
+def test_tomador_bairro_guarajuba_monte_gordo(nfse):
+    # Monte Gordo é distrito de Camaçari; mesma forma da pág. 8 (Camaçari).
+    assert nfse.tomador.endereco.bairro == "GUARAJUBA (MONTE GORDO)"
+    assert 'MONTE GORDO' not in (nfse.tomador.endereco.complemento or '')
+
+
+def test_cnae_e_iss_mantidos(nfse):
+    assert nfse.codigo_cnae is None  # transformer emite 0000000
+    assert nfse.valores.valor_iss == 25.74 and nfse.valores.base_calculo == 514.82
 
 
 def test_tomador(nfse):

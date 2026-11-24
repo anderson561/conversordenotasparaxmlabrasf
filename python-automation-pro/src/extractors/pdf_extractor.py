@@ -21397,6 +21397,11 @@ class SPPdfExtractor:
                     if 'SSA_DIGITO_5_LIDO_6' in best_text:
                         best_text = self._corrigir_endereco_prestador_5_lido_6_salvador(
                             page, best_text, best_text_ocr_original)
+                        # IM do prestador (sem DV): leituras da célula para a
+                        # escolha por maioria em `_ssa_campos_5_lido_6`.
+                        leituras_im = self._ocr_recut_im_prestador_salvador(page)
+                        if leituras_im:
+                            best_text = f"{best_text}\nSSA_IM_PRESTADOR_LEITURAS: {';'.join(leituras_im)}"
 
                     # Célula da "Base de Cálculo" (grade de 5 valores) some por
                     # completo da leitura de página inteira mesmo quando o
@@ -24130,6 +24135,123 @@ class SPPdfExtractor:
             return best_text.replace(linha, corrigida) if corrigida else best_text
         except Exception:
             return best_text
+
+    _SSA_IM_FORMATO = r'\d{2}\.\d{3}\.\d{3}/\d{3}-\d{2}'
+
+    def _ocr_recut_im_prestador_salvador(self, page) -> List[str]:
+        """Leituras da célula "Inscrição Municipal" do PRESTADOR (abaixo do
+        1º rótulo "Inscrição", na altura do 1º CNPJ lido) em zoom 3/4/6/8,
+        PSM 7, com as variantes binarizadas de `_ocr_clip_leituras`. Devolve
+        só as leituras no formato impresso da IM Salvador
+        ("NN.NNN.NNN/NNN-NN"), na ordem em que saíram — a escolha (maioria)
+        fica com `_ssa_campos_5_lido_6`. Usado só na página com o marcador
+        `SSA_DIGITO_5_LIDO_6` (achado real 2026-11-24, nota nº 00009925)."""
+        try:
+            import pymupdf
+            data = self._palavras_pagina_salvador(page)
+            if not data:
+                return []
+            z = self._SSA_ZOOM_PALAVRAS
+            textos = [(t or '').strip() for t in data['text']]
+            i_lab = next((i for i, t in enumerate(textos) if re.match(r'Inscri', t)), None)
+            if i_lab is None:
+                return []
+            i_cn = next((i for i in range(i_lab + 1, len(textos))
+                         if re.match(r'\d{2}\.\d{3}\.\d{3}/\d{4}', textos[i])), None)
+            if i_cn is None:
+                return []
+            x0 = data['left'][i_lab] - 10
+            topo, alt = data['top'][i_cn], data['height'][i_cn]
+            clip = pymupdf.Rect(x0 / z, (topo - alt * 0.4) / z, (x0 + 300) / z, (topo + alt * 1.4) / z)
+            leituras = self._ocr_clip_leituras(
+                page, clip, [(3.0, 7), (4.0, 7), (6.0, 7), (8.0, 7)], '0123456789./-', binarizar=True)
+            normal = [re.sub(r'\s', '', l).rstrip('.') for l in leituras]
+            return [l for l in normal if re.fullmatch(self._SSA_IM_FORMATO, l)]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _ssa_discriminacao_legivel(texto: str) -> str:
+        """Trecho legível da discriminação logo antes de "VALOR TOTAL DA
+        NOTA" quando o rótulo da caixa e a 1ª linha saem ilegíveis: sobe
+        linha a linha enquanto a linha tem um número (2+ dígitos) e uma
+        palavra de 4+ letras; entre as cópias da caixa no texto (página
+        inteira e recortes), fica a de mais letras em palavras de 3+ letras
+        (a que menos perdeu para o OCR). Achado real 2026-11-24, nota nº
+        00009925 (GUARAJUBA MALLS pág. 4): "Numero de memorial de servico
+        2623581 / vencimento 10/08/2026"."""
+        candidatos = []
+        for m in re.finditer(r'VALOR\s+TOTAL\s+DA\s+NOTA', texto):
+            linhas = [ln.strip() for ln in texto[:m.start()].split('\n') if ln.strip()]
+            pegas = []
+            for ln in reversed(linhas):
+                if not (re.search(r'\d{2}', ln) and re.search(r'[A-Za-zÀ-ú]{4}', ln)):
+                    break
+                pegas.insert(0, ln)
+            if pegas:
+                candidatos.append(' '.join(pegas))
+        if not candidatos:
+            return ''
+        return max(candidatos, key=lambda c: sum(len(w) for w in re.findall(r'[A-Za-zÀ-ú]{3,}', c)))
+
+    def _ssa_campos_5_lido_6(self, discriminacao: str, prestador, tomador, avisos: List[str]) -> str:
+        """Campos da página Salvador com o marcador `SSA_DIGITO_5_LIDO_6`
+        (decisões do usuário 2026-11-24, nota nº 00009925/GUARAJUBA MALLS
+        pág. 4). Devolve a discriminação (eventualmente trocada).
+
+        - IM do prestador: maioria entre as leituras no formato Salvador
+          (`SSA_IM_PRESTADOR_LEITURAS` + a da página inteira), com aviso
+          para conferir; sem maioria (2+ votos, sem empate), omitida.
+        - Discriminação no texto padrão: trecho legível antes de "VALOR
+          TOTAL DA NOTA" (`_ssa_discriminacao_legivel`) + aviso.
+        - Bairro do tomador "Não informado": "PALAVRA (DISTRITO)" impresso
+          logo antes de " - Município - CEP" na linha do logradouro."""
+        from collections import Counter
+        t = self.raw_text or ''
+        avisos.append(
+            "Scan lê o dígito \"5\" como \"6\": CNPJ corrigido para o único valor com "
+            "\"6\"->\"5\" que fecha o dígito verificador - conferir na nota")
+        if prestador and prestador.inscricao_municipal:
+            leituras = []
+            m_l = re.search(r'^SSA_IM_PRESTADOR_LEITURAS:\s*(.*)$', t, re.MULTILINE)
+            if m_l:
+                leituras = [l for l in m_l.group(1).split(';') if re.fullmatch(self._SSA_IM_FORMATO, l)]
+            m_im_ssa = re.search(r'\b\d{2}\.\d{3}\.\s?\d{3}/\d{3}-\d{2}\b', t)
+            if m_im_ssa:
+                leituras.append(m_im_ssa.group(0).replace(' ', ''))
+            ranking = Counter(leituras).most_common(2)
+            if ranking and ranking[0][1] >= 2 and (len(ranking) == 1 or ranking[0][1] > ranking[1][1]):
+                im, votos = ranking[0]
+                prestador.inscricao_municipal = re.sub(r'\D', '', im)
+                avisos.append(
+                    f"IM lida em scan com troca 5/6 — conferir: \"{im}\" (maioria de {votos} "
+                    f"em {len(leituras)} leituras)")
+            else:
+                im_lida = leituras[-1] if leituras else prestador.inscricao_municipal
+                avisos.append(
+                    f"Inscrição Municipal do prestador omitida: lida \"{im_lida}\" "
+                    "num scan que troca \"5\" por \"6\" e sem dígito verificador para conferir - "
+                    "informar a IM impressa na nota")
+                prestador.inscricao_municipal = None
+        if discriminacao == "Serviços prestados conforme nota fiscal.":
+            legivel = self._ssa_discriminacao_legivel(t)
+            if legivel:
+                discriminacao = legivel
+                avisos.append(
+                    "Discriminação: 1ª linha ilegível no scan - gravado só o trecho legível "
+                    f"(\"{legivel}\"); conferir na nota")
+        if tomador and tomador.endereco and tomador.endereco.bairro in ('', 'Não informado'):
+            logr = (tomador.endereco.logradouro or '').strip()
+            for ln in t.split('\n'):
+                if logr and logr in ln:
+                    m_b = re.search(r'\b([A-ZÀ-Ú]{3,} \([A-ZÀ-Ú][A-ZÀ-Ú ]+\))\s*-\s*[^\n-]+-\s*CEP', ln)
+                    if m_b:
+                        tomador.endereco.bairro = m_b.group(1)
+                        comp = tomador.endereco.complemento or ''
+                        if m_b.group(1) in comp:
+                            tomador.endereco.complemento = comp.replace(m_b.group(1), '').strip(' ,-') or None
+                        break
+        return discriminacao
 
     @staticmethod
     def _so_5_lido_6(certo: str, lido: str) -> bool:
@@ -27267,24 +27389,10 @@ class SPPdfExtractor:
         if tomador and (tomador.cnpj_cpf.startswith('00000000000') or tomador.cnpj_cpf == '' or tomador.razao_social == 'Tomador Não Identificado'):
             avisos.append("Dados do tomador não identificados")
         if self.layout == LAYOUT_SALVADOR and 'SSA_DIGITO_5_LIDO_6' in (self.raw_text or ''):
-            # Ver `_cnpj_salvador_5_lido_6` (achado real 2026-11-24, nota nº
-            # 00009925/METROFILE). A Inscrição Municipal não tem dígito
-            # verificador: lida neste mesmo scan, um "5" impresso pode ter
-            # virado "6" sem nada que o denuncie — sentinela (sem IM) + aviso
-            # em vez de um valor plausível porém possivelmente errado.
-            avisos.append(
-                "Scan lê o dígito \"5\" como \"6\": CNPJ corrigido para o único valor com "
-                "\"6\"->\"5\" que fecha o dígito verificador - conferir na nota")
-            if prestador and prestador.inscricao_municipal:
-                # Formato impresso da IM Salvador ("NN.NNN.NNN/NNN-NN"), só
-                # para mostrar a leitura inteira no aviso.
-                m_im_ssa = re.search(r'\b\d{2}\.\d{3}\.\s?\d{3}/\d{3}-\d{2}\b', self.raw_text)
-                im_lida = m_im_ssa.group(0).replace(' ', '') if m_im_ssa else prestador.inscricao_municipal
-                avisos.append(
-                    f"Inscrição Municipal do prestador omitida: lida \"{im_lida}\" "
-                    "num scan que troca \"5\" por \"6\" e sem dígito verificador para conferir - "
-                    "informar a IM impressa na nota")
-                prestador.inscricao_municipal = None
+            # Ver `_cnpj_salvador_5_lido_6` e `_ssa_campos_5_lido_6` (achado
+            # real 2026-11-24, nota nº 00009925/METROFILE): IM por maioria
+            # com aviso, trecho legível da discriminação, bairro do tomador.
+            discriminacao = self._ssa_campos_5_lido_6(discriminacao, prestador, tomador, avisos)
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
         if self.layout in _LAYOUTS_SAUBARA:
