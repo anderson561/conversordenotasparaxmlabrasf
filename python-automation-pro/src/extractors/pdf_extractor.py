@@ -9525,8 +9525,14 @@ class SPPdfExtractor:
     _RE_FIM_ITENS_TELECOM = re.compile(
         r'V\w{0,3}LOR\s*TOTAL\s*N[FE]|TOTAL\s+BASE\s+DE\s+C[ÁA]LCULO|RESERVADO\s*AO\s*FISCO'
         r'|INFORMA[ÇC][ÃA]O\s+DOS\s+TRIBUTOS|INFORMA[ÇC][ÕO]ES\s+C'
-        r'|TOTAL\s+A\s+PAGAR|VENCIMENTO',
+        r'|TOTAL\s+A\s+PAGAR|VENCIMENTO|FIM\s+DO\s+RECORTE\s+DA\s+DESCRI',
         re.IGNORECASE)
+    # Bloco sintético devolvido por `_ocr_recut_descricao_itens_telecom`.
+    _CAB_RECORTE_DESCRICAO_TELECOM = 'ITENS DA FATURA (recorte da coluna de descrição)'
+    _FIM_RECORTE_DESCRICAO_TELECOM = 'FIM DO RECORTE DA DESCRIÇÃO DOS ITENS'
+    # Item cuja 1ª palavra o OCR comeu, sobrando 1-2 letras antes do "de"
+    # ("ia de Telecomunicacoes Top", "E de Telecomunicacoes Top").
+    _RE_ITEM_TRUNCADO_TELECOM = re.compile(r'^[A-Za-zÀ-ú]{1,2}\s+de\s')
     # Onde a coluna "descrição" acaba e as demais (cClass, UN, quantidade,
     # valores) começam: coluna "|", código cClass de 6-8 dígitos, "UN" ou
     # o 1º valor monetário.
@@ -9574,6 +9580,16 @@ class SPPdfExtractor:
             if itens:
                 return ' | '.join(itens[:15])
         return ''
+
+    @classmethod
+    def _descricao_itens_telecom_truncada(cls, t: str) -> bool:
+        """True quando algum item da discriminação que seria usada (1ª cópia
+        legível da tabela) começa com a 1ª palavra comida pelo OCR - 1 a 2
+        letras soltas antes de "de" (achado real, Grupo FeF nº 26097/32934:
+        "ia de Telecomunicacoes Top" / "E de Telecomunicacoes Top", impresso
+        "Servico de Telecomunicacoes Top Full")."""
+        disc = cls._discriminacao_telecom(t)
+        return any(cls._RE_ITEM_TRUNCADO_TELECOM.match(item) for item in disc.split(' | ') if item)
 
     @staticmethod
     def _cabecalhos_emitente_telecom(t: str) -> List[str]:
@@ -9799,6 +9815,13 @@ class SPPdfExtractor:
             linhas_antes = [l.strip() for l in bloco_antes.split('\n') if l.strip()]
             if linhas_antes:
                 for l in reversed(linhas_antes):
+                    # QR Code lido como "[m]" colado no FIM da linha do nome,
+                    # com 1-3 caracteres de ruído antes (achado real, Grupo
+                    # FeF nº 32934, pág. 13 do "GUARAJUBA MALLS - NFSe":
+                    # "Guarajuba Shopping Ltda 1: [m]" - o "1" derrubava a
+                    # linha na guarda de dígitos abaixo e o nome saía a URL
+                    # de consulta da NFCom, mais acima).
+                    l = re.sub(r'\s+\S{0,3}\s*\[\w{1,2}\]\s*$', '', l)
                     # Linha fundida pelo OCR de 2 colunas: o nome do tomador
                     # sai colado NA MESMA linha do cabeçalho "NOTA FISCAL
                     # Nº <número> - SÉRIE" (achado real, nota Grupo FeF
@@ -20046,7 +20069,13 @@ class SPPdfExtractor:
                 # mesmo total aparece também na grade de itens, no campo
                 # "VALOR TOTAL NF" (ex.: "VALOR TOTAL NF 11990" -> R$119,90),
                 # sempre presente nessa grade independente da caixa de cima.
-                m_total = re.search(r'VALOR\s+TOTAL\s+NF\s*[:\s]*([\d\.,]+)', t, re.IGNORECASE)
+                # "|" entre rótulo e valor aceito: a borda da célula sai como
+                # barra no OCR ("VALOR TOTAL NF | 119,90]") - achado real,
+                # Grupo FeF nº 26097/32934 (págs. 6 e 13 do "GUARAJUBA MALLS
+                # - NFSe"); sem isso o valor caía na soma das linhas de item
+                # abaixo, com a vírgula perdida ("UN 2398 3,36" ->
+                # 2398 x 3,36 = R$8.057,28; "UN 1 23988" -> 2 x R$23.988,00).
+                m_total = re.search(r'VALOR\s+TOTAL\s+NF\s*[:|\s]*([\d\.,]+)', t, re.IGNORECASE)
             if m_total:
                 bruto = m_total.group(1)
                 if '.' not in bruto and ',' not in bruto and len(bruto) > 2:
@@ -21897,6 +21926,33 @@ class SPPdfExtractor:
                         recut_ident = self._ocr_recut_identificacao_telecom(page)
                         if re.search(r'NOTA\s+FISCAL\s+N[ºo°]', recut_ident, re.IGNORECASE):
                             best_text = f"{recut_ident}\n{best_text}"
+                    # Mesmo recorte quando o número foi lido mas a CHAVE de
+                    # acesso não aparece válida em lugar nenhum (achado real,
+                    # Grupo FeF nº 26097, pág. 6 do "GUARAJUBA MALLS - NFSe":
+                    # "CHAVE DE ACESSO:" seguido de linha vazia nas 2 leituras
+                    # de página inteira, CodigoVerificacao caía no sentinela
+                    # "TELECOM"). Só é prependado se o recorte trouxer uma
+                    # chave que fecha o DV mod-11 — notas que já têm chave
+                    # legível nem disparam o recorte.
+                    elif not self._localizar_chave_nfcom(best_text):
+                        recut_ident = self._ocr_recut_identificacao_telecom(page)
+                        achada = self._localizar_chave_nfcom(recut_ident)
+                        if achada and achada[1]:
+                            best_text = f"{recut_ident}\n{best_text}"
+
+                    # Descrição dos itens com a 1ª palavra comida pelo OCR
+                    # ("ia de Telecomunicacoes Top" / "E de Telecomunicacoes
+                    # Top" no lugar de "Servico de Telecomunicacoes Top" -
+                    # achado real, Grupo FeF nº 26097 e 32934, págs. 6 e 13 do
+                    # "GUARAJUBA MALLS - NFSe"). Re-OCR só da coluna de
+                    # descrição, entre o cabeçalho "ITENS DA FATURA" e o
+                    # rótulo "VALOR TOTAL NF" (ver
+                    # `_ocr_recut_descricao_itens_telecom`), prependado como
+                    # bloco sintético que `_discriminacao_telecom` lê primeiro.
+                    if self._descricao_itens_telecom_truncada(best_text):
+                        bloco_desc = self._ocr_recut_descricao_itens_telecom(page)
+                        if bloco_desc:
+                            best_text = f"{bloco_desc}\n{best_text}"
 
                 # NFCom da Rlgr Telefonia (`nfcom_rlgr`): o template imprime 2
                 # blocos lado a lado no cabeçalho (esquerda: NOME/CPF-CNPJ/
@@ -22316,6 +22372,67 @@ class SPPdfExtractor:
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             return pytesseract.image_to_string(img, lang='por')
         except Exception:
+            return ""
+
+    @classmethod
+    def _ocr_recut_descricao_itens_telecom(cls, page) -> str:
+        """Re-OCR só da COLUNA DE DESCRIÇÃO da tabela "ITENS DA FATURA" da
+        NFCom `telecom_comunicacao`, devolvido como bloco sintético
+        ("ITENS DA FATURA (recorte...)" / itens / "FIM DO RECORTE...") ou `''`.
+
+        Achado real, Grupo FeF nº 26097 e 32934 (págs. 6 e 13 do "GUARAJUBA
+        MALLS - NFSe"): na leitura de página inteira (3x e 6x) a linha
+        "Servico de Telecomunicacoes Top" perde a 1ª palavra ("ia de ...",
+        "E de ...") - lida junto com as colunas numéricas da grade. Isolada a
+        coluna de descrição (0-24% da largura), a mesma linha sai inteira.
+        A faixa vertical da tabela muda de nota para nota (o scan desloca),
+        então ela é localizada no próprio recorte largo (30%-56% da altura)
+        pelas palavras "ITENS" (cabeçalho) e "VALOR TOTAL" (rodapé); sem as
+        duas âncoras, não há bloco."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+
+            r = page.rect
+            clip = pymupdf.Rect(
+                r.x0, r.y0 + r.height * 0.30,
+                r.x0 + r.width * 0.24, r.y0 + r.height * 0.56,
+            )
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(4.0, 4.0), clip=clip)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            dados = pytesseract.image_to_data(
+                img, lang='por', config='--psm 6', output_type=pytesseract.Output.DICT)
+            palavras = [
+                (re.sub(r'[^A-Za-zÀ-ú]', '', w).upper(), dados['top'][i], dados['height'][i])
+                for i, w in enumerate(dados['text']) if w.strip()
+            ]
+            y_ini = y_fim = None
+            for i, (w, topo, alt) in enumerate(palavras):
+                if y_ini is None and w == 'ITENS':
+                    y_ini = topo + alt
+                elif (y_ini is not None and w == 'VALOR' and topo > y_ini
+                        and i + 1 < len(palavras) and palavras[i + 1][0] == 'TOTAL'):
+                    y_fim = topo
+                    break
+            if y_ini is None or y_fim is None or y_fim - y_ini < 40:
+                return ""
+            faixa = img.crop((0, y_ini + 8, img.size[0], y_fim - 8))
+            texto = pytesseract.image_to_string(faixa, lang='por', config='--psm 6')
+            # Aspas/pontos soltos que a borda da célula deixa nas pontas
+            # ("'FeF ULTRA 120 MEGA", "“Servico de Telecomunicacoes Top.").
+            linhas = [re.sub(r'^\W+|\W+$', '', ln) for ln in texto.split('\n')]
+            texto = '\n'.join(ln for ln in linhas if ln)
+            bloco = (f"{cls._CAB_RECORTE_DESCRICAO_TELECOM}\n{texto}\n"
+                     f"{cls._FIM_RECORTE_DESCRICAO_TELECOM}")
+            # Só serve se o recorte trouxer item legível e ele mesmo não vier
+            # com a 1ª palavra comida.
+            if not cls._discriminacao_telecom(bloco) or cls._descricao_itens_telecom_truncada(bloco):
+                return ""
+            return bloco
+        except Exception as e:  # noqa: BLE001
+            logger.debug("recorte da descrição dos itens (telecom) falhou: %s", e)
             return ""
 
     @staticmethod
