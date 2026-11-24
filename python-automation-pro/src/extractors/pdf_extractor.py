@@ -19238,6 +19238,18 @@ class SPPdfExtractor:
                         if m_base_recut:
                             base = self._parse_valor(m_base_recut.group(1))
 
+                # Achado real 2026-11-24 (nota nº 00009925/METROFILE): scan
+                # que comprovadamente lê "5" como "6" (marcador gravado em
+                # `_ocr_page` quando um CNPJ só fecha o DV trocando 6->5) leu
+                # a Base "614,82" contra "VALOR TOTAL DA NOTA = R$514,82".
+                # Sem deduções, Base = Serviços; quando a ÚNICA diferença
+                # entre as duas leituras é "5" no total contra "6" na base,
+                # vale o total — antes de conferir Alíquota × ISS, que com a
+                # base errada nunca fecha.
+                if ('SSA_DIGITO_5_LIDO_6' in t and not deducoes and base and val_serv
+                        and self._so_5_lido_6(f'{val_serv:.2f}', f'{base:.2f}')):
+                    base = val_serv
+
                 # Achado real 2026-10-26 (nota nº 00002278): a grade foi lida
                 # ("6,00%" / "8,60"), mas Base × Alíquota não fecha com o ISS
                 # e 6% passa do teto legal (LC 116/2003 art. 8º, II) — o scan
@@ -21272,14 +21284,16 @@ class SPPdfExtractor:
                             # PRESTADOR) e caía no 2º (o do TOMADOR, cuja
                             # grafia sobrevive melhor), emendando a razão do
                             # prestador no bloco ERRADO.
-                            m_endereco1 = re.search(r'Ender\w{0,3}[çc]o', best_text, re.IGNORECASE)
-                            if m_endereco1:
-                                pos = m_endereco1.start()
-                                best_text = (
-                                    best_text[:pos]
-                                    + f"Nome/Razão Social\n{prestador_razao}\n"
-                                    + best_text[pos:]
-                                )
+                            # Substituir o trecho poluído (em vez de emendar)
+                            # só na página que comprovadamente lê "5" como
+                            # "6" (algum CNPJ só fecha o DV trocando 6->5) —
+                            # achado real 2026-11-24, nota nº 00009925; as
+                            # demais notas seguem com a emenda de sempre.
+                            _cands_ssa = re.findall(
+                                r'\d{2}\.\d{3}\.\d{3}[ \t]*/[ \t]*\d{4}[ \t]*-[ \t]*\d{2}', best_text_ocr_original)
+                            _tem_5_lido_6 = any(self._cnpj_salvador_5_lido_6(c) for c in _cands_ssa)
+                            best_text = self._emendar_razao_prestador_salvador(
+                                best_text, prestador_razao, substituir=_tem_5_lido_6)
 
                     if not cnpj_tom_ok:
                         tomador_text = self._ocr_tomador_salvador(page, best_angle)
@@ -21330,6 +21344,20 @@ class SPPdfExtractor:
                             corrigido = self._ocr_recut_cnpj_invalido_salvador(page, idx, best_angle)
                             if corrigido:
                                 best_text = best_text.replace(original, corrigido, 1)
+                                continue
+                            # Achado real 2026-11-24 (nota nº 00009925,
+                            # METROFILE -> GUARAJUBA MALLS S/A): o scan fecha
+                            # a barriga do "5" e TODA leitura (página
+                            # inteira e o recorte acima, em qualquer zoom)
+                            # devolve "6" — ver `_cnpj_salvador_5_lido_6`.
+                            # O marcador (sem dígitos, para nenhum
+                            # "scavenge" de CNPJ o confundir com documento)
+                            # gera o aviso e a releitura do nº do endereço.
+                            corrigido = self._cnpj_salvador_5_lido_6(original)
+                            if corrigido:
+                                best_text = best_text.replace(original, corrigido)
+                                if 'SSA_DIGITO_5_LIDO_6' not in best_text:
+                                    best_text = f"{best_text}\nSSA_DIGITO_5_LIDO_6"
 
                     # CPF/CNPJ do prestador ilegível A PONTO DE NEM FORMAR o
                     # padrão de CNPJ (falha distinta da acima — lá o candidato
@@ -21359,6 +21387,16 @@ class SPPdfExtractor:
                     prestador_cnpj = self._ocr_recut_prestador_cnpj_salvador(page)
                     if prestador_cnpj:
                         best_text = f"CPF/CNPJ:\n{prestador_cnpj}\n\n{best_text}"
+
+                    # Scan que comprovadamente lê "5" como "6" (CNPJ só fechou
+                    # o DV trocando 6->5, acima): a linha de endereço do
+                    # prestador relida isolada (PSM 7) lê o número certo
+                    # (achado real 2026-11-24, nota nº 00009925/METROFILE:
+                    # "Teixeira 1660" na página inteira, "1650" impresso e
+                    # lido assim em todo zoom da linha isolada).
+                    if 'SSA_DIGITO_5_LIDO_6' in best_text:
+                        best_text = self._corrigir_endereco_prestador_5_lido_6_salvador(
+                            page, best_text, best_text_ocr_original)
 
                     # Célula da "Base de Cálculo" (grade de 5 valores) some por
                     # completo da leitura de página inteira mesmo quando o
@@ -23995,6 +24033,134 @@ class SPPdfExtractor:
         except Exception:
             return None
 
+    @staticmethod
+    def _emendar_razao_prestador_salvador(texto: str, razao: str, substituir: bool = True) -> str:
+        """Emenda a razão social do prestador recortada (`_ocr_recut_
+        prestador_razao_salvador`) logo antes do 1º "Endereço" do texto (o
+        do PRESTADOR; tolera a vogal trocada "Endera�o", achado da nota nº
+        00000061/MCLA).
+
+        A linha da razão pode NÃO ter sumido — só vir com o logotipo do
+        prestador colado à direita (achado real 2026-11-24, nota nº
+        00009925: "METROFILE ... LTDA. Neto\\neres", o "Metrofile" do logo).
+        Emendar um 2º rótulo aí somava as duas versões na razão social;
+        quando a leitura existente (após o último "Nome/Razão Social" antes
+        do endereço) COMEÇA pela razão recortada, a razão recortada
+        SUBSTITUI o trecho poluído. Com `substituir=False` (o chamador só
+        liga a substituição na página com evidência de "5" lido "6"), é
+        sempre a emenda original."""
+        m_endereco1 = re.search(r'Ender\w{0,3}[çc]o', texto, re.IGNORECASE)
+        if not m_endereco1:
+            return texto
+        pos = m_endereco1.start()
+        m_rot = None
+        for m_rot in re.finditer(r'Nome\s*/\s*Raz\S*\s+Social\S*', texto[:pos]):
+            pass
+        if substituir and m_rot and ' '.join(texto[m_rot.end():pos].split()).startswith(' '.join(razao.split())):
+            return texto[:m_rot.end()] + f"\n{razao}\n" + texto[pos:]
+        return texto[:pos] + f"Nome/Razão Social\n{razao}\n" + texto[pos:]
+
+    @classmethod
+    def _aplicar_releitura_5_lido_6(cls, linha: str, releitura: str) -> Optional[str]:
+        """Números da `linha` original corrigidos pela `releitura` da mesma
+        linha — só quando os números das duas batem um a um e cada
+        divergência é "5" (releitura) contra "6" (original). Qualquer outra
+        divergência (ou nenhuma) -> `None`."""
+        nums_o = re.findall(r'\d+', linha)
+        nums_r = re.findall(r'\d+', releitura)
+        if len(nums_o) != len(nums_r) or nums_o == nums_r:
+            return None
+        if not all(o == r or cls._so_5_lido_6(r, o) for o, r in zip(nums_o, nums_r)):
+            return None
+        it = iter(nums_r)
+        return re.sub(r'\d+', lambda m: next(it), linha)
+
+    def _corrigir_endereco_prestador_5_lido_6_salvador(self, page, best_text: str,
+                                                       texto_original: str) -> str:
+        """Relê (PSM 7, zooms 3/4/6/8, por maioria) a linha de endereço do
+        PRESTADOR — a 1ª linha com "CEP" depois do 1º "Endereço" da leitura
+        de página inteira — e aplica `_aplicar_releitura_5_lido_6`. Sem
+        maioria ou sem a linha, devolve `best_text` intacto."""
+        try:
+            import pymupdf
+            import pytesseract
+            from PIL import Image
+            import io
+            from collections import Counter
+
+            m_end = re.search(r'Ender\w{0,3}[çc]o', texto_original, re.IGNORECASE)
+            if not m_end:
+                return best_text
+            linha = next((ln for ln in texto_original[m_end.end():].split('\n') if 'CEP' in ln), None)
+            if not linha or linha not in best_text:
+                return best_text
+            data = self._palavras_pagina_salvador(page)
+            if not data:
+                return best_text
+            z = self._SSA_ZOOM_PALAVRAS
+            textos = [(t or '').strip() for t in data['text']]
+            i_rot = next((i for i, t in enumerate(textos) if re.match(r'Ender\w{0,3}[çc]o', t, re.IGNORECASE)), None)
+            if i_rot is None:
+                return best_text
+            i_cep = next((i for i in range(i_rot + 1, len(textos)) if textos[i].startswith('CEP')), None)
+            if i_cep is None:
+                return best_text
+            chave = (data['block_num'][i_cep], data['par_num'][i_cep], data['line_num'][i_cep])
+            idxs = [i for i in range(len(textos)) if textos[i] and
+                    (data['block_num'][i], data['par_num'][i], data['line_num'][i]) == chave]
+            x0 = min(data['left'][i] for i in idxs) - 8
+            x1 = max(data['left'][i] + data['width'][i] for i in idxs) + 8
+            alturas = sorted(data['height'][i] for i in idxs)
+            alt = alturas[len(alturas) // 2]
+            y_meio = sorted(data['top'][i] + data['height'][i] / 2 for i in idxs)[len(idxs) // 2]
+            clip = pymupdf.Rect(x0 / z, (y_meio - alt) / z, x1 / z, (y_meio + alt) / z)
+            votos = Counter()
+            for zoom in (3.0, 4.0, 6.0, 8.0):
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=clip)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                nums = tuple(re.findall(r'\d+', pytesseract.image_to_string(img, lang='por', config='--psm 7')))
+                if nums:
+                    votos[nums] += 1
+            if not votos:
+                return best_text
+            nums, n = votos.most_common(1)[0]
+            if n < 3:
+                return best_text
+            corrigida = self._aplicar_releitura_5_lido_6(linha, ' '.join(nums))
+            return best_text.replace(linha, corrigida) if corrigida else best_text
+        except Exception:
+            return best_text
+
+    @staticmethod
+    def _so_5_lido_6(certo: str, lido: str) -> bool:
+        """`lido` difere de `certo` SÓ por "5" lido como "6" (mesmo tamanho,
+        ao menos uma posição, todas elas 5 -> 6)."""
+        difs = [(a, b) for a, b in zip(certo, lido) if a != b]
+        return len(certo) == len(lido) and bool(difs) and all(d == ('5', '6') for d in difs)
+
+    def _cnpj_salvador_5_lido_6(self, lido: str) -> Optional[str]:
+        """CNPJ que reprova o DV porque o scan FECHA a barriga do "5" e o OCR
+        o lê "6" (mesmo defeito da alíquota "6,00%" da nota nº 00002278 e do
+        ".396" da GUARAJUBA SHOPPING nº 00054394). Achado real 2026-11-24,
+        nota Salvador nº 00009925 (METROFILE BRASIL GESTAO DA INFORMACAO ->
+        GUARAJUBA MALLS S/A): "03.301.926/0008-37" e "24.890.396/0001-03"
+        saem assim em TODA leitura (página inteira, recorte em zoom 3-8x,
+        com e sem binarização) — impressos "...925..." e "...395...".
+
+        Troca UM "6" por "5" de cada vez (só nessa direção — o defeito
+        nunca abre um "6" em "5") e devolve o CNPJ formatado somente quando
+        EXATAMENTE UMA troca fecha os 2 dígitos verificadores; nenhuma ou
+        mais de uma -> `None` (o chamador mantém o sentinela)."""
+        d = re.sub(r'\D', '', lido)
+        if len(d) != 14 or self._validate_cnpj_cpf(d):
+            return None
+        validos = [c for c in (d[:i] + '5' + d[i + 1:] for i, ch in enumerate(d) if ch == '6')
+                   if self._validate_cnpj_cpf(c)]
+        if len(validos) != 1:
+            return None
+        c = validos[0]
+        return f"{c[0:2]}.{c[2:5]}.{c[5:8]}/{c[8:12]}-{c[12:14]}"
+
     def _ocr_recut_cnpj_invalido_salvador(self, page, indice: int, angle: int = 0):
         """Releitura dirigida da N-ésima ocorrência (0=prestador, 1=tomador) do
         rótulo "CPF/CNPJ" da nota Salvador/BA, para o caso em que o candidato
@@ -24333,13 +24499,27 @@ class SPPdfExtractor:
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom_a, zoom_a))
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             w, h = img.size
-            x0, y1 = int(w * 0.60), int(h * 0.16)
+            x0 = int(w * 0.60)
+            y1 = int(h * 0.16)
             data = pytesseract.image_to_data(img.crop((x0, 0, w, y1)), lang='por', config='--psm 6',
                                              output_type=pytesseract.Output.DICT)
             alvo = next((i for i, tx in enumerate(data['text']) if 'erifica' in (tx or '')), None)
             if alvo is None:
                 return ''
             topo, alt = data['top'][alvo], data['height'][alvo]
+            # Impressão pelo navegador (URL/margens no topo) desce a caixa de
+            # cabeçalho: o corte em 16% passa pelo MEIO da linha do código e
+            # o OCR funde o rótulo com o topo dela — a "altura" do rótulo
+            # dobra e a janela abaixo (topo + altura) cai depois do código
+            # (achado real 2026-11-24, nota nº 00009925/METROFILE: rótulo
+            # com 59 px colado na borda do corte, demais rótulos ~24 px).
+            # Só nesse caso (rótulo encostado na borda) a altura passa a ser
+            # a mediana das outras palavras do recorte.
+            if topo + alt >= y1 - 3:
+                outras = sorted(data['height'][i] for i, tx in enumerate(data['text'])
+                                if (tx or '').strip() and i != alvo and data['height'][i] < alt)
+                if outras:
+                    alt = outras[len(outras) // 2]
             clip = pymupdf.Rect(x0 / zoom_a, (topo + alt) / zoom_a,
                                 w / zoom_a, (topo + 3 * alt + 4) / zoom_a)
             leituras = cls._ocr_clip_leituras(
@@ -24452,6 +24632,18 @@ class SPPdfExtractor:
                      for v in cls._numeros_celula(l, percentual=True)[:1]]
             isss = [v for l in cls._ocr_clip_leituras(page, iss_clip, combos, '0123456789,', binarizar=True)
                     for v in cls._numeros_celula(l)[:1]]
+            if not isss:
+                # Página escaneada levemente inclinada: a linha de valores
+                # DESCE para a direita e a faixa calculada no rótulo
+                # "Alíquota" corta a base dos dígitos da célula do ISS, que
+                # fica mais à direita (achado real 2026-11-24, nota nº
+                # 00009925/METROFILE: nenhuma leitura de ISS; o "26,74" da
+                # página inteira está 2 px abaixo do limite). Só quando a
+                # faixa padrão não devolve NADA, relê com a faixa mais alta.
+                iss_clip = pymupdf.Rect(x_valor / z, (topo + alt * 1.0) / z,
+                                        (x_cred - 10) / z, (topo + alt * 3.5) / z)
+                isss = [v for l in cls._ocr_clip_leituras(page, iss_clip, combos, '0123456789,', binarizar=True)
+                        for v in cls._numeros_celula(l)[:1]]
             if not aliqs and not isss:
                 return ''
             fmt = lambda vs: ';'.join(f'{v:.2f}'.replace('.', ',') for v in vs)
@@ -27074,6 +27266,25 @@ class SPPdfExtractor:
                 )
         if tomador and (tomador.cnpj_cpf.startswith('00000000000') or tomador.cnpj_cpf == '' or tomador.razao_social == 'Tomador Não Identificado'):
             avisos.append("Dados do tomador não identificados")
+        if self.layout == LAYOUT_SALVADOR and 'SSA_DIGITO_5_LIDO_6' in (self.raw_text or ''):
+            # Ver `_cnpj_salvador_5_lido_6` (achado real 2026-11-24, nota nº
+            # 00009925/METROFILE). A Inscrição Municipal não tem dígito
+            # verificador: lida neste mesmo scan, um "5" impresso pode ter
+            # virado "6" sem nada que o denuncie — sentinela (sem IM) + aviso
+            # em vez de um valor plausível porém possivelmente errado.
+            avisos.append(
+                "Scan lê o dígito \"5\" como \"6\": CNPJ corrigido para o único valor com "
+                "\"6\"->\"5\" que fecha o dígito verificador - conferir na nota")
+            if prestador and prestador.inscricao_municipal:
+                # Formato impresso da IM Salvador ("NN.NNN.NNN/NNN-NN"), só
+                # para mostrar a leitura inteira no aviso.
+                m_im_ssa = re.search(r'\b\d{2}\.\d{3}\.\s?\d{3}/\d{3}-\d{2}\b', self.raw_text)
+                im_lida = m_im_ssa.group(0).replace(' ', '') if m_im_ssa else prestador.inscricao_municipal
+                avisos.append(
+                    f"Inscrição Municipal do prestador omitida: lida \"{im_lida}\" "
+                    "num scan que troca \"5\" por \"6\" e sem dígito verificador para conferir - "
+                    "informar a IM impressa na nota")
+                prestador.inscricao_municipal = None
         if valores.valor_servicos == 0.0:
             avisos.append("Valor dos serviços extraído como zero")
         if self.layout in _LAYOUTS_SAUBARA:
