@@ -83,19 +83,22 @@ def test_prestador(nfse):
     assert e.codigo_municipio == "2927408"
 
 
-def test_prestador_im_por_maioria_das_leituras_com_aviso(nfse):
-    # Decisão do usuário (2026-11-24): formato NN.NNN.NNN/NNN-NN é o padrão
-    # de Salvador -> IM = leitura MAJORITÁRIA nesse formato (9 de 19: as 18
-    # do recorte + a da página inteira), nunca um valor fixo, com aviso.
-    assert nfse.prestador.inscricao_municipal == "0064677600157"
-    assert any('IM lida em scan com troca 5/6' in a and '00.646.776/001-57' in a
-               and 'maioria de 9 em 19 leituras' in a for a in nfse.avisos)
-    assert not any('Inscrição Municipal do prestador omitida' in a for a in nfse.avisos)
+def test_prestador_im_omitida_com_aviso_listando_leituras(nfse):
+    # Decisão do usuário (2026-11-24): IM sem DV num scan que troca 5/6 fica
+    # EM BRANCO — nem a leitura mais votada ("00.646.776/001-57", 9 de 19)
+    # serve: o recorte ampliado mostra "...775/001-57". O aviso lista as
+    # leituras (recorte + página inteira) para quem for informar a IM.
+    assert nfse.prestador.inscricao_municipal is None
+    aviso = next(a for a in nfse.avisos if 'Inscrição Municipal do prestador omitida' in a)
+    assert 'scan troca 5/6' in aviso and 'não tem dígito verificador' in aviso
+    assert '"00.646.776/001-57" x9' in aviso and '"00.646.775/001-57" x4' in aviso
+    assert 'informar a IM impressa na nota' in aviso
+    assert not any('IM lida em scan' in a for a in nfse.avisos)
     assert any('CNPJ corrigido' in a for a in nfse.avisos)
 
 
-def test_prestador_im_sem_maioria_continua_omitida(monkeypatch):
-    # Só a leitura da página inteira (1 voto): sem maioria -> sentinela.
+def test_prestador_im_omitida_so_com_a_leitura_da_pagina(monkeypatch):
+    # Sem o recorte da célula: omitida igual, aviso com a leitura da página.
     n = _parse(monkeypatch, MOCK_OCR_SEM_LEITURAS_IM)
     assert n.prestador.inscricao_municipal is None
     assert any('Inscrição Municipal do prestador omitida' in a and '00.646.776/001-57' in a

@@ -21397,8 +21397,8 @@ class SPPdfExtractor:
                     if 'SSA_DIGITO_5_LIDO_6' in best_text:
                         best_text = self._corrigir_endereco_prestador_5_lido_6_salvador(
                             page, best_text, best_text_ocr_original)
-                        # IM do prestador (sem DV): leituras da célula para a
-                        # escolha por maioria em `_ssa_campos_5_lido_6`.
+                        # IM do prestador (sem DV, omitida): leituras da célula
+                        # listadas no aviso de `_ssa_campos_5_lido_6`.
                         leituras_im = self._ocr_recut_im_prestador_salvador(page)
                         if leituras_im:
                             best_text = f"{best_text}\nSSA_IM_PRESTADOR_LEITURAS: {';'.join(leituras_im)}"
@@ -24143,8 +24143,8 @@ class SPPdfExtractor:
         1º rótulo "Inscrição", na altura do 1º CNPJ lido) em zoom 3/4/6/8,
         PSM 7, com as variantes binarizadas de `_ocr_clip_leituras`. Devolve
         só as leituras no formato impresso da IM Salvador
-        ("NN.NNN.NNN/NNN-NN"), na ordem em que saíram — a escolha (maioria)
-        fica com `_ssa_campos_5_lido_6`. Usado só na página com o marcador
+        ("NN.NNN.NNN/NNN-NN"), na ordem em que saíram — só para o aviso de
+        IM omitida de `_ssa_campos_5_lido_6`. Usado só na página com o marcador
         `SSA_DIGITO_5_LIDO_6` (achado real 2026-11-24, nota nº 00009925)."""
         try:
             import pymupdf
@@ -24199,9 +24199,10 @@ class SPPdfExtractor:
         (decisões do usuário 2026-11-24, nota nº 00009925/GUARAJUBA MALLS
         pág. 4). Devolve a discriminação (eventualmente trocada).
 
-        - IM do prestador: maioria entre as leituras no formato Salvador
-          (`SSA_IM_PRESTADOR_LEITURAS` + a da página inteira), com aviso
-          para conferir; sem maioria (2+ votos, sem empate), omitida.
+        - IM do prestador: OMITIDA (decisão do usuário — nem a leitura mais
+          votada é confiável: o recorte ampliado mostra "...775" onde a
+          maioria lê "...776"); o aviso lista as leituras no formato
+          Salvador (`SSA_IM_PRESTADOR_LEITURAS` + a da página inteira).
         - Discriminação no texto padrão: trecho legível antes de "VALOR
           TOTAL DA NOTA" (`_ssa_discriminacao_legivel`) + aviso.
         - Bairro do tomador "Não informado": "PALAVRA (DISTRITO)" impresso
@@ -24219,20 +24220,12 @@ class SPPdfExtractor:
             m_im_ssa = re.search(r'\b\d{2}\.\d{3}\.\s?\d{3}/\d{3}-\d{2}\b', t)
             if m_im_ssa:
                 leituras.append(m_im_ssa.group(0).replace(' ', ''))
-            ranking = Counter(leituras).most_common(2)
-            if ranking and ranking[0][1] >= 2 and (len(ranking) == 1 or ranking[0][1] > ranking[1][1]):
-                im, votos = ranking[0]
-                prestador.inscricao_municipal = re.sub(r'\D', '', im)
-                avisos.append(
-                    f"IM lida em scan com troca 5/6 — conferir: \"{im}\" (maioria de {votos} "
-                    f"em {len(leituras)} leituras)")
-            else:
-                im_lida = leituras[-1] if leituras else prestador.inscricao_municipal
-                avisos.append(
-                    f"Inscrição Municipal do prestador omitida: lida \"{im_lida}\" "
-                    "num scan que troca \"5\" por \"6\" e sem dígito verificador para conferir - "
-                    "informar a IM impressa na nota")
-                prestador.inscricao_municipal = None
+            lidas = ', '.join(f'"{im}" x{n}' for im, n in Counter(leituras).most_common()) \
+                or f'"{prestador.inscricao_municipal}"'
+            avisos.append(
+                "Inscrição Municipal do prestador omitida: scan troca 5/6 e a IM não tem "
+                f"dígito verificador (leituras: {lidas}) - informar a IM impressa na nota")
+            prestador.inscricao_municipal = None
         if discriminacao == "Serviços prestados conforme nota fiscal.":
             legivel = self._ssa_discriminacao_legivel(t)
             if legivel:
