@@ -3995,6 +3995,14 @@ class SPPdfExtractor:
                 m_fn = re.search(r'(?:NFS?|NOTA|NF)\s*[-_]*\s*(\d+)', os.path.basename(self.pdf_path), re.IGNORECASE)
                 if m_fn:
                     return m_fn.group(1).strip()
+            # Último recurso antes do sentinela: número anotado A CANETA acima
+            # da caixa do cabeçalho, quando o topo da página foi cortado no
+            # scan e o impresso não foi lido (decisão do usuário 2026-11-24 —
+            # ver `_ocr_topo_cortado_camacari`). Sempre com aviso em `parse`.
+            m_man = self._RE_CAMACARI_MANUSCRITO.search(t)
+            if m_man:
+                self._camacari_numero_manuscrito = m_man.group(1)
+                return m_man.group(1)
             return '00000000'
 
         if self.layout in (LAYOUT_CAMACARI, LAYOUT_CAMACARI_2):
@@ -5440,6 +5448,14 @@ class SPPdfExtractor:
             # dígitos, na mesma família de rótulos "... serviço:"). Retornamos os
             # 4 dígitos significativos (0713), padrão dos demais layouts.
             m = re.search(r'Servi[çc]o\s*:\s*(0\d{5})\b', t)
+            if m:
+                return m.group(1)[-4:]
+            # "S" inicial comido pelo OCR no começo da linha ("erviço: 001703
+            # - PLANEJAMENTO, ...") — achado real 2026-11-24, GUARAJUBA MALLS -
+            # NFSe.pdf pág. 8: sem isto caía no fallback genérico "03115".
+            # Só tentado quando a forma íntegra não casou; ancorado no início
+            # da linha e nos mesmos 6 dígitos iniciados por "0".
+            m = re.search(r'^[ \t]*ervi[çc]o\s*:\s*(0\d{5})\b', t, re.MULTILINE)
             if m:
                 return m.group(1)[-4:]
 
@@ -13533,6 +13549,14 @@ class SPPdfExtractor:
         # nunca casava e o logradouro inteiro virava "Não informado".
         logradouro = _sem_ruido_a_esquerda(
             _campo(r'Logradouro\s*[:.]?\s*(.+?)\s*(?:N[ºo°]\s*:|\bN[ºo°]\s+S/?N\b|$)'))
+        # O CPqD imprime o endereço todo em CAIXA ALTA; uma palavra isolada em
+        # caixa mista no meio de outras maiúsculas é leitura do OCR, não o
+        # impresso (achado real 2026-11-24, GUARAJUBA MALLS - NFSe.pdf pág. 8:
+        # "RODOVIA BA 099 ESTRADA DO Coco" para "... ESTRADA DO COCO").
+        _palavras = re.findall(r'[A-Za-zÀ-ÿ]{2,}', logradouro)
+        if sum(p.isupper() for p in _palavras) >= 2 and any(
+                p[0].isupper() and p[1:].islower() for p in _palavras):
+            logradouro = logradouro.upper()
         # Exige pontuação explícita (":"/";"/".") logo após "Nº" — achado real:
         # sem essa exigência, o próprio rótulo "Nome/Razão Social" (que começa
         # com "No" — casa com `N[ºo°]`) era lido como se fosse "Nº", e o
@@ -21862,6 +21886,16 @@ class SPPdfExtractor:
                     header_cam = self._ocr_header_box_camacari(page, best_angle)
                     if header_cam.strip():
                         best_text = f"{header_cam}\n{best_text}"
+                    # Grade com Alíquota/ISS sem nenhum dígito e topo da página
+                    # cortado no scan (número impresso fora da imagem) — ver
+                    # `_ocr_grade_totais_camacari`/`_ocr_topo_cortado_camacari`.
+                    # Ambos são no-op quando a leitura acima já trouxe os campos.
+                    grade_cam = self._ocr_grade_totais_camacari(page, best_angle, best_text)
+                    if grade_cam:
+                        best_text = f"{grade_cam}\n{best_text}"
+                    topo_cam = self._ocr_topo_cortado_camacari(page, best_angle, best_text)
+                    if topo_cam:
+                        best_text = f"{topo_cam}\n{best_text}"
 
                 # F&F Comércio (fatura de locação de CFTV): achado real — para
                 # ESTA nota específica, o MESMO pixmap (zoom 3x) produz um
@@ -26556,6 +26590,164 @@ class SPPdfExtractor:
         except Exception:
             return ""
 
+    # Marcador interno (não é texto da nota) com o número lido da anotação
+    # MANUSCRITA do canto superior direito — ver `_ocr_topo_cortado_camacari`.
+    # Sem "Número"/"Nº"/"No" no marcador, para a heurística de agrupamento de
+    # páginas (`_numero_heuristico_bloco`) não o tomar por número de nota.
+    _RE_CAMACARI_MANUSCRITO = re.compile(r'\[\[CAMACARI_MANUSCRITO=(\d{1,6})\]\]')
+
+    @staticmethod
+    def _render_camacari(page, zoom: float, angle: int):
+        import pymupdf
+        from PIL import Image
+        import io
+        if _render_excede_limite_pil(page, zoom):
+            return None
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+        img = Image.open(io.BytesIO(pix.tobytes("png"))).convert('RGB')
+        if angle:
+            img = img.rotate(-angle, expand=True, fillcolor=(255, 255, 255))
+        return img
+
+    def _ocr_topo_cortado_camacari(self, page, angle: int, texto: str) -> str:
+        """NFS-e CPqD de Camaçari ESCANEADA com o TOPO da página cortado no
+        scan (achado real 2026-11-24, GUARAJUBA MALLS - NFSe.pdf pág. 8, AVANÇO
+        GESTÃO -> GUARAJUBA MALLS S/A): a linha "Número da Nota" ficou fora da
+        imagem — só a metade de baixo dos dígitos impressos sobrou, ilegível
+        para o OCR — e acima da caixa há o número anotado A CANETA AZUL.
+
+        Só age quando NENHUMA leitura (página inteira + recortes do cabeçalho)
+        tem a âncora "…mero da Nota"/"…nero da Nota" — qualquer nota cujo
+        rótulo sobrevive segue byte a byte igual. Devolve linhas a prependar:
+
+        1. Código de autenticidade relido no recorte da célula com o modelo
+           `eng` + whitelist [A-Z0-9]: o modelo `por` da leitura padrão lê o
+           "Q" de "8XY38Q683" como "0" em toda combinação de zoom/PSM
+           testada; o `eng` com whitelist lê "Q". Aceito só com maioria (≥3
+           de 4 leituras) e no formato do CPqD (9 caracteres, letra+dígito).
+        2. Marcador `[[CAMACARI_MANUSCRITO=NNN]]` com o número da ANOTAÇÃO
+           MANUSCRITA (decisão do usuário 2026-11-24: aceitar o manuscrito
+           quando o impresso foi cortado). Isolada pela cor (tinta azul), lida
+           com o modelo `deu` (o "7" cortado à europeia, com traço, é o glifo
+           que `por`/`eng` leem como "4" ou descartam), whitelist de dígitos,
+           3 zooms × 3 alturas; aceito só com maioria (≥6 de 9). Se a faixa
+           impressa na mesma altura (tinta preta) render dígitos, o manuscrito
+           precisa contê-los em ordem; senão é descartado. O número só é USADO
+           quando o impresso não foi lido (ver `_extrair_numero`) e sempre com
+           aviso."""
+        if re.search(r'[mn]ero\s+da\s+Nota', texto, re.IGNORECASE):
+            return ""
+        linhas = []
+        try:
+            import pytesseract
+            import numpy as np
+            from PIL import Image
+            from collections import Counter
+
+            # (1) Código de autenticidade.
+            leituras = []
+            for zoom in (6, 8):
+                img = self._render_camacari(page, zoom, angle)
+                if img is None:
+                    continue
+                w, h = img.size
+                cel = img.convert('L').crop((int(w * 0.80), int(h * 0.043), int(w * 0.97), int(h * 0.053)))
+                for im in (cel, cel.point(lambda v: 255 if v > 150 else 0)):
+                    s = pytesseract.image_to_string(
+                        im, lang='eng',
+                        config='--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+                    leituras.append(s.strip())
+            validas = [s for s in leituras
+                       if re.fullmatch(r'[A-Z0-9]{9}', s) and re.search(r'[A-Z]', s) and re.search(r'\d', s)]
+            if validas:
+                cod, n = Counter(validas).most_common(1)[0]
+                if n >= 3:
+                    linhas.append(f"Código de autenticidade\n{cod}")
+
+            # (2) Anotação manuscrita (tinta azul) acima da caixa do cabeçalho.
+            votos, impressos = Counter(), set()
+            for zoom in (4, 5, 6):
+                img = self._render_camacari(page, zoom, angle)
+                if img is None:
+                    continue
+                w, h = img.size
+                a = np.asarray(img.crop((int(w * 0.72), 0, w, int(h * 0.035)))).astype(int)
+                r, g, b = a[..., 0], a[..., 1], a[..., 2]
+                azul = (b - r > 40) & (b - g > 10)
+                if azul.sum() < 30 * zoom * zoom:
+                    continue
+                ys, xs = np.nonzero(azul)
+                m = Image.fromarray(np.where(azul, 0, 255).astype('uint8')).crop(
+                    (xs.min(), ys.min(), xs.max() + 1, ys.max() + 1))
+                for alt in (32, 48, 64):
+                    t = m.resize((max(1, round(m.width * alt / m.height)), alt), Image.LANCZOS)
+                    t = t.point(lambda v: 0 if v < 128 else 255)
+                    tela = Image.new('L', (t.width + 2 * alt, t.height + 2 * alt), 255)
+                    tela.paste(t, (alt, alt))
+                    s = pytesseract.image_to_string(
+                        tela, lang='deu', config='--psm 7 -c tessedit_char_whitelist=0123456789').strip()
+                    votos[s] += 1
+                # Faixa impressa na mesma altura (tinta preta, fora do azul).
+                preto = (r < 130) & (g < 130) & (b < 130) & ~azul
+                faixa = Image.fromarray(np.where(preto[:ys.max() + 1], 0, 255).astype('uint8'))
+                tela = Image.new('L', (faixa.width, faixa.height + 40), 255)
+                tela.paste(faixa, (0, 20))
+                s = pytesseract.image_to_string(
+                    tela, config='--psm 7 -c tessedit_char_whitelist=0123456789').strip()
+                if s:
+                    impressos.add(s)
+            if votos:
+                num, n = votos.most_common(1)[0]
+                compativel = all(
+                    re.search('.*'.join(map(re.escape, imp)), num) for imp in impressos)
+                if re.fullmatch(r'\d{1,6}', num) and n >= 6 and compativel:
+                    linhas.append(f"[[CAMACARI_MANUSCRITO={num}]]")
+        except Exception:
+            pass
+        return "\n".join(linhas)
+
+    def _ocr_grade_totais_camacari(self, page, angle: int, texto: str) -> str:
+        """Coluna "Totais (R$)" da NFS-e CPqD de Camaçari ESCANEADA relida num
+        recorte só da metade DIREITA da grade (achado real 2026-11-24, GUARAJUBA
+        MALLS - NFSe.pdf pág. 8): rabiscos de caneta sobre a coluna
+        "Retenções" desmontam a leitura de página inteira e as células
+        "Alíquota (%)"/"Valor do ISS (R$)" saem sem nenhum dígito ("am"/"o"),
+        zerando alíquota e ISS. Só age quando AMBAS as células saíram sem
+        valor; devolve as 2 linhas relidas só se forem autoconsistentes —
+        alíquota entre 0 e 5% (teto da LC 116), ISS = Base × alíquota (±0,01)
+        e a Base do recorte igual à da leitura principal (quando lida) —
+        senão nada (segue o comportamento anterior)."""
+        if re.search(r'Al.?quota\s*\(%\)\s*\d{1,2},\d{1,2}', texto, re.IGNORECASE) \
+                or re.search(r'Valor\s+(?:do\s+)?ISS\s*\(R\$\)\s*[\d\.,]*\d', texto, re.IGNORECASE) \
+                or re.search(r'\d{1,2}[,.]\d{1,2}\s*%', texto):
+            return ""
+        try:
+            import pytesseract
+            img = self._render_camacari(page, 6, angle)
+            if img is None:
+                return ""
+            w, h = img.size
+            rec = pytesseract.image_to_string(
+                img.crop((int(w * 0.48), int(h * 0.66), int(w * 0.98), int(h * 0.84))),
+                lang='por', config='--psm 6')
+            moeda = r'(\d{1,3}(?:\.\d{3})*,\d{2})'
+            m_aliq = re.search(r'Al.?quota\s*\(%\)\s*(\d{1,2},\d{2})', rec, re.IGNORECASE)
+            m_iss = re.search(r'Valor\s+(?:do\s+)?ISS\s*\(R\$\)\s*' + moeda, rec, re.IGNORECASE)
+            m_base = re.search(r'Base\s+de\s+C[aá]lculo\s*\(=\)\s*' + moeda, rec, re.IGNORECASE)
+            if not (m_aliq and m_iss and m_base):
+                return ""
+            aliq = self._parse_valor(m_aliq.group(1))
+            iss = self._parse_valor(m_iss.group(1))
+            base = self._parse_valor(m_base.group(1))
+            if not (0.0 < aliq <= 5.0) or abs(round(base * aliq / 100.0, 2) - iss) > 0.01:
+                return ""
+            m_base_txt = re.search(r'Base\s+de\s+C[aá]lculo\s*\(=\)\s*' + moeda, texto, re.IGNORECASE)
+            if m_base_txt and abs(self._parse_valor(m_base_txt.group(1)) - base) > 0.005:
+                return ""
+            return f"{m_aliq.group(0)}\n{m_iss.group(0)}"
+        except Exception:
+            return ""
+
     def _extract_via_ocr(self) -> str:
         """Tenta extrair o texto de TODAS as páginas do PDF renderizando-as como imagens e passando pelo Tesseract."""
         try:
@@ -26695,6 +26887,7 @@ class SPPdfExtractor:
             if texto_reconstruido.strip():
                 self.raw_text = texto_reconstruido
 
+        self._camacari_numero_manuscrito = None
         numero = self._extrair_numero()
         codigo_verificacao = self._extrair_codigo_verificacao()
         data_emissao = self._extrair_data_emissao()
@@ -26860,6 +27053,9 @@ class SPPdfExtractor:
         avisos: List[str] = []
         if numero == '00000000':
             avisos.append("Número da nota não encontrado")
+        if getattr(self, '_camacari_numero_manuscrito', None) and numero == self._camacari_numero_manuscrito:
+            avisos.append(
+                f"Número da nota lido de anotação manuscrita (impresso cortado no scan): {numero} — confira")
         if codigo_verificacao in ('XXXX-XXXX',):
             avisos.append("Código de verificação/autenticidade não encontrado")
         if self._data_emissao_fallback:
