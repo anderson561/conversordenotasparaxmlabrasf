@@ -17147,8 +17147,10 @@ class SPPdfExtractor:
     # que o OCR lê como "RS"/"R5").
     _FLASH_SERVICO_ZERO_PATTERN = (
         r'VALOR\s+TOTAL\s+DO\s+SERVI[ÇC]O\s*[=:]?\s*R?\s*[$S5]?\s*0+,0{2}(?!\d)')
+    # "VALOR\s*TOTAL": o OCR pode colar as duas palavras (achado real, scan
+    # nº 05904515, NAUTICA: "NVALORTOTAL RECEBIDO = R$ 5.777,33").
     _FLASH_RECEBIDO_PATTERN = (
-        r'VALOR\s+TOTAL\s+RECEBIDO\s*[=:]?\s*R?\s*[$S5]?\s*(\d[\d.]*,\d{2})(?!\d)')
+        r'VALOR\s*TOTAL\s+RECEBIDO\s*[=:]?\s*R?\s*[$S5]?\s*(\d[\d.]*,\d{2})(?!\d)')
 
     def _prestador_e_flash(self, prestador) -> bool:
         """Identifica o prestador FLASH pelo CNPJ (raiz 32.223.020 com dígito
@@ -17200,9 +17202,14 @@ class SPPdfExtractor:
             return valores, [_aviso_mantido("VALOR TOTAL RECEBIDO não localizado/legível")]
 
         if self.layout == LAYOUT_SAO_PAULO_2:
+            # Eco do recebido na discriminação: "Valor Total - R$ X" ou a linha
+            # "Compra de Créditos na Plataforma Flash - R$ X" logo abaixo, que
+            # imprime o mesmo valor (achado real, scan nº 05904515: o OCR leu
+            # "Valor Total - R$ 5171733", mas "Compra de Créditos ... R$ 5.777,33").
             totais_discriminacao = [
                 self._parse_valor(x) for x in re.findall(
-                    r'Valor\s+Total\s*[-–]\s*R\s*[$S5]?\s*(\d[\d.]*,\d{2})', t, re.IGNORECASE)]
+                    r'(?:Valor\s+Total|Compra\s+de\s+Cr[eé]ditos\s+na\s+Plataforma\s+Flash)'
+                    r'\s*[-–]\s*R\s*[$S5]?\s*(\d[\d.]*,\d{2})', t, re.IGNORECASE)]
             if not any(abs(v - recebido) < 0.005 for v in totais_discriminacao):
                 return valores, [_aviso_mantido(
                     "o VALOR TOTAL RECEBIDO lido por OCR não foi confirmado pelo "
