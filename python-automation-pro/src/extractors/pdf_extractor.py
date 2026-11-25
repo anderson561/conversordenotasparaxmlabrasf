@@ -13191,9 +13191,8 @@ class SPPdfExtractor:
             import io
             import os
 
-            tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-            if os.path.exists(tess_path):
-                pytesseract.pytesseract.tesseract_cmd = tess_path
+            from ..utils.tesseract_config import configurar_pytesseract
+            configurar_pytesseract(pytesseract)
 
             doc = pymupdf.open(self.pdf_path)
             try:
@@ -15399,9 +15398,8 @@ class SPPdfExtractor:
                     yield ja[0]
                     continue
                 if cache['base'] is None:
-                    tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-                    if os.path.exists(tess_path):
-                        pytesseract.pytesseract.tesseract_cmd = tess_path
+                    from ..utils.tesseract_config import configurar_pytesseract
+                    configurar_pytesseract(pytesseract)
                     doc = pymupdf.open(self.pdf_path)
                     try:
                         idx = pagina - 1
@@ -21020,9 +21018,8 @@ class SPPdfExtractor:
             import os
 
             # Configuração explícita para Windows (caso não esteja no PATH)
-            tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-            if os.path.exists(tess_path):
-                pytesseract.pytesseract.tesseract_cmd = tess_path
+            from ..utils.tesseract_config import configurar_pytesseract
+            configurar_pytesseract(pytesseract)
 
             doc = pymupdf.open(self.pdf_path)
             try:
@@ -26541,9 +26538,8 @@ class SPPdfExtractor:
             import pytesseract
             from PIL import Image
 
-            tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-            if os.path.exists(tess_path):
-                pytesseract.pytesseract.tesseract_cmd = tess_path
+            from ..utils.tesseract_config import configurar_pytesseract
+            configurar_pytesseract(pytesseract)
 
             doc = pymupdf.open(self.pdf_path)
             try:

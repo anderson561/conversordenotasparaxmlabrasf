@@ -102,7 +102,7 @@ Princípios arquiteturais em vigor:
 7. **Extração por campo** (`_extrair_numero`, `_extrair_valores`, `_extrair_entidade`, `_extrair_data_emissao`, …) com ramos por layout.
 8. **Validações e avisos** gerais no ponto único de construção do modelo (nota cancelada, teto do ISS, município IBGE de fallback).
 
-Executável do Tesseract: `C:\Program Files\Tesseract-OCR\tesseract.exe` quando existe; senão, o do PATH.
+Executável do Tesseract, resolvido num só lugar (`src/utils/tesseract_config.py`, `configurar_pytesseract`): variável de ambiente `TESSERACT_CMD` (se apontar para um arquivo existente) → `C:\Program Files\Tesseract-OCR\tesseract.exe` quando existe → o do PATH. A pasta de idiomas segue a `TESSDATA_PREFIX` do próprio Tesseract.
 
 ## 4. Determinismo do pdfminer
 
@@ -222,7 +222,7 @@ Itens já registrados no código, no CHANGELOG ou em `DOCUMENTACAO_CONVERSAO.md`
 | DT-08 | Limites de leitura OCR conhecidos (ex.: caractere que nenhuma combinação lê corretamente). | Leitura gravada como lida, documentada e travada por teste; nunca corrigida por regra fixa. |
 | DT-09 | `pdf_extractor.py` concentra ~30,6 mil linhas. *(observação)* | Alto custo de navegação/regressão; layouts novos já vão para módulos próprios. |
 | DT-10 | Patch de determinismo copia um método interno do pdfminer.six 20260107. | Atualizar o pdfminer exige revalidar o patch. |
-| DT-11 | Caminho do Tesseract fixo para `C:\Program Files\Tesseract-OCR` (fallback: PATH). *(observação)* | Instalação em outro local precisa estar no PATH. |
+| DT-11 | ~~Caminho do Tesseract fixo para `C:\Program Files\Tesseract-OCR` (fallback: PATH).~~ **Resolvido** (25/11/2026): os 8 pontos que fixavam o caminho (`pdf_extractor.py` ×4, `danfse_rotulos_imagem.py`, `eldorado_do_sul_nfse.py`, `feira_nfse_nacional.py`, `natal_nfse.py`) chamam `src/utils/tesseract_config.py`; ordem `TESSERACT_CMD` → caminho padrão → PATH. Testes: `tests/test_tesseract_config.py`. | Instalação em outro local: basta definir `TESSERACT_CMD`. Sem a variável, comportamento idêntico ao anterior. |
 | DT-12 | Asset de atualização baixado sem verificação de hash/assinatura. *(observação)* | Confiança depende da integridade do Release no GitHub. Mitigação **A confirmar**. |
 | DT-13 | `requirements.txt` não reflete a superfície real de dependências (snapshot do `.venv` compartilhado, UTF-16). *(observação)* | Instalação limpa traz pacotes desnecessários. |
 | DT-14 | Sem migração automática entre formatos onefile → onedir. | Usuário em onefile migra manualmente baixando o `.zip`. |

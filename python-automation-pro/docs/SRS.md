@@ -68,7 +68,7 @@ Ferramenta autônoma e local. Sem banco de dados, sem servidor. Única dependên
 | Item | Requisito |
 | --- | --- |
 | SO | Windows (executáveis PyInstaller). Versões mínimas **A confirmar**. |
-| OCR | Tesseract OCR em `C:\Program Files\Tesseract-OCR\tesseract.exe` (ou no PATH), com tessdata `por` (obrigatório), `eng` e `deu` (usados em recortes específicos). |
+| OCR | Tesseract OCR no caminho da variável de ambiente `TESSERACT_CMD`, senão em `C:\Program Files\Tesseract-OCR\tesseract.exe`, senão no PATH (tessdata pela `TESSDATA_PREFIX` do próprio Tesseract, se definida), com tessdata `por` (obrigatório), `eng` e `deu` (usados em recortes específicos). |
 | Python (desenvolvimento) | `.venv` do projeto, Python 3.13 (3.13.12 no ambiente atual). |
 | Rede | Opcional; só para atualização. |
 
@@ -154,7 +154,7 @@ Definidos no [FRD §2](FRD.md#2-requisitos-funcionais) (RF-001 a RF-095). Agrupa
 | RNF-09 | Segurança | Senha de PDF só em memória durante a execução; nunca logada, impressa ou gravada; cópia desprotegida apagada ao sair (com ou sem exceção). | `test_pdf_protegido_senha.py` |
 | RNF-10 | Segurança | Na CLI, o usuário é avisado de que `--password` fica no histórico e na lista de processos. | Texto de ajuda do argumento |
 | RNF-11 | Segurança | Atualização só a partir do Release publicado do repositório configurado, após confirmação do usuário. Verificação de integridade/assinatura do asset: **não há** (ver TRD §10). | `auto_updater.py` |
-| RNF-12 | Portabilidade | Somente Windows (`.bat` de troca, `tasklist`, Toolhelp32 via `ctypes`, caminho padrão do Tesseract). | — |
+| RNF-12 | Portabilidade | Somente Windows (`.bat` de troca, `tasklist`, Toolhelp32 via `ctypes`, caminho padrão do Tesseract, configurável por `TESSERACT_CMD`). | — |
 | RNF-13 | Usabilidade | Mensagens em português; erros nunca vazios; `[AVISO]`/`[ERRO]` distinguíveis. | `test_pdf_protegido_senha.py`, `test_opcao_cte_os_modelo_67.py` |
 | RNF-14 | Robustez de console | Nomes de arquivo com caracteres fora do code page não abortam a CLI. | `test_cli_console_encoding.py` |
 | RNF-15 | Manutenibilidade | Novo layout adicionado sem reescrever o núcleo (constante + detecção + ramos por campo + teste com texto real). | Processo em `DOCUMENTACAO_CONVERSAO.md` |

@@ -17,6 +17,10 @@ sessão, de todos os layouts/fixes entregues está em
 
 - **Documentos de requisitos e arquitetura em `docs/`** — `BRD.md` (Business Requirements: problema de negócio, objetivos, escopo, partes interessadas, premissas, restrições regulatórias, riscos e critérios de sucesso), `FRD.md` (Functional Requirements: RF numerados por área com critérios de aceitação e catálogo dos 74 layouts), `SRS.md` (Software Requirements Specification no molde IEEE 830/29148: interfaces externas, requisitos não funcionais, restrições e rastreabilidade RF ↔ módulos ↔ testes) e `TRD.md` (Technical Requirements: arquitetura, pipeline de OCR, determinismo do pdfminer, stack, build, release, testes, convenções e débitos técnicos). Documentam o sistema como está na v1.10.0; itens sem fonte ficam marcados "A confirmar". Sem mudança de código, testes ou contagem de layouts.
 
+### Alterado
+
+- **Caminho do Tesseract configurável (débito técnico DT-11)** — o executável era fixado em `C:\Program Files\Tesseract-OCR\tesseract.exe` em 8 pontos do código (`pdf_extractor.py` ×4, `danfse_rotulos_imagem.py`, `eldorado_do_sul_nfse.py`, `feira_nfse_nacional.py`, `natal_nfse.py`); instalação em outro local só funcionava pelo PATH. Agora a resolução fica num só lugar (`src/utils/tesseract_config.py`): variável de ambiente `TESSERACT_CMD` (caminho completo do `tesseract.exe`; ignorada se o arquivo não existir) → caminho padrão → PATH. Sem a variável, comportamento idêntico ao anterior; a pasta de idiomas continua pela `TESSDATA_PREFIX` do próprio Tesseract. Nenhuma lógica de extração mudou. Testes: `tests/test_tesseract_config.py` (8).
+
 ## [1.10.0] - 2026-11-24
 
 ### Corrigido
