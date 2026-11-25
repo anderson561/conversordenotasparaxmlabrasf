@@ -1260,6 +1260,16 @@ técnico/scriptado, sem UI para mostrar avisos).
   sumir da `tasklist`, move o novo `.exe` por cima do antigo, relança o app
   e se autodeleta — o app encerra com `os._exit(0)` assim que o `.bat` é
   lançado (desanexado), para soltar o lock do arquivo o quanto antes.
+- **Integridade do download (desde 25/11/2026, débito DT-12)**: antes de
+  instalar, o SHA-256 do arquivo baixado é comparado com o campo `digest`
+  (`sha256:<hex>`) que a API do GitHub publica para cada asset do Release.
+  Divergência → o arquivo baixado é apagado, nada é instalado e a GUI mostra
+  "Atualização cancelada: ... não confere com o hash SHA-256 publicado ...",
+  com o link da página do Release para download manual. Asset sem `digest`
+  → falha segura: nem baixa, mesma orientação de download manual. O GitHub
+  calcula o `digest` sozinho no upload do asset; não há passo extra no
+  release. Isso protege contra download corrompido ou adulterado no caminho,
+  não substitui assinatura de código.
 - **Rodando via código-fonte** (`python gui_app.py`, não `.exe` empacotado):
   `auto_updater.is_frozen()` retorna `False`, e o fluxo de aplicação é
   abortado com um aviso — não há `.exe` para substituir num ambiente de
@@ -1303,6 +1313,16 @@ ser "otimizadas": `numpy` é usado de verdade, `cryptography` é exigida pelo
 pdfminer.six para PDF criptografado, e `libmpv-2.dll` é dependência de link do
 `flet.exe` mesmo sem o app usar mídia.
 
+Dependências declaradas (desde 25/11/2026, débito DT-13): `requirements.txt`
+(UTF-8) tem só o que o app importa em runtime — `flet==0.21.2`, `numpy`,
+`pdfminer.six`, `cryptography`, `Pillow`, `pydantic`, `PyMuPDF`,
+`pytesseract`, `requests` —, pinadas nas versões do `.venv` do build;
+`requirements-dev.txt` acrescenta `pytest`, `lxml`, `pyinstaller` e
+`pyinstaller-hooks-contrib`. Antes o `requirements.txt` era um `pip freeze`
+UTF-16 do `.venv` compartilhado, com scipy, pandas e afins. Ambiente novo:
+`pip install -r requirements-dev.txt`. O build não lê nenhum dos dois: usa o
+que estiver instalado no `.venv`.
+
 ### Processo de Release
 
 `/releases/latest` só enxerga Release **publicado** — tag solta não aparece,
@@ -1322,7 +1342,10 @@ e sem Release o auto-update se comporta exatamente como "já está atualizado".
    já publica direto (não fica draft nem pre-release, que `/releases/latest`
    ignora).
 5. Conferir no ar, sem confiar na saída do `gh`: bater em `/releases/latest` e
-   rodar `auto_updater.is_newer(tag, versao_antiga)`.
+   rodar `auto_updater.is_newer(tag, versao_antiga)`. Conferir também que os
+   dois assets trazem `digest` (`gh api repos/<dono>/<repo>/releases/latest
+   --jq '.assets[] | [.name, .digest]'`): sem ele, o auto-updater recusa a
+   atualização e manda o usuário baixar manualmente.
 
 ⚠️ Publicar só o `.zip` deixaria sem caminho de atualização toda instalação
 onefile anterior à v1.8.0 — o `auto_updater` delas procura um asset chamado

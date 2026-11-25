@@ -583,9 +583,8 @@ def reler_linha_endereco(pdf_path: str, pagina: int) -> Optional[str]:
     import pytesseract
     from PIL import Image
 
-    tess = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-    if os.path.exists(tess):
-        pytesseract.pytesseract.tesseract_cmd = tess
+    from ..utils.tesseract_config import configurar_pytesseract
+    configurar_pytesseract(pytesseract)
     doc = pymupdf.open(pdf_path)
     try:
         if pagina >= len(doc):

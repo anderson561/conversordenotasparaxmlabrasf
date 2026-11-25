@@ -149,9 +149,8 @@ def ler_pagina(pdf_path: str, page_idx: int) -> Optional[str]:
         if not chars:
             return None
 
-        tess = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-        if os.path.exists(tess):
-            pytesseract.pytesseract.tesseract_cmd = tess
+        from ..utils.tesseract_config import configurar_pytesseract
+        configurar_pytesseract(pytesseract)
         doc = pymupdf.open(pdf_path)
         try:
             pix = doc.load_page(page_idx).get_pixmap(matrix=pymupdf.Matrix(_ZOOM, _ZOOM))

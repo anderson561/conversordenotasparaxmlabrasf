@@ -289,9 +289,8 @@ def _ocr_libs():
     import pymupdf
     import pytesseract
     from PIL import Image
-    tess = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-    if os.path.exists(tess):
-        pytesseract.pytesseract.tesseract_cmd = tess
+    from ..utils.tesseract_config import configurar_pytesseract
+    configurar_pytesseract(pytesseract)
     return pymupdf, pytesseract, Image
 
 

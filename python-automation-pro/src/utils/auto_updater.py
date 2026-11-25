@@ -10,6 +10,7 @@ Release "estável" (não draft, não pre-release) com o
 `GET /releases/latest` só enxerga Releases publicados, tags sozinhas não
 aparecem aqui. Ver "Processo de Release" em DOCUMENTACAO_CONVERSAO.md.
 """
+import hashlib
 import os
 import re
 import sys
@@ -152,6 +153,34 @@ def download_asset(asset, dest_path, progress_callback=None):
     if total and downloaded != total:
         raise IOError(f"Download incompleto: {downloaded}/{total} bytes")
     return dest_path
+
+
+class IntegridadeError(IOError):
+    """O arquivo baixado não pode ser instalado porque sua integridade não foi
+    confirmada (hash divergente ou Release sem hash publicado)."""
+
+
+def sha256_esperado(asset):
+    """Hash SHA-256 publicado pelo GitHub para o asset, em hex minúsculo, ou
+    None se o asset não trouxer o campo `digest` no formato
+    `sha256:<64 hex>`."""
+    digest = (asset.get("digest") or "").strip()
+    m = re.fullmatch(r"sha256:([0-9a-fA-F]{64})", digest)
+    return m.group(1).lower() if m else None
+
+
+def sha256_arquivo(caminho):
+    h = hashlib.sha256()
+    with open(caminho, "rb") as f:
+        for bloco in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(bloco)
+    return h.hexdigest()
+
+
+def _orientacao_manual(release):
+    url = release.get("url") or (
+        f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest")
+    return f"Nada foi instalado. Baixe a nova versão manualmente em {url}"
 
 
 def is_frozen():
@@ -447,15 +476,42 @@ def apply_update_and_restart(baixado, tipo="exe"):
 def download_update_to_temp(release, progress_callback=None):
     """Baixa o asset adequado a ESTA instalação (ver `find_update_asset`) para
     um arquivo temporário. Devolve `(caminho, tipo)`, ou `(None, None)` se o
-    Release não tiver um asset compatível."""
+    Release não tiver um asset compatível.
+
+    Integridade (falha segura): o arquivo só é devolvido para instalação se
+    o SHA-256 dele bater com o `digest` ("sha256:<hex>") que a API do GitHub
+    publica para o asset. Asset sem `digest` -> nem baixa; hash divergente ->
+    apaga o arquivo baixado. Nos dois casos levanta `IntegridadeError`, com a
+    orientação de baixar manualmente pela página do Release.
+    """
     asset, tipo = find_update_asset(release)
     if not asset:
         return None, None
+    nome = asset.get("name", "")
+    esperado = sha256_esperado(asset)
+    if not esperado:
+        raise IntegridadeError(
+            f"Atualização cancelada: o Release não publica o hash SHA-256 do "
+            f"arquivo '{nome}', então a integridade do download não pode ser "
+            f"verificada. {_orientacao_manual(release)}"
+        )
     sufixo = "zip" if tipo == "zip" else "exe"
     dest = os.path.join(
         tempfile.gettempdir(), f"nfse_converter_gui_new_{os.getpid()}.{sufixo}"
     )
-    return download_asset(asset, dest, progress_callback=progress_callback), tipo
+    download_asset(asset, dest, progress_callback=progress_callback)
+    obtido = sha256_arquivo(dest)
+    if obtido != esperado:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise IntegridadeError(
+            f"Atualização cancelada: o arquivo baixado '{nome}' não confere "
+            f"com o hash SHA-256 publicado no Release (esperado {esperado}, "
+            f"obtido {obtido}) e foi apagado. {_orientacao_manual(release)}"
+        )
+    return dest, tipo
 
 
 def limpar_restos_de_updates(idade_minima_horas=24):

@@ -102,7 +102,7 @@ Princípios arquiteturais em vigor:
 7. **Extração por campo** (`_extrair_numero`, `_extrair_valores`, `_extrair_entidade`, `_extrair_data_emissao`, …) com ramos por layout.
 8. **Validações e avisos** gerais no ponto único de construção do modelo (nota cancelada, teto do ISS, município IBGE de fallback).
 
-Executável do Tesseract: `C:\Program Files\Tesseract-OCR\tesseract.exe` quando existe; senão, o do PATH.
+Executável do Tesseract, resolvido num só lugar (`src/utils/tesseract_config.py`, `configurar_pytesseract`): variável de ambiente `TESSERACT_CMD` (se apontar para um arquivo existente) → `C:\Program Files\Tesseract-OCR\tesseract.exe` quando existe → o do PATH. A pasta de idiomas segue a `TESSDATA_PREFIX` do próprio Tesseract.
 
 ## 4. Determinismo do pdfminer
 
@@ -120,7 +120,7 @@ Executável do Tesseract: `C:\Program Files\Tesseract-OCR\tesseract.exe` quando 
 | PyMuPDF | 1.27.2.2 | Render de página, desproteção |
 | pytesseract | 0.3.13 | Ponte para o Tesseract |
 | Tesseract OCR | externo; versão **A confirmar** | OCR (`por`, `eng`, `deu`) |
-| Pillow | 12.1.1 | Imagens para OCR |
+| Pillow | 12.3.0 | Imagens para OCR |
 | numpy | 2.4.3 | Desentorto da faixa de cabeçalho |
 | pydantic | 2.12.5 | Modelos |
 | requests | 2.32.5 | API do GitHub / download |
@@ -130,7 +130,7 @@ Executável do Tesseract: `C:\Program Files\Tesseract-OCR\tesseract.exe` quando 
 
 **Armadilha**: o Python do PATH tem flet **0.82.2** (ícones migraram para `flet.controls.material.icons`); o executável construído com ele abre e morre com `has no attribute 'SYSTEM_UPDATE'`. Usar sempre `.venv\Scripts\python.exe`.
 
-`requirements.txt` é um snapshot do `.venv` (UTF-16) que é compartilhado com outros projetos e inclui pacotes que o app não usa; a superfície real de terceiros é `PIL, flet, numpy, pdfminer, pydantic, pymupdf, pytesseract, requests`.
+`requirements.txt` (UTF-8) lista só as dependências de runtime importadas por `src/`, `app.py` e `gui_app.py` — `flet`, `numpy`, `pdfminer.six`, `cryptography`, `Pillow`, `pydantic`, `PyMuPDF`, `pytesseract`, `requests` — pinadas com `==` nas versões do `.venv` (transitivas a cargo do pip). `requirements-dev.txt` inclui `-r requirements.txt` + `pytest`, `lxml` (teste do XSD do CT-e OS), `pyinstaller` e `pyinstaller-hooks-contrib`. Antes era um snapshot UTF-16 do `.venv` compartilhado (DT-13).
 
 ## 6. Build (PyInstaller)
 
@@ -173,6 +173,7 @@ Auto-updater (`src/utils/auto_updater.py`, só GUI):
 | Comparação | `is_newer` — SemVer `(major, minor, patch)`, tolera `v`. |
 | Formato | `is_onedir()` compara `sys._MEIPASS` com a pasta do executável → asset `.zip` ou `.exe` (`find_update_asset`). |
 | Download | `download_asset` com progresso para `%TEMP%`. |
+| Integridade | `download_update_to_temp`: SHA-256 do arquivo = `digest` do asset (`sha256:<hex>`, API do GitHub), senão `IntegridadeError`, arquivo apagado e nada instalado; asset sem `digest` não é baixado (falha segura). |
 | Troca | `.bat` gerado em runtime aguarda o PID sair, tenta `move` 10× a cada 2 s, relança e se autoapaga; onedir renomeia a pasta atual e restaura em falha. |
 | Encerramento | Processos filhos (incl. `flet.exe`) enumerados via Toolhelp32 (`ctypes`) e encerrados um a um; depois `os._exit(0)`. |
 | Falha | `%TEMP%\nfse_update_falhou.log`, lido e exibido na abertura seguinte (`ler_falha_pendente`). |
@@ -222,7 +223,7 @@ Itens já registrados no código, no CHANGELOG ou em `DOCUMENTACAO_CONVERSAO.md`
 | DT-08 | Limites de leitura OCR conhecidos (ex.: caractere que nenhuma combinação lê corretamente). | Leitura gravada como lida, documentada e travada por teste; nunca corrigida por regra fixa. |
 | DT-09 | `pdf_extractor.py` concentra ~30,6 mil linhas. *(observação)* | Alto custo de navegação/regressão; layouts novos já vão para módulos próprios. |
 | DT-10 | Patch de determinismo copia um método interno do pdfminer.six 20260107. | Atualizar o pdfminer exige revalidar o patch. |
-| DT-11 | Caminho do Tesseract fixo para `C:\Program Files\Tesseract-OCR` (fallback: PATH). *(observação)* | Instalação em outro local precisa estar no PATH. |
-| DT-12 | Asset de atualização baixado sem verificação de hash/assinatura. *(observação)* | Confiança depende da integridade do Release no GitHub. Mitigação **A confirmar**. |
-| DT-13 | `requirements.txt` não reflete a superfície real de dependências (snapshot do `.venv` compartilhado, UTF-16). *(observação)* | Instalação limpa traz pacotes desnecessários. |
+| DT-11 | ~~Caminho do Tesseract fixo para `C:\Program Files\Tesseract-OCR` (fallback: PATH).~~ **Resolvido** (25/11/2026): os 8 pontos que fixavam o caminho (`pdf_extractor.py` ×4, `danfse_rotulos_imagem.py`, `eldorado_do_sul_nfse.py`, `feira_nfse_nacional.py`, `natal_nfse.py`) chamam `src/utils/tesseract_config.py`; ordem `TESSERACT_CMD` → caminho padrão → PATH. Testes: `tests/test_tesseract_config.py`. | Instalação em outro local: basta definir `TESSERACT_CMD`. Sem a variável, comportamento idêntico ao anterior. |
+| DT-12 | ~~Asset de atualização baixado sem verificação de hash/assinatura.~~ **Resolvido** (25/11/2026): `download_update_to_temp` compara o SHA-256 do arquivo baixado com o `digest` (`sha256:<hex>`) que a API do GitHub publica em cada asset; divergência → arquivo apagado, nada instalado; asset sem `digest` → nem baixa. Nos dois casos `IntegridadeError` com orientação de download manual pela página do Release. Testes: `tests/test_auto_updater_integridade.py`. | Protege contra download corrompido/adulterado em trânsito. Não é assinatura de código: quem controla o Release controla também o `digest`. |
+| DT-13 | ~~`requirements.txt` não reflete a superfície real de dependências (snapshot do `.venv` compartilhado, UTF-16).~~ **Resolvido** (25/11/2026): `requirements.txt` em UTF-8 só com as 9 dependências de runtime pinadas (versões do `.venv`, `flet==0.21.2`); testes e build em `requirements-dev.txt` (`-r requirements.txt` + pytest, lxml, pyinstaller, hooks-contrib). Ver §5. | Instalação limpa traz só o necessário; o `.venv` compartilhado continua com pacotes extras, contidos no build por `tools/build_excludes.py`. |
 | DT-14 | Sem migração automática entre formatos onefile → onedir. | Usuário em onefile migra manualmente baixando o `.zip`. |
