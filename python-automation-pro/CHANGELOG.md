@@ -11,6 +11,12 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
+## [Não lançado]
+
+### Adicionado
+
+- **Documentos de requisitos e arquitetura em `docs/`** — `BRD.md` (Business Requirements: problema de negócio, objetivos, escopo, partes interessadas, premissas, restrições regulatórias, riscos e critérios de sucesso), `FRD.md` (Functional Requirements: RF numerados por área com critérios de aceitação e catálogo dos 74 layouts), `SRS.md` (Software Requirements Specification no molde IEEE 830/29148: interfaces externas, requisitos não funcionais, restrições e rastreabilidade RF ↔ módulos ↔ testes) e `TRD.md` (Technical Requirements: arquitetura, pipeline de OCR, determinismo do pdfminer, stack, build, release, testes, convenções e débitos técnicos). Documentam o sistema como está na v1.10.0; itens sem fonte ficam marcados "A confirmar". Sem mudança de código, testes ou contagem de layouts.
+
 ## [1.10.0] - 2026-11-24
 
 ### Corrigido
