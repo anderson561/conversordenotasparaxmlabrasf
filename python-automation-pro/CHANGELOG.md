@@ -11,6 +11,12 @@ completo) ficam em arquivos próprios: [CHANGELOG_BRASILIA.md](CHANGELOG_BRASILI
 sessão, de todos os layouts/fixes entregues está em
 [DOCUMENTACAO_CONVERSAO.md](DOCUMENTACAO_CONVERSAO.md).
 
+## [Não lançado]
+
+### Alterado
+
+- CI: actions/checkout v7 e actions/setup-python v7 (Node.js 24), eliminando o aviso de depreciação do Node.js 20
+
 ## [1.11.0] - 2026-11-25
 
 ### Adicionado
