@@ -1,0 +1,7 @@
+# Desenvolvimento: runtime + testes + build dos executáveis.
+-r requirements.txt
+pytest==9.0.2
+# Validação do XML de CT-e OS contra o XSD oficial (tests/test_cte_os_leiaute_oficial_4_00.py).
+lxml==6.0.2
+pyinstaller==6.19.0
+pyinstaller-hooks-contrib==2026.3

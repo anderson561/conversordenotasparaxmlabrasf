@@ -141,6 +141,6 @@ Quando selecionar **"Contrato de Locação (ABRASF XML)"**, o formulário de dad
 ---
 > [!IMPORTANT]
 > **Para Desenvolvedores**: Se você for executar o script `gui_app.py` diretamente via terminal, certifique-se de instalar as dependências completas com:
-> `pip install "flet[desktop]"`
+> `pip install -r requirements.txt` (traz o `flet==0.21.2`; não instale `flet[desktop]` por cima, que troca o flet por uma versão incompatível)
 >
 > O executável na pasta `dist/` já contém todas as dependências necessárias.
