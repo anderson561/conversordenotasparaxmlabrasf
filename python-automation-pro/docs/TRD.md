@@ -173,6 +173,7 @@ Auto-updater (`src/utils/auto_updater.py`, só GUI):
 | Comparação | `is_newer` — SemVer `(major, minor, patch)`, tolera `v`. |
 | Formato | `is_onedir()` compara `sys._MEIPASS` com a pasta do executável → asset `.zip` ou `.exe` (`find_update_asset`). |
 | Download | `download_asset` com progresso para `%TEMP%`. |
+| Integridade | `download_update_to_temp`: SHA-256 do arquivo = `digest` do asset (`sha256:<hex>`, API do GitHub), senão `IntegridadeError`, arquivo apagado e nada instalado; asset sem `digest` não é baixado (falha segura). |
 | Troca | `.bat` gerado em runtime aguarda o PID sair, tenta `move` 10× a cada 2 s, relança e se autoapaga; onedir renomeia a pasta atual e restaura em falha. |
 | Encerramento | Processos filhos (incl. `flet.exe`) enumerados via Toolhelp32 (`ctypes`) e encerrados um a um; depois `os._exit(0)`. |
 | Falha | `%TEMP%\nfse_update_falhou.log`, lido e exibido na abertura seguinte (`ler_falha_pendente`). |
@@ -223,6 +224,6 @@ Itens já registrados no código, no CHANGELOG ou em `DOCUMENTACAO_CONVERSAO.md`
 | DT-09 | `pdf_extractor.py` concentra ~30,6 mil linhas. *(observação)* | Alto custo de navegação/regressão; layouts novos já vão para módulos próprios. |
 | DT-10 | Patch de determinismo copia um método interno do pdfminer.six 20260107. | Atualizar o pdfminer exige revalidar o patch. |
 | DT-11 | ~~Caminho do Tesseract fixo para `C:\Program Files\Tesseract-OCR` (fallback: PATH).~~ **Resolvido** (25/11/2026): os 8 pontos que fixavam o caminho (`pdf_extractor.py` ×4, `danfse_rotulos_imagem.py`, `eldorado_do_sul_nfse.py`, `feira_nfse_nacional.py`, `natal_nfse.py`) chamam `src/utils/tesseract_config.py`; ordem `TESSERACT_CMD` → caminho padrão → PATH. Testes: `tests/test_tesseract_config.py`. | Instalação em outro local: basta definir `TESSERACT_CMD`. Sem a variável, comportamento idêntico ao anterior. |
-| DT-12 | Asset de atualização baixado sem verificação de hash/assinatura. *(observação)* | Confiança depende da integridade do Release no GitHub. Mitigação **A confirmar**. |
+| DT-12 | ~~Asset de atualização baixado sem verificação de hash/assinatura.~~ **Resolvido** (25/11/2026): `download_update_to_temp` compara o SHA-256 do arquivo baixado com o `digest` (`sha256:<hex>`) que a API do GitHub publica em cada asset; divergência → arquivo apagado, nada instalado; asset sem `digest` → nem baixa. Nos dois casos `IntegridadeError` com orientação de download manual pela página do Release. Testes: `tests/test_auto_updater_integridade.py`. | Protege contra download corrompido/adulterado em trânsito. Não é assinatura de código: quem controla o Release controla também o `digest`. |
 | DT-13 | `requirements.txt` não reflete a superfície real de dependências (snapshot do `.venv` compartilhado, UTF-16). *(observação)* | Instalação limpa traz pacotes desnecessários. |
 | DT-14 | Sem migração automática entre formatos onefile → onedir. | Usuário em onefile migra manualmente baixando o `.zip`. |

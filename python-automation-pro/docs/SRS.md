@@ -153,7 +153,7 @@ Definidos no [FRD §2](FRD.md#2-requisitos-funcionais) (RF-001 a RF-095). Agrupa
 | RNF-08 | Confiabilidade | Falha de rede na checagem de atualização não gera erro ao usuário; falha na troca do executável é registrada e exibida. | `test_auto_updater*.py` |
 | RNF-09 | Segurança | Senha de PDF só em memória durante a execução; nunca logada, impressa ou gravada; cópia desprotegida apagada ao sair (com ou sem exceção). | `test_pdf_protegido_senha.py` |
 | RNF-10 | Segurança | Na CLI, o usuário é avisado de que `--password` fica no histórico e na lista de processos. | Texto de ajuda do argumento |
-| RNF-11 | Segurança | Atualização só a partir do Release publicado do repositório configurado, após confirmação do usuário. Verificação de integridade/assinatura do asset: **não há** (ver TRD §10). | `auto_updater.py` |
+| RNF-11 | Segurança | Atualização só a partir do Release publicado do repositório configurado, após confirmação do usuário. Integridade do asset: SHA-256 do download comparado com o `digest` publicado pela API do GitHub; divergente ou ausente → nada é instalado e o usuário é orientado a baixar pela página do Release. Assinatura de código: não há (ver TRD §10, DT-12). | `test_auto_updater_integridade.py` |
 | RNF-12 | Portabilidade | Somente Windows (`.bat` de troca, `tasklist`, Toolhelp32 via `ctypes`, caminho padrão do Tesseract, configurável por `TESSERACT_CMD`). | — |
 | RNF-13 | Usabilidade | Mensagens em português; erros nunca vazios; `[AVISO]`/`[ERRO]` distinguíveis. | `test_pdf_protegido_senha.py`, `test_opcao_cte_os_modelo_67.py` |
 | RNF-14 | Robustez de console | Nomes de arquivo com caracteres fora do code page não abortam a CLI. | `test_cli_console_encoding.py` |

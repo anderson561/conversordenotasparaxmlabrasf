@@ -21,6 +21,10 @@ sessão, de todos os layouts/fixes entregues está em
 
 - **Caminho do Tesseract configurável (débito técnico DT-11)** — o executável era fixado em `C:\Program Files\Tesseract-OCR\tesseract.exe` em 8 pontos do código (`pdf_extractor.py` ×4, `danfse_rotulos_imagem.py`, `eldorado_do_sul_nfse.py`, `feira_nfse_nacional.py`, `natal_nfse.py`); instalação em outro local só funcionava pelo PATH. Agora a resolução fica num só lugar (`src/utils/tesseract_config.py`): variável de ambiente `TESSERACT_CMD` (caminho completo do `tesseract.exe`; ignorada se o arquivo não existir) → caminho padrão → PATH. Sem a variável, comportamento idêntico ao anterior; a pasta de idiomas continua pela `TESSDATA_PREFIX` do próprio Tesseract. Nenhuma lógica de extração mudou. Testes: `tests/test_tesseract_config.py` (8).
 
+### Segurança
+
+- **Auto-updater verifica o SHA-256 do arquivo baixado (débito técnico DT-12)** — o asset do Release era instalado sem nenhuma verificação de integridade. Agora `download_update_to_temp` (`src/utils/auto_updater.py`) compara o SHA-256 do arquivo baixado com o `digest` (`sha256:<hex>`) que a API do GitHub publica em cada asset (presente nos assets da v1.10.0). Hash divergente → o arquivo baixado é apagado, nada é instalado e a GUI mostra "Atualização cancelada" com o link da página do Release para download manual. Asset sem `digest` → falha segura: nem baixa, mesma orientação. Nomes de assets e escolha do asset (`.zip` onedir / `.exe` onefile) inalterados. Testes: `tests/test_auto_updater_integridade.py` (10, sem rede; 8 falham sem a mudança).
+
 ## [1.10.0] - 2026-11-24
 
 ### Corrigido
