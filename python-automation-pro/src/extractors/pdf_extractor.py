@@ -15319,6 +15319,30 @@ class SPPdfExtractor:
             return total_impresso, 'total', (composto if divergente else None)
         if composto:
             return composto, fonte_comp, None
+
+        # ---- 5. Conferência cruzada de duas leituras degradadas (nota
+        # 714633808, 2026-11-26): o OCR perde a vírgula e lê o "D" como "0"
+        # tanto no TOTAL ("TOTAL 1.163300 7" = 1.163,30 D + "✓" de caneta)
+        # quanto na coluna TOTAL das placas ("207900" = 207,90 D), e um "|"
+        # espúrio separa placa e tag. Nenhuma das leituras vale sozinha; só
+        # é aceita quando o TOTAL assim lido é IGUAL, ao centavo, à soma de
+        # TODAS as placas (+ Outras Arrec.) lidas pela mesma convenção.
+        if m_cab_arrec:
+            m_tot_deg = re.search(r'^\s*TOTAL\s+(\d{1,3}(?:\.\d{3})*[,.]?\d{2})\s*[D0]\b',
+                                  regiao, re.IGNORECASE | re.MULTILINE)
+            celulas = []
+            for m_lin in re.finditer(r'^\s*[A-Za-z]{3}[A-Za-z0-9]{4}\s*\|?\s*\d{10}\b([^\n]*)$',
+                                     t, re.MULTILINE):
+                m_ult = re.search(r'(\d[\d.,]*)\s*(D?)\W*$', m_lin.group(1))
+                raw = m_ult.group(1) if m_ult else ''
+                dig = re.sub(r'\D', '', raw)
+                if m_ult and not m_ult.group(2) and not re.search(r',\d{2}$', raw):
+                    dig = dig[:-1] if dig.endswith('0') else ''   # "D" lido "0"
+                celulas.append(int(dig) / 100 if len(dig) >= 3 else None)
+            if m_tot_deg and celulas and None not in celulas:
+                total_deg = int(re.sub(r'\D', '', m_tot_deg.group(1))) / 100
+                if total_deg and abs(round(sum(celulas) + (arrec or 0.0), 2) - total_deg) < 0.005:
+                    return total_deg, 'total_conferido', None
         return 0.0, '', None
 
     def _ocr_cabecalho_sem_parar(self) -> str:
@@ -27489,6 +27513,13 @@ class SPPdfExtractor:
                         f"{_br(divergencia)}, diferente do TOTAL impresso lido "
                         f"(R$ {_br(valores.valor_servicos)}) - confira na nota"
                     )
+            elif valores.valor_servicos and fonte == 'total_conferido':
+                avisos.append(
+                    f"Valor dos serviços (R$ {_br(valores.valor_servicos)}) = "
+                    "TOTAL impresso da fatura, lido com OCR degradado (vírgula/\"D\" "
+                    "perdidos) e aceito só por bater ao centavo com a soma da "
+                    "coluna TOTAL de todas as placas - confira na nota"
+                )
             elif valores.valor_servicos:
                 rubricas = ("Subtotal + Outras Arrec." if fonte == 'subtotal'
                             else "coluna TOTAL de cada placa + Outras Arrec.")
