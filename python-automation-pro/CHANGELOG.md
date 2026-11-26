@@ -17,6 +17,10 @@ sessão, de todos os layouts/fixes entregues está em
 
 - CI: actions/checkout v7 e actions/setup-python v7 (Node.js 24), eliminando o aviso de depreciação do Node.js 20
 
+### Corrigido
+
+- **Fatura Sem Parar (`sem_parar_fatura`) com valor zerado — nota nº 714633808** (fatura 26228882949, `Scan2026-11-25_081510.pdf`, variante sem "Subtotal"): o OCR perdeu a vírgula e leu o "D" como "0" tanto no TOTAL (`TOTAL 1.163300 7`, o "7" é o ✓ de caneta) quanto na coluna TOTAL de duas placas (`207900`, `909200`), e um `|` espúrio separava placa e tag; nenhum ramo de `_valor_total_sem_parar` aceitava e saía 0,00. Novo último recurso, só quando todos os outros falham: o TOTAL lido assim é aceito apenas se bater ao centavo com a soma de TODAS as placas (+ Outras Arrec.) lida pela mesma convenção, com aviso próprio. Agora ValorServicos/Líquido 1.163,30 (= TOTAL impresso); Base/Alíquota/ISS seguem zerados pela convenção do layout. Teste `tests/test_sem_parar_fatura_valor_zero_714633808.py` (7).
+
 ## [1.11.0] - 2026-11-25
 
 ### Adicionado
